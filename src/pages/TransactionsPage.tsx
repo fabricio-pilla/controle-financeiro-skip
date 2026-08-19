@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { useCompany } from '@/contexts/CompanyContext'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
+import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
@@ -19,6 +20,7 @@ import {
   TrendingUp,
   TrendingDown,
   Repeat,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,6 +46,7 @@ export default function TransactionsPage() {
 
   // Modals state
   const [modalOpen, setModalOpen] = useState(false)
+  const [aiModalOpen, setAiModalOpen] = useState(false)
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [txToDelete, setTxToDelete] = useState<Transaction | null>(null)
@@ -130,13 +133,24 @@ export default function TransactionsPage() {
         </div>
 
         {canManageTransactions && (
-          <Button
-            onClick={handleOpenCreate}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-11 px-4 font-semibold shadow-md shadow-indigo-600/20 flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Novo Lançamento</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => setAiModalOpen(true)}
+              variant="outline"
+              className="rounded-xl h-11 px-4 font-semibold border-indigo-200 text-indigo-600 hover:bg-indigo-50 flex items-center gap-2"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span className="hidden sm:inline">Lançamento com IA</span>
+              <span className="sm:hidden">IA</span>
+            </Button>
+            <Button
+              onClick={handleOpenCreate}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-11 px-4 font-semibold shadow-md shadow-indigo-600/20 flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Novo Lançamento</span>
+            </Button>
+          </div>
         )}
       </div>
 
@@ -469,6 +483,9 @@ export default function TransactionsPage() {
 
       {/* Transaction Modal (Create/Edit) */}
       <TransactionModal open={modalOpen} onOpenChange={setModalOpen} transaction={selectedTx} />
+
+      {/* AI Transaction Modal */}
+      <AiTransactionModal open={aiModalOpen} onOpenChange={setAiModalOpen} />
 
       {/* Confirm Delete Dialog */}
       <ConfirmDialog

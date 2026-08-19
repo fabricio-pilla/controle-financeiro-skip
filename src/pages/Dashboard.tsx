@@ -5,6 +5,7 @@ import { useCompany } from '@/contexts/CompanyContext'
 import { AnimatedCounter } from '@/components/common/AnimatedCounter'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
+import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
 import { formatCurrency, formatDateBR, getGreeting } from '@/lib/formatters'
 import {
   Wallet,
@@ -57,6 +58,7 @@ export default function Dashboard() {
     'this_month',
   )
   const [newTxOpen, setNewTxOpen] = useState(false)
+  const [aiTxOpen, setAiTxOpen] = useState(false)
 
   // Filter transactions based on period
   const filteredTransactions = useMemo(() => {
@@ -204,10 +206,10 @@ export default function Dashboard() {
 
           {canManageTransactions && (
             <Button
-              onClick={() => setNewTxOpen(true)}
+              onClick={() => setAiTxOpen(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-10 px-4 text-xs font-semibold shadow-md shadow-indigo-600/20 flex items-center gap-1.5"
             >
-              <Plus className="w-4 h-4" />
+              <Sparkles className="w-4 h-4" />
               <span className="hidden sm:inline">Novo Lançamento</span>
               <span className="sm:hidden">Novo</span>
             </Button>
@@ -567,6 +569,7 @@ export default function Dashboard() {
 
       {/* Transaction Modal */}
       <TransactionModal open={newTxOpen} onOpenChange={setNewTxOpen} />
+      <AiTransactionModal open={aiTxOpen} onOpenChange={setAiTxOpen} />
     </div>
   )
 }

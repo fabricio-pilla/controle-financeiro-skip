@@ -101,6 +101,7 @@ interface CompanyContextType {
     is_recurring?: boolean
     recurrence_type?: any
     notes?: string
+    installments_total?: number
   }) => Promise<Transaction>
   updateTransaction: (
     transactionId: string,
@@ -305,6 +306,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     is_recurring?: boolean
     recurrence_type?: any
     notes?: string
+    installments_total?: number
   }) => {
     if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
     const tx = await skipCloud.createTransaction(currentCompany.id, data)

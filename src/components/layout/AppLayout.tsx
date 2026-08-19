@@ -9,7 +9,6 @@ import {
   FolderTree,
   Users2,
   Settings,
-  Plus,
   LogOut,
   Building2,
   ChevronDown,
@@ -17,6 +16,7 @@ import {
   Check,
   PlusCircle,
   ExternalLink,
+  Sparkles,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -29,7 +29,7 @@ import {
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { CreateCompanyModal } from '@/components/companies/CreateCompanyModal'
-import { TransactionModal } from '@/components/transactions/TransactionModal'
+import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
 import { getInitials } from '@/lib/formatters'
 
 interface AppLayoutProps {
@@ -44,7 +44,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { empresaId } = useParams<{ empresaId: string }>()
 
   const [createCompanyOpen, setCreateCompanyOpen] = useState(false)
-  const [newTxOpen, setNewTxOpen] = useState(false)
+  const [aiTxOpen, setAiTxOpen] = useState(false)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
 
   const activeEmpresaId = empresaId || currentCompany?.id || ''
@@ -211,13 +211,13 @@ export function AppLayout({ children }: AppLayoutProps) {
       <div className="px-4 py-2">
         <Button
           onClick={() => {
-            setNewTxOpen(true)
+            setAiTxOpen(true)
             setMobileDrawerOpen(false)
           }}
           className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl h-11 font-semibold flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40"
         >
-          <Plus className="w-4 h-4" />
-          <span>Novo Lançamento</span>
+          <Sparkles className="w-4 h-4" />
+          <span>Novo Lançamento IA</span>
         </Button>
       </div>
 
@@ -352,11 +352,11 @@ export function AppLayout({ children }: AppLayoutProps) {
 
         {/* Center Floating Plus Button */}
         <button
-          onClick={() => setNewTxOpen(true)}
+          onClick={() => setAiTxOpen(true)}
           className="w-12 h-12 -mt-5 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
-          aria-label="Novo Lançamento"
+          aria-label="Lançamento com IA"
         >
-          <Plus className="w-6 h-6" />
+          <Sparkles className="w-6 h-6" />
         </button>
 
         <NavLink
@@ -391,7 +391,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         onSuccess={(id) => navigate(`/empresa/${id}/dashboard`)}
       />
 
-      <TransactionModal open={newTxOpen} onOpenChange={setNewTxOpen} />
+      <AiTransactionModal open={aiTxOpen} onOpenChange={setAiTxOpen} />
     </div>
   )
 }

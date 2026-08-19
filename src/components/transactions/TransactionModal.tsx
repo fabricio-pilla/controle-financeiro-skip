@@ -22,7 +22,8 @@ import { Switch } from '@/components/ui/switch'
 import { useCompany } from '@/contexts/CompanyContext'
 import { Transaction, TransactionType, RecurrenceType } from '@/types/database'
 import { toast } from 'sonner'
-import { Loader2, ArrowUpRight, ArrowDownRight, Tag, Wallet } from 'lucide-react'
+import { Loader2, ArrowUpRight, ArrowDownRight, Tag, Wallet, CreditCard } from 'lucide-react'
+import { formatCurrency } from '@/lib/formatters'
 
 interface TransactionModalProps {
   open: boolean
@@ -51,6 +52,11 @@ export function TransactionModal({
     transaction?.recurrence_type || 'mensal',
   )
   const [notes, setNotes] = useState(transaction?.notes || '')
+  const [installmentsTotal, setInstallmentsTotal] = useState(
+    transaction?.installments_total && transaction.installments_total > 1
+      ? transaction.installments_total
+      : 1,
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Sync when transaction changes
@@ -65,6 +71,11 @@ export function TransactionModal({
       setIsRecurring(Boolean(transaction.is_recurring))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
       setNotes(transaction.notes || '')
+      setInstallmentsTotal(
+        transaction.installments_total && transaction.installments_total > 1
+          ? transaction.installments_total
+          : 1,
+      )
     } else {
       setType(defaultType)
       setDescription('')
@@ -73,6 +84,7 @@ export function TransactionModal({
       setDate(new Date().toISOString().split('T')[0])
       setIsRecurring(false)
       setNotes('')
+      setInstallmentsTotal(1)
     }
   }, [transaction, defaultType, accounts])
 
@@ -135,8 +147,13 @@ export function TransactionModal({
           is_recurring: isRecurring,
           recurrence_type: isRecurring ? recurrenceType : undefined,
           notes,
+          installments_total: installmentsTotal,
         })
-        toast.success('Lançamento criado com sucesso!')
+        toast.success(
+          installmentsTotal > 1
+            ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
+            : 'Lançamento criado com sucesso!',
+        )
       }
       onOpenChange(false)
     } catch (err: any) {
@@ -330,6 +347,45 @@ export function TransactionModal({
                   <SelectItem value="anual">Anual</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* Installments */}
+          {!isEditing && (
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="tx-installments"
+                className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
+              >
+                <CreditCard className="w-3.5 h-3.5 text-slate-500" />
+                Parcelado em X vezes
+              </Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="tx-installments"
+                  type="number"
+                  min={1}
+                  max={60}
+                  step={1}
+                  value={installmentsTotal}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10)
+                    setInstallmentsTotal(isNaN(v) || v < 1 ? 1 : Math.min(v, 60))
+                  }}
+                  className="rounded-xl h-11 w-28 font-semibold tabular-nums"
+                />
+                <span className="text-sm text-slate-500">x (à vista = 1)</span>
+              </div>
+              {installmentsTotal > 1 && (
+                <p className="text-xs text-indigo-600 font-medium animate-fade-in">
+                  Serão criadas {installmentsTotal} transações de{' '}
+                  {formatCurrency(parseFloat(amountStr.replace(',', '.')) || 0)} →{' '}
+                  {formatCurrency(
+                    (parseFloat(amountStr.replace(',', '.')) || 0) / installmentsTotal,
+                  )}{' '}
+                  cada, com datas mensais a partir de {date}.
+                </p>
+              )}
             </div>
           )}
 

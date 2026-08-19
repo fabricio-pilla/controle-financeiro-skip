@@ -1195,11 +1195,86 @@ class SkipCloudClient {
       is_recurring?: boolean
       recurrence_type?: any
       notes?: string
+      installments_total?: number
     },
   ): Promise<Transaction> {
     const user = await this.getCurrentUser()
     if (!user) throw new Error('Usuário não autenticado.')
 
+    const installmentsTotal = Math.max(1, Math.floor(Number(data.installments_total) || 1))
+
+    // Helper to apply a balance adjustment for a single transaction
+    const applyBalance = (acc: Account | undefined, amount: number, type: TransactionType) => {
+      if (!acc) return
+      if (acc.type === 'credito') {
+        // For credit cards, despesa increases used limit, receita decreases
+        acc.balance += type === 'despesa' ? amount : -amount
+      } else {
+        acc.balance += type === 'receita' ? amount : -amount
+      }
+    }
+
+    // Helper to add months to a YYYY-MM-DD date string, preserving day when possible
+    const addMonths = (dateStr: string, months: number): string => {
+      const d = new Date(dateStr + 'T00:00:00')
+      const day = d.getDate()
+      d.setMonth(d.getMonth() + months)
+      // Clamp to last day of target month if overflow (e.g. day 31 in Feb)
+      const targetMonthLastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+      if (day > targetMonthLastDay) {
+        d.setDate(targetMonthLastDay)
+      }
+      return d.toISOString().split('T')[0]
+    }
+
+    if (installmentsTotal > 1) {
+      // Split the total amount evenly across N installments
+      const totalAmount = Number(data.amount)
+      const baseAmount = Math.round((totalAmount / installmentsTotal) * 100) / 100
+      // Accumulate rounding difference on the first installment
+      const remainder = Math.round((totalAmount - baseAmount * installmentsTotal) * 100) / 100
+
+      const baseDescription = data.description.trim()
+      const baseDate = data.date
+      const createdParcels: Transaction[] = []
+      let parentId = ''
+
+      for (let i = 1; i <= installmentsTotal; i++) {
+        const parcelAmount = i === 1 ? Math.round((baseAmount + remainder) * 100) / 100 : baseAmount
+        const tx: Transaction = {
+          id: `tx-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+          company_id: companyId,
+          account_id: data.account_id,
+          category_id: data.category_id,
+          user_id: user.id,
+          description: `${baseDescription} (${i}/${installmentsTotal})`,
+          amount: parcelAmount,
+          type: data.type,
+          date: addMonths(baseDate, i - 1),
+          is_recurring: Boolean(data.is_recurring),
+          recurrence_type: data.recurrence_type,
+          installments_total: installmentsTotal,
+          installment_number: i,
+          parent_transaction_id: i === 1 ? undefined : parentId,
+          notes: data.notes?.trim() || undefined,
+          created_at: new Date().toISOString(),
+        }
+        if (i === 1) {
+          parentId = tx.id
+          tx.parent_transaction_id = parentId
+        }
+        createdParcels.push(tx)
+        this.transactions.push(tx)
+
+        const acc = this.accounts.find((a) => a.id === data.account_id)
+        applyBalance(acc, parcelAmount, data.type)
+      }
+
+      this.saveToSession()
+      return createdParcels[0]
+    }
+
+    // Single (à vista) transaction
     const newTx: Transaction = {
       id: `tx-${Date.now()}`,
       company_id: companyId,
@@ -1212,6 +1287,8 @@ class SkipCloudClient {
       date: data.date,
       is_recurring: Boolean(data.is_recurring),
       recurrence_type: data.recurrence_type,
+      installments_total: 1,
+      installment_number: 1,
       notes: data.notes?.trim() || undefined,
       created_at: new Date().toISOString(),
     }
@@ -1220,22 +1297,7 @@ class SkipCloudClient {
 
     // Update account balance
     const acc = this.accounts.find((a) => a.id === data.account_id)
-    if (acc) {
-      if (acc.type === 'credito') {
-        // For credit cards, despesa increases used limit, receita decreases
-        if (data.type === 'despesa') {
-          acc.balance += Number(data.amount)
-        } else {
-          acc.balance -= Number(data.amount)
-        }
-      } else {
-        if (data.type === 'receita') {
-          acc.balance += Number(data.amount)
-        } else {
-          acc.balance -= Number(data.amount)
-        }
-      }
-    }
+    applyBalance(acc, Number(data.amount), data.type)
 
     this.saveToSession()
     return newTx
