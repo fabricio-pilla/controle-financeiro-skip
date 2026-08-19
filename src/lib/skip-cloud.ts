@@ -336,6 +336,23 @@ class SkipCloudService {
         status: 'active',
       })
 
+      // Also add the logged-in creator as an admin member so they can see the
+      // new control in their list (getUserCompanies filters by user_id). Skip
+      // when the creator IS the owner — that member was already linked above.
+      const creator = pb.authStore.model as any
+      const creatorId = creator?.id || ''
+      const creatorEmail = (creator?.email || '').trim().toLowerCase()
+      if (creatorId && creatorEmail && creatorEmail !== normalizedEmail) {
+        await pb.collection('control_members').create({
+          control_id: companyId,
+          user_id: creatorId,
+          email: creatorEmail,
+          invited_email: creatorEmail,
+          role: 'admin',
+          status: 'active',
+        })
+      }
+
       // Seed default categories
       for (const c of DEFAULT_EXPENSE_CATEGORIES) {
         await pb.collection('categories').create({
