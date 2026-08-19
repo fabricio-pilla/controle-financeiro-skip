@@ -132,8 +132,8 @@ export default function Index() {
               Controle financeiro de todas as suas empresas em um só lugar.
             </h2>
             <p className="text-indigo-100/80 text-sm mt-3 leading-relaxed">
-              Alterne instantaneamente entre múltiplos CNPJs, gerencie colaboradores com permissões
-              granulares, contas bancárias e relatórios em tempo real.
+              Alterne instantaneamente entre múltiplas empresas, gerencie colaboradores com
+              permissões granulares, contas bancárias e relatórios em tempo real.
             </p>
           </div>
 

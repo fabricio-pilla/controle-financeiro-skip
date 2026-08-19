@@ -25,7 +25,6 @@ export const SKIP_CLOUD_SCHEMA = {
       fields: {
         id: 'string (primary key, uuid)',
         name: 'string (required)',
-        cnpj: 'string (optional)',
         segment: 'enum (Serviços, Comércio, Indústria, Tecnologia, Varejo, Outro)',
         color: 'string (hex)',
         description: 'text (optional)',

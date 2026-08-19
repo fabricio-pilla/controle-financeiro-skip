@@ -4,7 +4,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { SegmentType } from '@/types/database'
 import { PALETTE_COLORS } from '@/lib/skip-cloud'
-import { maskCNPJ } from '@/lib/formatters'
 import { toast } from 'sonner'
 import {
   Building2,
@@ -55,7 +54,6 @@ export default function SettingsPage() {
 
   // Tab 1: Empresa details
   const [name, setName] = useState(currentCompany?.name || '')
-  const [cnpj, setCnpj] = useState(currentCompany?.cnpj || '')
   const [segment, setSegment] = useState<SegmentType>(currentCompany?.segment || 'Serviços')
   const [color, setColor] = useState(currentCompany?.color || PALETTE_COLORS[0])
   const [description, setDescription] = useState(currentCompany?.description || '')
@@ -74,7 +72,6 @@ export default function SettingsPage() {
   React.useEffect(() => {
     if (currentCompany) {
       setName(currentCompany.name)
-      setCnpj(currentCompany.cnpj || '')
       setSegment(currentCompany.segment)
       setColor(currentCompany.color)
       setDescription(currentCompany.description || '')
@@ -92,7 +89,6 @@ export default function SettingsPage() {
     try {
       await updateCompany({
         name,
-        cnpj,
         segment,
         color,
         description,
@@ -195,36 +191,22 @@ export default function SettingsPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="company-cnpj" className="text-sm font-medium text-slate-700">
-                    CNPJ
-                  </Label>
-                  <Input
-                    id="company-cnpj"
-                    value={cnpj}
-                    onChange={(e) => setCnpj(maskCNPJ(e.target.value))}
-                    className="rounded-xl h-11"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
-                    Segmento de Mercado
-                  </Label>
-                  <Select value={segment} onValueChange={(v: SegmentType) => setSegment(v)}>
-                    <SelectTrigger id="company-segment" className="rounded-xl h-11">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-xl">
-                      {SEGMENTS.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {s}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
+                  Segmento de Mercado
+                </Label>
+                <Select value={segment} onValueChange={(v: SegmentType) => setSegment(v)}>
+                  <SelectTrigger id="company-segment" className="rounded-xl h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    {SEGMENTS.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2 pt-1">

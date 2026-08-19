@@ -71,7 +71,6 @@ const SEED_COMPANIES: Company[] = [
   {
     id: 'comp-tech-1',
     name: 'Nexus Soluções Digitais',
-    cnpj: '12.345.678/0001-90',
     segment: 'Tecnologia',
     color: '#6366F1',
     description:
@@ -82,7 +81,6 @@ const SEED_COMPANIES: Company[] = [
   {
     id: 'comp-varejo-2',
     name: 'Aurora Comércio & Design',
-    cnpj: '98.765.432/0001-11',
     segment: 'Varejo',
     color: '#10B981',
     description:
@@ -882,7 +880,6 @@ class SkipCloudClient {
     name: string,
     segment: SegmentType,
     color: string,
-    cnpj?: string,
     description?: string,
   ): Promise<Company> {
     const user = await this.getCurrentUser()
@@ -892,7 +889,6 @@ class SkipCloudClient {
     const newCompany: Company = {
       id: companyId,
       name: name.trim(),
-      cnpj: cnpj?.trim() || undefined,
       segment,
       color,
       description: description?.trim() || undefined,
@@ -936,7 +932,7 @@ class SkipCloudClient {
 
   async updateCompany(
     companyId: string,
-    data: Partial<Pick<Company, 'name' | 'cnpj' | 'segment' | 'color' | 'description'>>,
+    data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>,
   ): Promise<Company> {
     const comp = this.companies.find((c) => c.id === companyId)
     if (!comp) throw new Error('Empresa não encontrada.')

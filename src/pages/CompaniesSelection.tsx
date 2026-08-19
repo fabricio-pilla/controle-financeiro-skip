@@ -157,9 +157,6 @@ export default function CompaniesSelection() {
                         {comp.description}
                       </p>
                     )}
-                    {comp.cnpj && (
-                      <p className="text-xs text-slate-400 font-mono mt-1.5">CNPJ: {comp.cnpj}</p>
-                    )}
                   </div>
 
                   <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-4">
@@ -193,7 +190,7 @@ export default function CompaniesSelection() {
               </div>
               <h3 className="text-base font-bold text-indigo-950">Criar Nova Empresa</h3>
               <p className="text-xs text-indigo-700/80 mt-1 max-w-[200px]">
-                Adicione um novo CNPJ ou filial com plano de contas e categorias automáticas.
+                Adicione uma nova empresa ou filial com plano de contas e categorias automáticas.
               </p>
             </button>
           </div>

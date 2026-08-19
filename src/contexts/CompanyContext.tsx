@@ -47,11 +47,10 @@ interface CompanyContextType {
     name: string,
     segment: SegmentType,
     color: string,
-    cnpj?: string,
     description?: string,
   ) => Promise<Company>
   updateCompany: (
-    data: Partial<Pick<Company, 'name' | 'cnpj' | 'segment' | 'color' | 'description'>>,
+    data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>,
   ) => Promise<Company>
   getCompanyStats: (companyId: string) => Promise<{
     membersCount: number
@@ -208,17 +207,16 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     name: string,
     segment: SegmentType,
     color: string,
-    cnpj?: string,
     description?: string,
   ) => {
-    const comp = await skipCloud.createCompany(name, segment, color, cnpj, description)
+    const comp = await skipCloud.createCompany(name, segment, color, description)
     await reloadUserCompanies()
     await selectCompany(comp.id)
     return comp
   }
 
   const updateCompany = async (
-    data: Partial<Pick<Company, 'name' | 'cnpj' | 'segment' | 'color' | 'description'>>,
+    data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>,
   ) => {
     if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
     const updated = await skipCloud.updateCompany(currentCompany.id, data)

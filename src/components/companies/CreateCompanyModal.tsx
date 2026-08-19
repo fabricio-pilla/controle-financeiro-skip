@@ -20,7 +20,6 @@ import {
 import { useCompany } from '@/contexts/CompanyContext'
 import { SegmentType } from '@/types/database'
 import { PALETTE_COLORS } from '@/lib/skip-cloud'
-import { maskCNPJ } from '@/lib/formatters'
 import { toast } from 'sonner'
 import { Loader2, Building2 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
@@ -43,7 +42,6 @@ const SEGMENTS: SegmentType[] = [
 export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateCompanyModalProps) {
   const { createCompany } = useCompany()
   const [name, setName] = useState('')
-  const [cnpj, setCnpj] = useState('')
   const [segment, setSegment] = useState<SegmentType>('Serviços')
   const [color, setColor] = useState(PALETTE_COLORS[0])
   const [description, setDescription] = useState('')
@@ -58,10 +56,9 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
 
     setIsSubmitting(true)
     try {
-      const comp = await createCompany(name, segment, color, cnpj, description)
+      const comp = await createCompany(name, segment, color, description)
       toast.success(`Empresa "${comp.name}" criada com sucesso! Você é o Proprietário.`)
       setName('')
-      setCnpj('')
       setSegment('Serviços')
       setColor(PALETTE_COLORS[0])
       setDescription('')
@@ -106,37 +103,22 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="company-cnpj" className="text-sm font-medium text-slate-700">
-                CNPJ (opcional)
-              </Label>
-              <Input
-                id="company-cnpj"
-                placeholder="00.000.000/0001-00"
-                value={cnpj}
-                onChange={(e) => setCnpj(maskCNPJ(e.target.value))}
-                className="rounded-xl h-11"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
-                Segmento *
-              </Label>
-              <Select value={segment} onValueChange={(v: SegmentType) => setSegment(v)}>
-                <SelectTrigger className="rounded-xl h-11">
-                  <SelectValue placeholder="Selecione..." />
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  {SEGMENTS.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
+              Segmento *
+            </Label>
+            <Select value={segment} onValueChange={(v: SegmentType) => setSegment(v)}>
+              <SelectTrigger className="rounded-xl h-11">
+                <SelectValue placeholder="Selecione..." />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl">
+                {SEGMENTS.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-2">

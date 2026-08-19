@@ -16,7 +16,6 @@ export interface User {
 export interface Company {
   id: string
   name: string
-  cnpj?: string
   segment: SegmentType
   color: string
   description?: string
