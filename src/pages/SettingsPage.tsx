@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Dialog,
   DialogContent,
@@ -37,7 +38,14 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-const SEGMENTS: SegmentType[] = ['Serviços', 'Comércio', 'Indústria', 'Tecnologia', 'Outro']
+const SEGMENTS: SegmentType[] = [
+  'Serviços',
+  'Comércio',
+  'Indústria',
+  'Tecnologia',
+  'Varejo',
+  'Outro',
+]
 
 export default function SettingsPage() {
   const { user, logout } = useAuth()
@@ -50,6 +58,7 @@ export default function SettingsPage() {
   const [cnpj, setCnpj] = useState(currentCompany?.cnpj || '')
   const [segment, setSegment] = useState<SegmentType>(currentCompany?.segment || 'Serviços')
   const [color, setColor] = useState(currentCompany?.color || PALETTE_COLORS[0])
+  const [description, setDescription] = useState(currentCompany?.description || '')
   const [isSavingCompany, setIsSavingCompany] = useState(false)
 
   // Tab 2: Preferences
@@ -68,6 +77,7 @@ export default function SettingsPage() {
       setCnpj(currentCompany.cnpj || '')
       setSegment(currentCompany.segment)
       setColor(currentCompany.color)
+      setDescription(currentCompany.description || '')
     }
   }, [currentCompany])
 
@@ -85,6 +95,7 @@ export default function SettingsPage() {
         cnpj,
         segment,
         color,
+        description,
       })
       toast.success('Informações da empresa salvas com sucesso!')
     } catch (err: any) {
@@ -234,6 +245,19 @@ export default function SettingsPage() {
                     />
                   ))}
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="company-description" className="text-sm font-medium text-slate-700">
+                  Descrição
+                </Label>
+                <Textarea
+                  id="company-description"
+                  placeholder="Breve descrição do segmento de atuação da empresa..."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="rounded-xl min-h-[80px] resize-none"
+                />
               </div>
 
               <div className="pt-4 flex justify-end">

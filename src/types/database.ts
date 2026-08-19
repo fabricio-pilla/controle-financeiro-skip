@@ -2,7 +2,7 @@ export type UserRole = 'owner' | 'admin' | 'member'
 export type MemberStatus = 'active' | 'pending'
 export type AccountType = 'carteira' | 'banco' | 'pix' | 'credito' | 'investimento'
 export type TransactionType = 'receita' | 'despesa'
-export type SegmentType = 'Serviços' | 'Comércio' | 'Indústria' | 'Tecnologia' | 'Outro'
+export type SegmentType = 'Serviços' | 'Comércio' | 'Indústria' | 'Tecnologia' | 'Varejo' | 'Outro'
 export type RecurrenceType = 'mensal' | 'semanal' | 'anual'
 
 export interface User {
@@ -19,6 +19,7 @@ export interface Company {
   cnpj?: string
   segment: SegmentType
   color: string
+  description?: string
   created_at: string
   owner_id: string
 }

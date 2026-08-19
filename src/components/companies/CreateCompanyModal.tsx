@@ -23,6 +23,7 @@ import { PALETTE_COLORS } from '@/lib/skip-cloud'
 import { maskCNPJ } from '@/lib/formatters'
 import { toast } from 'sonner'
 import { Loader2, Building2 } from 'lucide-react'
+import { Textarea } from '@/components/ui/textarea'
 
 interface CreateCompanyModalProps {
   open: boolean
@@ -30,7 +31,14 @@ interface CreateCompanyModalProps {
   onSuccess?: (companyId: string) => void
 }
 
-const SEGMENTS: SegmentType[] = ['Serviços', 'Comércio', 'Indústria', 'Tecnologia', 'Outro']
+const SEGMENTS: SegmentType[] = [
+  'Serviços',
+  'Comércio',
+  'Indústria',
+  'Tecnologia',
+  'Varejo',
+  'Outro',
+]
 
 export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateCompanyModalProps) {
   const { createCompany } = useCompany()
@@ -38,6 +46,7 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
   const [cnpj, setCnpj] = useState('')
   const [segment, setSegment] = useState<SegmentType>('Serviços')
   const [color, setColor] = useState(PALETTE_COLORS[0])
+  const [description, setDescription] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,12 +58,13 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
 
     setIsSubmitting(true)
     try {
-      const comp = await createCompany(name, segment, color, cnpj)
-      toast.success(`Empresa "${comp.name}" criada com sucesso!`)
+      const comp = await createCompany(name, segment, color, cnpj, description)
+      toast.success(`Empresa "${comp.name}" criada com sucesso! Você é o Proprietário.`)
       setName('')
       setCnpj('')
       setSegment('Serviços')
       setColor(PALETTE_COLORS[0])
+      setDescription('')
       onOpenChange(false)
       if (onSuccess) onSuccess(comp.id)
     } catch (err: any) {
@@ -147,6 +157,19 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
                 />
               ))}
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="company-description" className="text-sm font-medium text-slate-700">
+              Descrição (opcional)
+            </Label>
+            <Textarea
+              id="company-description"
+              placeholder="Breve descrição do segmento de atuação da empresa..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="rounded-xl min-h-[80px] resize-none"
+            />
           </div>
 
           <DialogFooter className="pt-4 flex items-center justify-end gap-2">

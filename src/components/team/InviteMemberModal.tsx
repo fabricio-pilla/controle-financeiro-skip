@@ -119,7 +119,7 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
                 <SelectItem value="owner">
                   <div className="flex items-center gap-2">
                     <Shield className="w-4 h-4 text-purple-600" />
-                    <span>Proprietário (Acesso completo e exclusão)</span>
+                    <span>Proprietário (Acesso completo e exclusão da empresa)</span>
                   </div>
                 </SelectItem>
               </SelectContent>

@@ -298,7 +298,9 @@ export default function Index() {
                   <p className="font-semibold text-indigo-950 mb-1">Dica de Demonstração:</p>
                   <p>
                     Use <strong>carlos@empresa.com.br</strong> para acessar como Proprietário da
-                    Nexus Soluções e Aurora Comércio com dados preenchidos.
+                    Nexus Soluções e Aurora Comércio com dados preenchidos. Use{' '}
+                    <strong>lucas@empresa.com.br</strong> para acessar como Membro da Nexus e
+                    Administrador da Aurora.
                   </p>
                 </div>
               </form>

@@ -27,7 +27,8 @@ import {
 
 export default function TeamPage() {
   const { user } = useAuth()
-  const { currentCompany, members, canManageTeam, updateMemberRole, removeMember } = useCompany()
+  const { currentCompany, members, isOwner, canManageTeam, updateMemberRole, removeMember } =
+    useCompany()
 
   const [inviteModalOpen, setInviteModalOpen] = useState(false)
   const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false)
@@ -136,7 +137,8 @@ export default function TeamPage() {
           <div>
             <h2 className="text-xs font-bold text-slate-900">Administrador (Admin)</h2>
             <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-              Gerencia colaboradores, contas, categorias e lançamentos. Não pode excluir a empresa.
+              Convida membros e altera papéis (exceto Proprietário). Gerencia contas, categorias e
+              lançamentos. Não pode excluir a empresa.
             </p>
           </div>
         </div>
@@ -158,7 +160,13 @@ export default function TeamPage() {
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
           <span className="text-sm font-bold text-slate-900">Colaboradores ({members.length})</span>
-          <span className="text-xs text-slate-400">Autenticação persistida via Skip Cloud</span>
+          <span className="text-xs text-slate-400">
+            {isOwner
+              ? 'Você é Proprietário — acesso total à gestão de equipe'
+              : canManageTeam
+                ? 'Você é Administrador — pode convidar e gerenciar, exceto Proprietários'
+                : 'Você é Membro — somente leitura da equipe'}
+          </span>
         </div>
 
         <div className="overflow-x-auto">
@@ -212,7 +220,7 @@ export default function TeamPage() {
                     </td>
 
                     <td className="py-3.5 px-4">
-                      {canManageTeam && !isCurrentUser ? (
+                      {canManageTeam && !isCurrentUser && (isOwner || mem.role !== 'owner') ? (
                         <Select
                           value={mem.role}
                           onValueChange={(v: UserRole) => handleRoleChange(mem.id, v)}
@@ -221,7 +229,8 @@ export default function TeamPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="rounded-xl">
-                            <SelectItem value="owner">Proprietário</SelectItem>
+                            {/* Only the owner can assign or revoke the owner role */}
+                            {isOwner && <SelectItem value="owner">Proprietário</SelectItem>}
                             <SelectItem value="admin">Administrador</SelectItem>
                             <SelectItem value="member">Membro</SelectItem>
                           </SelectContent>
@@ -250,7 +259,7 @@ export default function TeamPage() {
                     </td>
 
                     <td className="py-3.5 px-4 text-center">
-                      {canManageTeam && !isCurrentUser ? (
+                      {canManageTeam && !isCurrentUser && (isOwner || mem.role !== 'owner') ? (
                         <Button
                           variant="ghost"
                           size="icon"

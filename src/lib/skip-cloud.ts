@@ -74,6 +74,8 @@ const SEED_COMPANIES: Company[] = [
     cnpj: '12.345.678/0001-90',
     segment: 'Tecnologia',
     color: '#6366F1',
+    description:
+      'Software house especializada em desenvolvimento de plataformas digitais, aplicativos e infraestrutura cloud para fintechs e e-commerce.',
     created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 90).toISOString(),
     owner_id: 'user-carlos-1',
   },
@@ -81,8 +83,10 @@ const SEED_COMPANIES: Company[] = [
     id: 'comp-varejo-2',
     name: 'Aurora Comércio & Design',
     cnpj: '98.765.432/0001-11',
-    segment: 'Comércio',
+    segment: 'Varejo',
     color: '#10B981',
+    description:
+      'Loja de mobiliário planejado e artigos de decoração com showroom físico, atuando no varejo de design de interiores e ambientação sob medida.',
     created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 60).toISOString(),
     owner_id: 'user-carlos-1',
   },
@@ -129,6 +133,14 @@ const SEED_MEMBERS: CompanyMember[] = [
     role: 'member',
     status: 'active',
     created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 40).toISOString(),
+  },
+  {
+    id: 'mem-6',
+    company_id: 'comp-varejo-2',
+    user_id: 'user-lucas-3',
+    role: 'admin',
+    status: 'active',
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
   },
 ]
 
@@ -520,6 +532,7 @@ function generateSeedTransactions(): Transaction[] {
 
   // Transactions for Aurora Comércio & Design (comp-varejo-2)
   const varejoData = [
+    // Month 1 (current)
     {
       desc: 'Venda de Mobiliário Planejado Loja A',
       amt: 18400,
@@ -592,6 +605,125 @@ function generateSeedTransactions(): Transaction[] {
       days: 24,
       user: 'user-carlos-1',
     },
+    // Month 2 (previous month)
+    {
+      desc: 'Venda de Mobiliário Planejado Loja A',
+      amt: 16800,
+      type: 'receita',
+      cat: 'Vendas',
+      acc: 'acc-varejo-1',
+      days: 33,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Projeto de Decoração Corporativo',
+      amt: 12400,
+      type: 'receita',
+      cat: 'Serviços',
+      acc: 'acc-varejo-1',
+      days: 36,
+      user: 'user-lucas-3',
+    },
+    {
+      desc: 'Fornecedor de Tecidos e Estofados',
+      amt: 6800,
+      type: 'despesa',
+      cat: 'Fornecedores',
+      acc: 'acc-varejo-1',
+      days: 38,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Aluguel do Showroom Comercial',
+      amt: 6500,
+      type: 'despesa',
+      cat: 'Aluguel',
+      acc: 'acc-varejo-1',
+      days: 39,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Salários dos Vendedores e Montadores',
+      amt: 13200,
+      type: 'despesa',
+      cat: 'Salários',
+      acc: 'acc-varejo-1',
+      days: 41,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Campanha de Marketing Digital',
+      amt: 2800,
+      type: 'despesa',
+      cat: 'Marketing',
+      acc: 'acc-varejo-1',
+      days: 45,
+      user: 'user-lucas-3',
+    },
+    {
+      desc: 'Material de Escritório e Embalagens',
+      amt: 980,
+      type: 'despesa',
+      cat: 'Material de escritório',
+      acc: 'acc-varejo-1',
+      days: 48,
+      user: 'user-marina-2',
+    },
+    // Month 3 (two months ago)
+    {
+      desc: 'Venda de Mobiliário Planejado Loja A',
+      amt: 15200,
+      type: 'receita',
+      cat: 'Vendas',
+      acc: 'acc-varejo-1',
+      days: 63,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Venda de Luminárias e Decoração',
+      amt: 6400,
+      type: 'receita',
+      cat: 'Vendas',
+      acc: 'acc-varejo-2',
+      days: 66,
+      user: 'user-marina-2',
+    },
+    {
+      desc: 'Aluguel do Showroom Comercial',
+      amt: 6500,
+      type: 'despesa',
+      cat: 'Aluguel',
+      acc: 'acc-varejo-1',
+      days: 69,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Salários dos Vendedores e Montadores',
+      amt: 12800,
+      type: 'despesa',
+      cat: 'Salários',
+      acc: 'acc-varejo-1',
+      days: 71,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Fornecedor de Madeiras e Acabamentos',
+      amt: 7600,
+      type: 'despesa',
+      cat: 'Fornecedores',
+      acc: 'acc-varejo-1',
+      days: 74,
+      user: 'user-carlos-1',
+    },
+    {
+      desc: 'Frete e Entrega Regional',
+      amt: 1850,
+      type: 'despesa',
+      cat: 'Transporte',
+      acc: 'acc-varejo-1',
+      days: 78,
+      user: 'user-lucas-3',
+    },
   ]
 
   varejoData.forEach((item) => {
@@ -608,7 +740,9 @@ function generateSeedTransactions(): Transaction[] {
       amount: item.amt,
       type: item.type as TransactionType,
       date: getDateStr(item.days),
-      is_recurring: false,
+      is_recurring: item.desc.includes('Aluguel') || item.desc.includes('Salários'),
+      recurrence_type:
+        item.desc.includes('Aluguel') || item.desc.includes('Salários') ? 'mensal' : undefined,
       created_at: new Date(now.getTime() - 1000 * 60 * 60 * 24 * item.days).toISOString(),
     })
   })
@@ -749,6 +883,7 @@ class SkipCloudClient {
     segment: SegmentType,
     color: string,
     cnpj?: string,
+    description?: string,
   ): Promise<Company> {
     const user = await this.getCurrentUser()
     if (!user) throw new Error('Usuário não autenticado.')
@@ -760,6 +895,7 @@ class SkipCloudClient {
       cnpj: cnpj?.trim() || undefined,
       segment,
       color,
+      description: description?.trim() || undefined,
       created_at: new Date().toISOString(),
       owner_id: user.id,
     }
@@ -800,13 +936,41 @@ class SkipCloudClient {
 
   async updateCompany(
     companyId: string,
-    data: Partial<Pick<Company, 'name' | 'cnpj' | 'segment' | 'color'>>,
+    data: Partial<Pick<Company, 'name' | 'cnpj' | 'segment' | 'color' | 'description'>>,
   ): Promise<Company> {
     const comp = this.companies.find((c) => c.id === companyId)
     if (!comp) throw new Error('Empresa não encontrada.')
     Object.assign(comp, data)
     this.saveToSession()
     return comp
+  }
+
+  // Aggregated stats for a company (members count + financial balance)
+  async getCompanyStats(companyId: string): Promise<{
+    membersCount: number
+    balance: number
+    income: number
+    expense: number
+    transactionsCount: number
+  }> {
+    const membersCount = this.members.filter(
+      (m) => m.company_id === companyId && m.status === 'active',
+    ).length
+    const accs = this.accounts.filter((a) => a.company_id === companyId)
+    const balance = accs.reduce((acc, a) => {
+      if (a.type === 'credito') return acc
+      return acc + (a.balance || 0)
+    }, 0)
+    const txs = this.transactions.filter((t) => t.company_id === companyId)
+    const income = txs.filter((t) => t.type === 'receita').reduce((sum, t) => sum + t.amount, 0)
+    const expense = txs.filter((t) => t.type === 'despesa').reduce((sum, t) => sum + t.amount, 0)
+    return {
+      membersCount,
+      balance,
+      income,
+      expense,
+      transactionsCount: txs.length,
+    }
   }
 
   async deleteCompany(companyId: string): Promise<void> {
