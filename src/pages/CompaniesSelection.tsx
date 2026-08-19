@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -24,33 +24,61 @@ export default function CompaniesSelection() {
   const [navigatingId, setNavigatingId] = useState<string | null>(null)
   const [statsMap, setStatsMap] = useState<Record<string, CompanyStats>>({})
 
-  // Load aggregated stats (members count + saldo) for each company card
+  // Track which company ids we've already requested stats for in this mount,
+  // plus the ids of the current request in flight, so a re-render that yields
+  // the same `userCompanies` reference (e.g. from an unrelated state change in
+  // CompanyContext) does NOT trigger a duplicate stats fetch.
+  const loadedIdsRef = useRef<Set<string>>(new Set())
+  const inflightRef = useRef<Set<string>>(new Set())
+
   useEffect(() => {
-    let active = true
+    let cancelled = false
+
     const loadStats = async () => {
-      const entries = await Promise.all(
-        userCompanies.map(async (comp) => {
-          const s = await getCompanyStats(comp.id)
-          return [comp.id, s] as const
+      // Only request stats for companies we haven't loaded yet.
+      const targets = userCompanies.filter((c) => !loadedIdsRef.current.has(c.id))
+      if (targets.length === 0) {
+        if (userCompanies.length === 0) setStatsMap({})
+        return
+      }
+      targets.forEach((c) => {
+        loadedIdsRef.current.add(c.id)
+        inflightRef.current.add(c.id)
+      })
+
+      const results = await Promise.all(
+        targets.map(async (comp) => {
+          try {
+            const s = await getCompanyStats(comp.id)
+            return [comp.id, s] as const
+          } catch (e) {
+            console.error('[CompaniesSelection] getCompanyStats falhou para', comp.id, e)
+            return [comp.id, null] as const
+          } finally {
+            inflightRef.current.delete(comp.id)
+          }
         }),
       )
-      if (!active) return
-      const next: Record<string, CompanyStats> = {}
-      entries.forEach(([id, s]) => {
-        next[id] = s
+      if (cancelled) return
+      setStatsMap((prev) => {
+        const next = { ...prev }
+        for (const [id, s] of results) {
+          if (s) next[id] = s
+        }
+        // Drop entries for companies that are no longer in the list.
+        const currentIds = new Set(userCompanies.map((c) => c.id))
+        for (const id of Object.keys(next)) {
+          if (!currentIds.has(id)) delete next[id]
+        }
+        return next
       })
-      setStatsMap(next)
     }
-    if (userCompanies.length > 0) {
-      loadStats()
-    } else {
-      setStatsMap({})
-    }
+
+    loadStats()
     return () => {
-      active = false
+      cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userCompanies])
+  }, [userCompanies, getCompanyStats])
 
   const handleSelectCompany = async (companyId: string) => {
     setNavigatingId(companyId)

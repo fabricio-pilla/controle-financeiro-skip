@@ -380,25 +380,36 @@ class SkipCloudService {
     transactionsCount: number
   }> {
     try {
-      const [members, accs, txs] = await Promise.all([
-        pb.collection('company_members').getFullList({
+      // Lightweight payload: only fetch the fields we actually aggregate on.
+      // membersCount comes from getList(1,1).totalItems (no rows serialized for
+      // the full list), accounts/transactions only pull type+amount/balance.
+      const [membersPage, accs, txs] = await Promise.all([
+        pb.collection('company_members').getList(1, 1, {
           filter: `company_id="${companyId}" && status="active"`,
+          // no expand / extra fields — we only need the count
         }),
-        pb.collection('accounts').getFullList({ filter: `company_id="${companyId}"` }),
-        pb.collection('transactions').getFullList({ filter: `company_id="${companyId}"` }),
+        pb.collection('accounts').getFullList({
+          filter: `company_id="${companyId}"`,
+          fields: 'type,balance',
+        }),
+        pb.collection('transactions').getFullList({
+          filter: `company_id="${companyId}"`,
+          fields: 'type,amount',
+        }),
       ])
       const balance = accs.reduce((acc: number, a: any) => {
         if (a.type === 'credito') return acc
         return acc + (Number(a.balance) || 0)
       }, 0)
-      const income = txs
-        .filter((t: any) => t.type === 'receita')
-        .reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0)
-      const expense = txs
-        .filter((t: any) => t.type === 'despesa')
-        .reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0)
+      let income = 0
+      let expense = 0
+      for (const t of txs as any[]) {
+        const amt = Number(t.amount) || 0
+        if (t.type === 'receita') income += amt
+        else if (t.type === 'despesa') expense += amt
+      }
       return {
-        membersCount: members.length,
+        membersCount: membersPage.totalItems,
         balance,
         income,
         expense,
