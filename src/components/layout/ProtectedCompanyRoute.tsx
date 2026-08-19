@@ -7,7 +7,7 @@ import { Loader2 } from 'lucide-react'
 
 export function ProtectedCompanyRoute() {
   const { user, isLoading: authLoading } = useAuth()
-  const { currentCompany, userCompanies, selectCompany, isCompanyLoading } = useCompany()
+  const { currentCompany, userCompanies, selectCompany, isCompanyLoading, isLoading } = useCompany()
   const { empresaId } = useParams<{ empresaId: string }>()
 
   useEffect(() => {
@@ -26,6 +26,17 @@ export function ProtectedCompanyRoute() {
 
   if (!user) {
     return <Navigate to="/" replace />
+  }
+
+  // While the user's companies are still being fetched we cannot know whether
+  // they have access to this company, so show a loading state instead of
+  // risking a false redirect to /empresas.
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    )
   }
 
   // Validate if user has access to this company

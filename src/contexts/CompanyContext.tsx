@@ -138,6 +138,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setIsLoading(false)
       return
     }
+    // Flip back to loading so consumers (e.g. ProtectedCompanyRoute) know the
+    // access list is being refreshed and don't redirect prematurely.
+    setIsLoading(true)
     try {
       const comps = await skipCloud.getUserCompanies(user.id)
       setUserCompanies(comps)
