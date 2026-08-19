@@ -1,8 +1,8 @@
 /**
  * Migration Schema definition for Skip Cloud Backend
  * Collections:
- * - companies
- * - company_members
+ * - financial_controls
+ * - control_members
  * - accounts
  * - categories
  * - transactions
@@ -21,36 +21,38 @@ export const SKIP_CLOUD_SCHEMA = {
       },
     },
     {
-      name: 'companies',
+      name: 'financial_controls',
       fields: {
         id: 'string (primary key, uuid)',
         name: 'string (required)',
-        segment: 'enum (Serviços, Comércio, Indústria, Tecnologia, Varejo, Outro)',
+        segment: 'enum (Pessoal, Família, Casa, Casal, Indivíduo, Outro)',
         color: 'string (hex)',
         description: 'text (optional)',
         created_at: 'timestamp (default now())',
         owner_id: 'string (references users.id)',
+        owner_email: 'string (optional)',
       },
-      indexes: ['owner_id'],
+      indexes: ['owner_id', 'owner_email'],
     },
     {
-      name: 'company_members',
+      name: 'control_members',
       fields: {
         id: 'string (primary key, uuid)',
-        company_id: 'string (references companies.id, cascade delete)',
+        control_id: 'string (references financial_controls.id, cascade delete)',
         user_id: 'string (references users.id)',
+        email: 'string (optional)',
         role: 'enum (owner, admin, member)',
         status: 'enum (active, pending)',
         invited_email: 'string (optional)',
         created_at: 'timestamp (default now())',
       },
-      indexes: ['company_id', 'user_id', 'invited_email'],
+      indexes: ['control_id', 'user_id', 'email'],
     },
     {
       name: 'accounts',
       fields: {
         id: 'string (primary key, uuid)',
-        company_id: 'string (references companies.id, cascade delete)',
+        control_id: 'string (references financial_controls.id, cascade delete)',
         name: 'string (required)',
         type: 'enum (carteira, banco, pix, credito, investimento)',
         balance: 'number (default 0)',
@@ -59,26 +61,27 @@ export const SKIP_CLOUD_SCHEMA = {
         bank: 'string (optional)',
         created_at: 'timestamp (default now())',
       },
-      indexes: ['company_id'],
+      indexes: ['control_id'],
     },
     {
       name: 'categories',
       fields: {
         id: 'string (primary key, uuid)',
-        company_id: 'string (references companies.id, cascade delete)',
+        control_id: 'string (references financial_controls.id, cascade delete)',
         name: 'string (required)',
         type: 'enum (receita, despesa)',
         color: 'string (hex)',
         icon: 'string',
+        is_default: 'boolean (optional)',
         created_at: 'timestamp (default now())',
       },
-      indexes: ['company_id', 'type'],
+      indexes: ['control_id', 'type'],
     },
     {
       name: 'transactions',
       fields: {
         id: 'string (primary key, uuid)',
-        company_id: 'string (references companies.id, cascade delete)',
+        control_id: 'string (references financial_controls.id, cascade delete)',
         account_id: 'string (references accounts.id)',
         category_id: 'string (references categories.id)',
         user_id: 'string (references users.id)',
@@ -94,18 +97,18 @@ export const SKIP_CLOUD_SCHEMA = {
         notes: 'string (optional)',
         created_at: 'timestamp (default now())',
       },
-      indexes: ['company_id', 'date', 'account_id', 'category_id'],
+      indexes: ['control_id', 'date', 'account_id', 'category_id'],
     },
   ],
   triggers: [
     {
-      event: 'on_company_created',
+      event: 'on_control_created',
       description:
-        'Cria automaticamente as categorias padrão de receitas e despesas ao registrar uma nova empresa.',
+        'Cria automaticamente as categorias padrão de receitas e despesas ao registrar um novo controle financeiro.',
     },
     {
-      event: 'on_company_deleted',
-      description: 'Exclui em cascata company_members, accounts, categories e transactions.',
+      event: 'on_control_deleted',
+      description: 'Exclui em cascata control_members, accounts, categories e transactions.',
     },
   ],
 }

@@ -5,7 +5,7 @@ import { useCompany } from '@/contexts/CompanyContext'
 import { CreateCompanyModal } from '@/components/companies/CreateCompanyModal'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, getGreeting, getInitials } from '@/lib/formatters'
-import { Building2, Plus, ArrowRight, Users, LogOut, Sparkles, Wallet, Loader2 } from 'lucide-react'
+import { Plus, ArrowRight, Users, LogOut, Sparkles, Wallet, Loader2 } from 'lucide-react'
 
 interface CompanyStats {
   membersCount: number
@@ -101,11 +101,11 @@ export default function ControlsSelection() {
       <header className="max-w-5xl w-full mx-auto flex items-center justify-between pb-8 border-b border-slate-200">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black text-lg shadow-md">
-            <Building2 className="w-5 h-5" />
+            <Wallet className="w-5 h-5" />
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900 leading-none">Controle Financeiro</h1>
-            <p className="text-xs text-slate-500 mt-1">Skip Cloud Multi-tenant</p>
+            <p className="text-xs text-slate-500 mt-1">Pessoal e Familiar</p>
           </div>
         </div>
 
@@ -134,7 +134,7 @@ export default function ControlsSelection() {
         <div className="mb-8">
           <div className="flex items-center gap-2 text-indigo-600 text-sm font-semibold mb-1">
             <Sparkles className="w-4 h-4" />
-            <span>Painel Multi-tenant</span>
+            <span>Meus Controles</span>
           </div>
           <h2 className="text-3xl font-bold text-slate-900 tracking-tight">
             {getGreeting(user?.name)} Selecione um controle
@@ -242,7 +242,7 @@ export default function ControlsSelection() {
 
       {/* Footer */}
       <footer className="max-w-5xl w-full mx-auto pt-8 border-t border-slate-200 text-center text-xs text-slate-400">
-        Skip Cloud Multi-tenant Architecture • Todos os dados isolados por Controle ID
+        Controle Financeiro Pessoal e Familiar
       </footer>
 
       {/* Create Company Modal */}

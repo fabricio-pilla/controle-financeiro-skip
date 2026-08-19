@@ -16,7 +16,7 @@ import { useCompany } from '@/contexts/CompanyContext'
  *   changes, then render <Outlet/> for the nested routes once selected.
  */
 export default function ProtectedCompanyRoute() {
-  const { user, loading: authLoading } = useAuth()
+  const { user, isLoading: authLoading } = useAuth()
   const { currentCompany, userCompanies, isLoading: isCompanyLoading, selectCompany } = useCompany()
   const { controleId } = useParams<{ controleId: string }>()
 

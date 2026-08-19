@@ -73,7 +73,7 @@ interface CompanyContextType {
   }) => Promise<Account>
   updateAccount: (
     accountId: string,
-    data: Partial<Omit<Account, 'id' | 'company_id' | 'created_at'>>,
+    data: Partial<Omit<Account, 'id' | 'control_id' | 'created_at'>>,
   ) => Promise<Account>
   deleteAccount: (accountId: string) => Promise<void>
 
@@ -86,7 +86,7 @@ interface CompanyContextType {
   }) => Promise<Category>
   updateCategory: (
     categoryId: string,
-    data: Partial<Omit<Category, 'id' | 'company_id' | 'created_at'>>,
+    data: Partial<Omit<Category, 'id' | 'control_id' | 'created_at'>>,
   ) => Promise<Category>
   deleteCategory: (categoryId: string) => Promise<void>
 
@@ -105,7 +105,7 @@ interface CompanyContextType {
   }) => Promise<Transaction>
   updateTransaction: (
     transactionId: string,
-    data: Partial<Omit<Transaction, 'id' | 'company_id' | 'created_at' | 'user_id'>>,
+    data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
   ) => Promise<Transaction>
   deleteTransaction: (transactionId: string) => Promise<void>
 
@@ -284,7 +284,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   )
 
   const updateAccount = useCallback(
-    async (accountId: string, data: Partial<Omit<Account, 'id' | 'company_id' | 'created_at'>>) => {
+    async (accountId: string, data: Partial<Omit<Account, 'id' | 'control_id' | 'created_at'>>) => {
       const acc = await skipCloud.updateAccount(accountId, data)
       await reloadCompanyData()
       return acc
@@ -314,7 +314,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const updateCategory = useCallback(
     async (
       categoryId: string,
-      data: Partial<Omit<Category, 'id' | 'company_id' | 'created_at'>>,
+      data: Partial<Omit<Category, 'id' | 'control_id' | 'created_at'>>,
     ) => {
       const cat = await skipCloud.updateCategory(categoryId, data)
       await reloadCompanyData()
@@ -356,7 +356,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const updateTransaction = useCallback(
     async (
       transactionId: string,
-      data: Partial<Omit<Transaction, 'id' | 'company_id' | 'created_at' | 'user_id'>>,
+      data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
     ) => {
       const tx = await skipCloud.updateTransaction(transactionId, data)
       await reloadCompanyData()

@@ -15,7 +15,7 @@ import TeamPage from './pages/TeamPage'
 import SettingsPage from './pages/SettingsPage'
 import NotFound from './pages/NotFound'
 
-import { ProtectedCompanyRoute } from './components/layout/ProtectedCompanyRoute'
+import ProtectedCompanyRoute from './components/layout/ProtectedCompanyRoute'
 
 const App = () => (
   <BrowserRouter>

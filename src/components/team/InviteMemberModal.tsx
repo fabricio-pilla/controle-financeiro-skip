@@ -129,9 +129,9 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
             <p className="font-semibold text-slate-800 mb-1">Como funciona o convite:</p>
             <p>
-              Se o colaborador já possuir conta no Skip Cloud, o controle aparecerá no painel dele
-              imediatamente. Caso contrário, ele terá acesso total após o cadastro com este mesmo
-              e-mail.
+              Se o colaborador já possuir conta no Controle Financeiro, o controle aparecerá no
+              painel dele imediatamente. Caso contrário, ele terá acesso total após o cadastro com
+              este mesmo e-mail.
             </p>
           </div>
 

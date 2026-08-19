@@ -20,21 +20,23 @@ import {
 import pb from '@/lib/pocketbase/client'
 
 export const DEFAULT_EXPENSE_CATEGORIES = [
-  { name: 'Aluguel', color: '#EF4444', icon: 'Home' },
-  { name: 'Salários', color: '#F97316', icon: 'Users' },
-  { name: 'Fornecedores', color: '#F59E0B', icon: 'Truck' },
-  { name: 'Marketing', color: '#EC4899', icon: 'Megaphone' },
-  { name: 'Impostos', color: '#8B5CF6', icon: 'Receipt' },
-  { name: 'Transporte', color: '#06B6D4', icon: 'Car' },
-  { name: 'Material de escritório', color: '#6366F1', icon: 'FileText' },
-  { name: 'Utilidades', color: '#10B981', icon: 'Zap' },
+  { name: 'Moradia', color: '#EF4444', icon: 'Home' },
+  { name: 'Alimentação', color: '#F97316', icon: 'Utensils' },
+  { name: 'Transporte', color: '#F59E0B', icon: 'Car' },
+  { name: 'Saúde', color: '#EC4899', icon: 'Heart' },
+  { name: 'Educação', color: '#8B5CF6', icon: 'Book' },
+  { name: 'Lazer', color: '#06B6D4', icon: 'Gamepad2' },
+  { name: 'Compras', color: '#6366F1', icon: 'ShoppingBag' },
+  { name: 'Assinaturas', color: '#10B981', icon: 'Repeat' },
+  { name: 'Utilidades', color: '#3B82F6', icon: 'Zap' },
   { name: 'Outros', color: '#64748B', icon: 'MoreHorizontal' },
 ]
 
 export const DEFAULT_INCOME_CATEGORIES = [
-  { name: 'Vendas', color: '#10B981', icon: 'ShoppingBag' },
-  { name: 'Serviços', color: '#06B6D4', icon: 'Briefcase' },
+  { name: 'Salário', color: '#10B981', icon: 'Briefcase' },
+  { name: 'Freelance', color: '#06B6D4', icon: 'Laptop' },
   { name: 'Investimentos', color: '#8B5CF6', icon: 'TrendingUp' },
+  { name: 'Reembolsos', color: '#F59E0B', icon: 'Undo2' },
   { name: 'Outros', color: '#64748B', icon: 'PlusCircle' },
 ]
 
