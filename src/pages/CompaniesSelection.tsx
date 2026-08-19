@@ -221,7 +221,12 @@ export default function CompaniesSelection() {
       <CreateCompanyModal
         open={createModalOpen}
         onOpenChange={setCreateModalOpen}
-        onSuccess={(newId) => navigate(`/empresa/${newId}/dashboard`)}
+        onSuccess={() => {
+          // The newly created company belongs to the informed owner, not
+          // necessarily the current admin — so we only close the modal and
+          // refresh the list (handled by reloadUserCompanies in the context).
+          setCreateModalOpen(false)
+        }}
       />
     </div>
   )

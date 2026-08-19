@@ -880,10 +880,31 @@ class SkipCloudClient {
     name: string,
     segment: SegmentType,
     color: string,
+    ownerEmail: string,
     description?: string,
   ): Promise<Company> {
-    const user = await this.getCurrentUser()
-    if (!user) throw new Error('Usuário não autenticado.')
+    const currentUser = await this.getCurrentUser()
+    if (!currentUser) throw new Error('Usuário não autenticado.')
+
+    const normalizedEmail = ownerEmail.trim().toLowerCase()
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      throw new Error('Informe um e-mail válido para o responsável da empresa.')
+    }
+
+    // Find an existing user by e-mail, or create a new one.
+    // The creator (currentUser) is NOT linked to the company unless the
+    // informed ownerEmail is exactly their own e-mail.
+    let ownerUser = this.users.find((u) => u.email.toLowerCase() === normalizedEmail)
+    if (!ownerUser) {
+      ownerUser = {
+        id: `user-${Date.now()}`,
+        name: normalizedEmail.split('@')[0].replace(/[._-]+/g, ' '),
+        email: normalizedEmail,
+        avatar: `https://img.usecurling.com/ppl/medium?seed=${Math.floor(Math.random() * 50)}`,
+        created_at: new Date().toISOString(),
+      }
+      this.users.push(ownerUser)
+    }
 
     const companyId = `comp-${Date.now()}`
     const newCompany: Company = {
@@ -893,16 +914,17 @@ class SkipCloudClient {
       color,
       description: description?.trim() || undefined,
       created_at: new Date().toISOString(),
-      owner_id: user.id,
+      owner_id: ownerUser.id,
     }
 
     this.companies.push(newCompany)
 
-    // Trigger: create owner membership
+    // Link the responsible user (found or created) as owner of the company.
+    // The creator receives no membership unless they ARE the informed owner.
     const ownerMember: CompanyMember = {
       id: `mem-${Date.now()}`,
       company_id: companyId,
-      user_id: user.id,
+      user_id: ownerUser.id,
       role: 'owner',
       status: 'active',
       created_at: new Date().toISOString(),

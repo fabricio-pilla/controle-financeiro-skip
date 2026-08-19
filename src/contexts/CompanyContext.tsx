@@ -47,6 +47,7 @@ interface CompanyContextType {
     name: string,
     segment: SegmentType,
     color: string,
+    ownerEmail: string,
     description?: string,
   ) => Promise<Company>
   updateCompany: (
@@ -207,11 +208,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     name: string,
     segment: SegmentType,
     color: string,
+    ownerEmail: string,
     description?: string,
   ) => {
-    const comp = await skipCloud.createCompany(name, segment, color, description)
+    const comp = await skipCloud.createCompany(name, segment, color, ownerEmail, description)
+    // Do NOT select the new company: it belongs to the informed owner, not
+    // necessarily the current admin. Just refresh the list of companies the
+    // current user can see.
     await reloadUserCompanies()
-    await selectCompany(comp.id)
     return comp
   }
 

@@ -44,6 +44,7 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
   const [name, setName] = useState('')
   const [segment, setSegment] = useState<SegmentType>('Serviços')
   const [color, setColor] = useState(PALETTE_COLORS[0])
+  const [ownerEmail, setOwnerEmail] = useState('')
   const [description, setDescription] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -53,14 +54,26 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
       toast.error('Informe o nome da empresa')
       return
     }
+    const trimmedEmail = ownerEmail.trim()
+    if (!trimmedEmail) {
+      toast.error('Informe o e-mail do responsável pela empresa')
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      toast.error('Informe um e-mail válido para o responsável')
+      return
+    }
 
     setIsSubmitting(true)
     try {
-      const comp = await createCompany(name, segment, color, description)
-      toast.success(`Empresa "${comp.name}" criada com sucesso! Você é o Proprietário.`)
+      const comp = await createCompany(name, segment, color, trimmedEmail, description)
+      toast.success(
+        `Empresa "${comp.name}" criada com sucesso! O responsável (${trimmedEmail}) foi vinculado como Proprietário.`,
+      )
       setName('')
       setSegment('Serviços')
       setColor(PALETTE_COLORS[0])
+      setOwnerEmail('')
       setDescription('')
       onOpenChange(false)
       if (onSuccess) onSuccess(comp.id)
@@ -139,6 +152,26 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
                 />
               ))}
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="company-owner-email" className="text-sm font-medium text-slate-700">
+              E-mail do Responsável *
+            </Label>
+            <Input
+              id="company-owner-email"
+              type="email"
+              placeholder="Ex: responsavel@empresa.com.br"
+              value={ownerEmail}
+              onChange={(e) => setOwnerEmail(e.target.value)}
+              className="rounded-xl h-11"
+              required
+              autoComplete="off"
+            />
+            <p className="text-xs text-slate-500">
+              Esta pessoa será o Proprietário da empresa e terá acesso a ela. A empresa não será
+              vinculada ao seu próprio e-mail, a menos que você informe o seu.
+            </p>
           </div>
 
           <div className="space-y-1.5">
