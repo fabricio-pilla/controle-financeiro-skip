@@ -115,7 +115,7 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
             {isEditing ? 'Editar Conta Financeira' : 'Nova Conta Financeira'}
           </DialogTitle>
           <DialogDescription className="text-sm text-slate-500">
-            Gerencie carteiras, bancos, cartões ou investimentos da empresa.
+            Gerencie carteiras, bancos, cartões ou investimentos do controle.
           </DialogDescription>
         </DialogHeader>
 

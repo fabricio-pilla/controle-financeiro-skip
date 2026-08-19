@@ -1,24 +1,24 @@
-import React, { useEffect } from 'react'
-import { useParams, Navigate, Outlet } from 'react-router-dom'
+import { Navigate, Outlet, useParams } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
-import { AppLayout } from '@/components/layout/AppLayout'
-import { Loader2 } from 'lucide-react'
 
-export function ProtectedCompanyRoute() {
-  const { user, isLoading: authLoading } = useAuth()
-  const { currentCompany, userCompanies, selectCompany, isCompanyLoading, isLoading } = useCompany()
-  const { empresaId } = useParams<{ empresaId: string }>()
-
-  // Kick off company selection whenever the route param changes and we have a
-  // logged-in user. `selectCompany` is now a stable callback, but we still
-  // include currentCompany.id so we do not re-select the company we are
-  // already on — the `!== empresaId` guard inside handles that.
-  useEffect(() => {
-    if (!empresaId || !user) return
-    if (currentCompany && currentCompany.id === empresaId) return
-    selectCompany(empresaId)
-  }, [empresaId, user, currentCompany, selectCompany])
+/**
+ * Guards routes that require an active financial control (tenant) selected.
+ *
+ * - If not authenticated -> redirect to "/".
+ * - If the user's control list is still loading -> show a spinner. We CANNOT
+ *   check `userCompanies.length > 0` while loading, because an empty list
+ *   during loading would produce a false "no access" redirect.
+ * - Once the list is loaded, if the requested control is not in the list,
+ *   redirect to /controles.
+ * - Otherwise, kick off `selectCompany(controleId)` when the route param
+ *   changes, then render <Outlet/> for the nested routes once selected.
+ */
+export default function ProtectedCompanyRoute() {
+  const { user, loading: authLoading } = useAuth()
+  const { currentCompany, userCompanies, isLoading: isCompanyLoading, selectCompany } = useCompany()
+  const { controleId } = useParams<{ controleId: string }>()
 
   if (authLoading) {
     return (
@@ -32,13 +32,10 @@ export function ProtectedCompanyRoute() {
     return <Navigate to="/" replace />
   }
 
-  // While the user's companies are still being fetched we cannot know whether
-  // they have access to this company, so show a loading state instead of
-  // risking a false redirect to /empresas. `isLoading` is the CompanyContext
-  // loading flag for the user's company LIST — it stays true until the list
-  // finishes loading, even if the list is empty, preventing premature
-  // redirects caused by `userCompanies.length > 0` checks.
-  if (isLoading) {
+  // While the user's controls are still being fetched we cannot know whether
+  // they have access, so show a loading state instead of risking a false
+  // redirect to /controles.
+  if (isCompanyLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
@@ -46,17 +43,23 @@ export function ProtectedCompanyRoute() {
     )
   }
 
-  // Only validate access once we actually have the company list. The
-  // `isLoading` guard above already covers the loading case, so an empty list
-  // here means the user genuinely has no companies — redirect to /empresas.
-  if (empresaId && userCompanies.length > 0) {
-    const hasAccess = userCompanies.some((c) => c.id === empresaId)
+  // Only validate access once we actually have the control list. An empty list
+  // here means the user genuinely has no controls — redirect to /controles.
+  if (controleId && userCompanies.length === 0) {
+    return <Navigate to="/controles" replace />
+  }
+
+  if (controleId && userCompanies.length > 0) {
+    const hasAccess = userCompanies.some((c) => c.id === controleId)
     if (!hasAccess) {
-      return <Navigate to="/empresas" replace />
+      return <Navigate to="/controles" replace />
     }
   }
 
-  if (isCompanyLoading && (!currentCompany || currentCompany.id !== empresaId)) {
+  // Kick off control selection whenever the route param changes. The
+  // `!== controleId` guard inside selectCompany avoids re-selecting.
+  if (controleId && (!currentCompany || currentCompany.id !== controleId)) {
+    selectCompany(controleId)
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
@@ -64,9 +67,13 @@ export function ProtectedCompanyRoute() {
     )
   }
 
-  return (
-    <AppLayout>
-      <Outlet />
-    </AppLayout>
-  )
+  if (!currentCompany) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    )
+  }
+
+  return <Outlet />
 }

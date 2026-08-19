@@ -244,7 +244,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   const updateCompany = useCallback(
     async (data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>) => {
-      if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
+      if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const updated = await skipCloud.updateCompany(currentCompany.id, data)
       setCurrentCompany(updated)
       await reloadUserCompanies()
@@ -258,7 +258,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const deleteCompany = useCallback(async () => {
-    if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
+    if (!currentCompany) throw new Error('Nenhum controle selecionado.')
     await skipCloud.deleteCompany(currentCompany.id)
     setCurrentCompany(null)
     setCurrentRole(null)
@@ -275,7 +275,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       color: string
       bank?: string
     }) => {
-      if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
+      if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const acc = await skipCloud.createAccount(currentCompany.id, data)
       await reloadCompanyData()
       return acc
@@ -303,7 +303,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   // Category operations
   const createCategory = useCallback(
     async (data: { name: string; type: TransactionType; color: string; icon: string }) => {
-      if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
+      if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const cat = await skipCloud.createCategory(currentCompany.id, data)
       await reloadCompanyData()
       return cat
@@ -345,7 +345,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       notes?: string
       installments_total?: number
     }) => {
-      if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
+      if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const tx = await skipCloud.createTransaction(currentCompany.id, data)
       await reloadCompanyData()
       return tx
@@ -376,7 +376,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   // Team operations
   const inviteMember = useCallback(
     async (email: string, role: UserRole) => {
-      if (!currentCompany) throw new Error('Nenhuma empresa selecionada.')
+      if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const mem = await skipCloud.inviteMember(currentCompany.id, email, role)
       await reloadCompanyData()
       return mem

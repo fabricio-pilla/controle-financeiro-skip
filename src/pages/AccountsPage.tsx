@@ -177,7 +177,7 @@ export default function AccountsPage() {
               {formatCurrency(totals.totalCreditUsed)}
             </p>
             <p className="text-[11px] text-rose-500 font-medium mt-0.5">
-              Comprometimento de crédito corporativo
+              Comprometimento de crédito
             </p>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center">
@@ -304,7 +304,7 @@ export default function AccountsPage() {
             </div>
             <h2 className="text-base font-bold text-slate-900">Cadastrar Nova Conta</h2>
             <p className="text-xs text-slate-500 mt-1 max-w-[220px]">
-              Adicione contas bancárias, caixas físicos ou cartões de crédito corporativos.
+              Adicione contas bancárias, caixas físicos ou cartões de crédito.
             </p>
           </button>
         )}

@@ -2,7 +2,7 @@ export type UserRole = 'owner' | 'admin' | 'member'
 export type MemberStatus = 'active' | 'pending'
 export type AccountType = 'carteira' | 'banco' | 'pix' | 'credito' | 'investimento'
 export type TransactionType = 'receita' | 'despesa'
-export type SegmentType = 'Serviços' | 'Comércio' | 'Indústria' | 'Tecnologia' | 'Varejo' | 'Outro'
+export type SegmentType = 'Pessoal' | 'Família' | 'Casa' | 'Casal' | 'Indivíduo' | 'Outro'
 export type RecurrenceType = 'mensal' | 'semanal' | 'anual'
 
 export interface User {
@@ -21,11 +21,12 @@ export interface Company {
   description?: string
   created_at: string
   owner_id: string
+  owner_email?: string
 }
 
 export interface CompanyMember {
   id: string
-  company_id: string
+  control_id: string
   user_id: string
   role: UserRole
   status: MemberStatus
@@ -38,7 +39,7 @@ export interface CompanyMember {
 
 export interface Account {
   id: string
-  company_id: string
+  control_id: string
   name: string
   type: AccountType
   balance: number
@@ -50,7 +51,7 @@ export interface Account {
 
 export interface Category {
   id: string
-  company_id: string
+  control_id: string
   name: string
   type: TransactionType
   color: string
@@ -61,7 +62,7 @@ export interface Category {
 
 export interface Transaction {
   id: string
-  company_id: string
+  control_id: string
   account_id: string
   category_id: string
   user_id: string

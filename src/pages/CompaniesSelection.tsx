@@ -15,7 +15,7 @@ interface CompanyStats {
   transactionsCount: number
 }
 
-export default function CompaniesSelection() {
+export default function ControlsSelection() {
   const { user, logout } = useAuth()
   const { userCompanies, selectCompany, isLoading, getCompanyStats } = useCompany()
   const navigate = useNavigate()
@@ -84,7 +84,7 @@ export default function CompaniesSelection() {
     setNavigatingId(companyId)
     const ok = await selectCompany(companyId)
     if (ok) {
-      navigate(`/empresa/${companyId}/dashboard`)
+      navigate(`/controle/${companyId}/dashboard`)
     } else {
       setNavigatingId(null)
     }
@@ -104,7 +104,7 @@ export default function CompaniesSelection() {
             <Building2 className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-900 leading-none">Finanças Multiempresa</h1>
+            <h1 className="text-xl font-bold text-slate-900 leading-none">Controle Financeiro</h1>
             <p className="text-xs text-slate-500 mt-1">Skip Cloud Multi-tenant</p>
           </div>
         </div>
@@ -137,11 +137,11 @@ export default function CompaniesSelection() {
             <span>Painel Multi-tenant</span>
           </div>
           <h2 className="text-3xl font-bold text-slate-900 tracking-tight">
-            {getGreeting(user?.name)} Selecione uma empresa
+            {getGreeting(user?.name)} Selecione um controle
           </h2>
           <p className="text-slate-500 text-sm mt-1">
-            Escolha qual ambiente empresarial você deseja gerenciar ou registre uma nova
-            organização. Você só vê as empresas vinculadas ao seu e-mail.
+            Escolha qual controle financeiro você deseja gerenciar ou registre um novo controle.
+            Você só vê os controles vinculados ao seu e-mail.
           </p>
         </div>
 
@@ -149,7 +149,7 @@ export default function CompaniesSelection() {
         {isLoading ? (
           <div className="flex items-center justify-center py-20 text-slate-400">
             <Loader2 className="w-6 h-6 animate-spin mr-2" />
-            <span className="text-sm">Carregando suas empresas...</span>
+            <span className="text-sm">Carregando seus controles...</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -216,9 +216,9 @@ export default function CompaniesSelection() {
               <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md group-hover:scale-110 transition-transform mb-3">
                 <Plus className="w-6 h-6" />
               </div>
-              <h3 className="text-base font-bold text-indigo-950">Criar Nova Empresa</h3>
+              <h3 className="text-base font-bold text-indigo-950">Criar Novo Controle</h3>
               <p className="text-xs text-indigo-700/80 mt-1 max-w-[200px]">
-                Adicione uma nova empresa ou filial com plano de contas e categorias automáticas.
+                Adicione um novo controle com plano de contas e categorias automáticas.
               </p>
             </button>
           </div>
@@ -227,14 +227,14 @@ export default function CompaniesSelection() {
         {!isLoading && userCompanies.length === 0 && (
           <div className="text-center py-16">
             <p className="text-sm text-slate-500 mb-4">
-              Você ainda não possui empresas vinculadas ao seu e-mail.
+              Você ainda não possui controles financeiros vinculados ao seu e-mail.
             </p>
             <Button
               onClick={() => setCreateModalOpen(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl"
             >
               <Plus className="w-4 h-4 mr-1.5" />
-              Criar primeira empresa
+              Criar primeiro controle
             </Button>
           </div>
         )}
@@ -242,7 +242,7 @@ export default function CompaniesSelection() {
 
       {/* Footer */}
       <footer className="max-w-5xl w-full mx-auto pt-8 border-t border-slate-200 text-center text-xs text-slate-400">
-        Skip Cloud Multi-tenant Architecture • Todos os dados isolados por Company ID
+        Skip Cloud Multi-tenant Architecture • Todos os dados isolados por Controle ID
       </footer>
 
       {/* Create Company Modal */}

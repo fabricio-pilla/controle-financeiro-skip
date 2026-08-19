@@ -182,7 +182,7 @@ export default function Dashboard() {
           </div>
           <p className="text-sm text-slate-500 mt-0.5 flex items-center gap-1.5">
             <Building2 className="w-4 h-4 text-slate-400" />
-            Visão consolidada da empresa{' '}
+            Visão consolidada do controle{' '}
             <strong className="text-slate-700">{currentCompany?.name}</strong>
           </p>
         </div>
@@ -438,7 +438,7 @@ export default function Dashboard() {
               <p className="text-xs text-slate-500">Atividades financeiras recentes</p>
             </div>
             <Link
-              to={`/empresa/${currentCompany?.id}/lancamentos`}
+              to={`/controle/${currentCompany?.id}/lancamentos`}
               className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
             >
               <span>Ver todos</span>
@@ -513,7 +513,7 @@ export default function Dashboard() {
                 <p className="text-xs text-slate-500">Distribuição de liquidez</p>
               </div>
               <Link
-                to={`/empresa/${currentCompany?.id}/contas`}
+                to={`/controle/${currentCompany?.id}/contas`}
                 className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
               >
                 <span>Gerenciar</span>

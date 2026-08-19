@@ -17,6 +17,7 @@ import {
   PlusCircle,
   ExternalLink,
   Sparkles,
+  Wallet,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -41,52 +42,52 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { currentCompany, userCompanies, currentRole, selectCompany } = useCompany()
   const navigate = useNavigate()
   const location = useLocation()
-  const { empresaId } = useParams<{ empresaId: string }>()
+  const { controleId } = useParams<{ controleId: string }>()
 
   const [createCompanyOpen, setCreateCompanyOpen] = useState(false)
   const [aiTxOpen, setAiTxOpen] = useState(false)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
 
-  const activeEmpresaId = empresaId || currentCompany?.id || ''
+  const activeControlId = controleId || currentCompany?.id || ''
 
   const navItems = [
     {
       label: 'Dashboard',
       icon: LayoutDashboard,
-      path: `/empresa/${activeEmpresaId}/dashboard`,
+      path: `/controle/${activeControlId}/dashboard`,
     },
     {
       label: 'Lançamentos',
       icon: ReceiptText,
-      path: `/empresa/${activeEmpresaId}/lancamentos`,
+      path: `/controle/${activeControlId}/lancamentos`,
     },
     {
       label: 'Contas',
       icon: CreditCard,
-      path: `/empresa/${activeEmpresaId}/contas`,
+      path: `/controle/${activeControlId}/contas`,
     },
     {
       label: 'Categorias',
       icon: FolderTree,
-      path: `/empresa/${activeEmpresaId}/categorias`,
+      path: `/controle/${activeControlId}/categorias`,
     },
     {
       label: 'Equipe',
       icon: Users2,
-      path: `/empresa/${activeEmpresaId}/equipe`,
+      path: `/controle/${activeControlId}/equipe`,
     },
     {
       label: 'Configurações',
       icon: Settings,
-      path: `/empresa/${activeEmpresaId}/configuracoes`,
+      path: `/controle/${activeControlId}/configuracoes`,
     },
   ]
 
   const handleSelectCompany = async (targetId: string) => {
     const success = await selectCompany(targetId)
     if (success) {
-      // Re-route to target company dashboard
-      navigate(`/empresa/${targetId}/dashboard`)
+      // Re-route to target control dashboard
+      navigate(`/controle/${targetId}/dashboard`)
     }
   }
 
@@ -104,7 +105,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Sidebar content (shared by desktop and mobile sheet)
   const SidebarContent = () => (
     <aside className="w-full h-full flex flex-col bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 text-white select-none">
-      {/* Brand & Company Switcher */}
+      {/* Brand & Control Switcher */}
       <div className="p-4 border-b border-slate-800">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -114,14 +115,14 @@ export function AppLayout({ children }: AppLayoutProps) {
                   className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white shrink-0 text-sm shadow-md"
                   style={{ backgroundColor: currentCompany?.color || '#6366F1' }}
                 >
-                  {currentCompany ? getInitials(currentCompany.name) : 'EX'}
+                  {currentCompany ? getInitials(currentCompany.name) : 'CF'}
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-slate-100 truncate">
-                    {currentCompany?.name || 'Selecione a empresa'}
+                    {currentCompany?.name || 'Selecione o controle'}
                   </p>
                   <p className="text-[11px] text-slate-400 truncate capitalize">
-                    {currentCompany?.segment || 'Multiempresa'} • {roleLabel}
+                    {currentCompany?.segment || 'Finanças pessoais'} • {roleLabel}
                   </p>
                 </div>
               </div>
@@ -130,7 +131,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-64 rounded-xl bg-slate-900 border-slate-800 text-white p-1">
             <DropdownMenuLabel className="text-xs text-slate-400 px-2 py-1.5 font-medium">
-              Minhas Empresas ({userCompanies.length})
+              Meus Controles ({userCompanies.length})
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-slate-800" />
             {userCompanies.map((comp) => {
@@ -168,17 +169,17 @@ export function AppLayout({ children }: AppLayoutProps) {
               className="flex items-center gap-2 p-2 rounded-lg text-sm text-indigo-400 hover:bg-slate-800 hover:text-indigo-300 cursor-pointer font-medium"
             >
               <PlusCircle className="w-4 h-4" />
-              <span>Criar nova empresa</span>
+              <span>Criar novo controle</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
-                navigate('/empresas')
+                navigate('/controles')
                 setMobileDrawerOpen(false)
               }}
               className="flex items-center gap-2 p-2 rounded-lg text-sm text-slate-300 hover:bg-slate-800 cursor-pointer"
             >
-              <Building2 className="w-4 h-4" />
-              <span>Ver todas as empresas</span>
+              <Wallet className="w-4 h-4" />
+              <span>Ver todos os controles</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -249,17 +250,17 @@ export function AppLayout({ children }: AppLayoutProps) {
           <DropdownMenuContent className="w-56 rounded-xl bg-slate-900 border-slate-800 text-white p-1">
             <DropdownMenuItem
               onClick={() => {
-                navigate('/empresas')
+                navigate('/controles')
                 setMobileDrawerOpen(false)
               }}
               className="flex items-center gap-2 p-2 rounded-lg text-sm text-slate-200 hover:bg-slate-800 cursor-pointer"
             >
               <Building2 className="w-4 h-4" />
-              <span>Trocar de Empresa</span>
+              <span>Trocar de Controle</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
-                navigate(`/empresa/${activeEmpresaId}/configuracoes`)
+                navigate(`/controle/${activeControlId}/configuracoes`)
                 setMobileDrawerOpen(false)
               }}
               className="flex items-center gap-2 p-2 rounded-lg text-sm text-slate-200 hover:bg-slate-800 cursor-pointer"
@@ -302,16 +303,17 @@ export function AppLayout({ children }: AppLayoutProps) {
             </SheetContent>
           </Sheet>
           <div className="flex items-center gap-2 truncate">
+            <Wallet className="w-4 h-4 text-indigo-400 shrink-0" />
             <span
               className="w-3 h-3 rounded-full shrink-0"
               style={{ backgroundColor: currentCompany?.color || '#6366F1' }}
             />
-            <span className="font-bold text-sm truncate">{currentCompany?.name || 'Finanças'}</span>
+            <span className="font-bold text-sm truncate">{currentCompany?.name || 'Controle'}</span>
           </div>
         </div>
 
         <button
-          onClick={() => navigate('/empresas')}
+          onClick={() => navigate('/controles')}
           className="text-xs text-indigo-400 font-medium flex items-center gap-1 bg-slate-800 px-2.5 py-1.5 rounded-lg"
         >
           <span>Trocar</span>
@@ -327,7 +329,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       {/* Mobile Bottom Navigation Bar */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 h-16 bg-white border-t border-slate-200 shadow-lg z-40 flex items-center justify-around px-2">
         <NavLink
-          to={`/empresa/${activeEmpresaId}/dashboard`}
+          to={`/controle/${activeControlId}/dashboard`}
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -339,7 +341,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </NavLink>
 
         <NavLink
-          to={`/empresa/${activeEmpresaId}/lancamentos`}
+          to={`/controle/${activeControlId}/lancamentos`}
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -360,7 +362,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </button>
 
         <NavLink
-          to={`/empresa/${activeEmpresaId}/contas`}
+          to={`/controle/${activeControlId}/contas`}
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -372,7 +374,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </NavLink>
 
         <NavLink
-          to={`/empresa/${activeEmpresaId}/equipe`}
+          to={`/controle/${activeControlId}/equipe`}
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -388,7 +390,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       <CreateCompanyModal
         open={createCompanyOpen}
         onOpenChange={setCreateCompanyOpen}
-        onSuccess={(id) => navigate(`/empresa/${id}/dashboard`)}
+        onSuccess={(id) => navigate(`/controle/${id}/dashboard`)}
       />
 
       <AiTransactionModal open={aiTxOpen} onOpenChange={setAiTxOpen} />

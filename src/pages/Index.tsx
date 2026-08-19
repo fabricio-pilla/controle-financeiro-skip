@@ -9,11 +9,12 @@ import { toast } from 'sonner'
 import {
   TrendingUp,
   ShieldCheck,
-  Building2,
+  Wallet,
   ArrowRight,
   Loader2,
   CheckCircle2,
-  Layers,
+  Home,
+  Mail,
   Users,
 } from 'lucide-react'
 
@@ -24,8 +25,8 @@ export default function Index() {
   const [tab, setTab] = useState<'login' | 'register'>('login')
 
   // Login form state
-  const [loginEmail, setLoginEmail] = useState('carlos@empresa.com.br')
-  const [loginPassword, setLoginPassword] = useState('12345678')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
   const [loginError, setLoginError] = useState('')
 
   // Register form state
@@ -39,7 +40,7 @@ export default function Index() {
 
   // Redirect if already logged in
   if (user && !isLoading) {
-    return <Navigate to="/empresas" replace />
+    return <Navigate to="/controles" replace />
   }
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -47,7 +48,7 @@ export default function Index() {
     setLoginError('')
 
     if (!loginEmail.trim() || !loginEmail.includes('@')) {
-      setLoginError('Informe um e-mail corporativo válido.')
+      setLoginError('Informe um e-mail válido.')
       return
     }
     if (!loginPassword) {
@@ -59,7 +60,7 @@ export default function Index() {
     try {
       await login(loginEmail, loginPassword)
       toast.success('Login realizado com sucesso! Bem-vindo de volta.')
-      navigate('/empresas')
+      navigate('/controles')
     } catch (err: any) {
       setLoginError(err?.message || 'Falha ao realizar login.')
       toast.error('Não foi possível entrar no sistema.')
@@ -92,10 +93,19 @@ export default function Index() {
     setIsSubmitting(true)
     try {
       await register(regName, regEmail, regPassword)
-      toast.success('Conta criada com sucesso! Bem-vindo ao Skip Gestão.')
-      navigate('/empresas')
+      toast.success('Conta criada com sucesso! Bem-vindo ao Controle Financeiro.')
+      navigate('/controles')
     } catch (err: any) {
-      setRegError(err?.message || 'Falha ao criar conta.')
+      const msg = err?.message || 'Falha ao criar conta.'
+      // Friendlier message when the registration is blocked because the email
+      // has not been invited to any financial control.
+      if (msg.toLowerCase().includes('convite pendente')) {
+        setRegError(
+          'Este e-mail não foi convidado para nenhum controle financeiro. Peça um convite ao responsável.',
+        )
+      } else {
+        setRegError(msg)
+      }
       toast.error('Erro ao cadastrar usuário.')
     } finally {
       setIsSubmitting(false)
@@ -113,11 +123,11 @@ export default function Index() {
         {/* Top Header/Logo */}
         <div className="flex items-center gap-3 relative z-10">
           <div className="w-11 h-11 rounded-2xl bg-white text-indigo-600 flex items-center justify-center font-black text-xl shadow-lg shadow-black/20">
-            <Building2 className="w-6 h-6" />
+            <Wallet className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Finanças Multiempresa</h1>
-            <p className="text-xs text-indigo-200">Skip Cloud Multi-tenant Finance</p>
+            <h1 className="text-2xl font-bold tracking-tight">Controle Financeiro</h1>
+            <p className="text-xs text-indigo-200">Pessoal e Familiar</p>
           </div>
         </div>
 
@@ -126,14 +136,14 @@ export default function Index() {
           <div className="max-w-md">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/10 text-indigo-100 backdrop-blur-sm mb-4">
               <ShieldCheck className="w-3.5 h-3.5" />
-              Isolamento Total por Tenant
+              Acesso Exclusivo por Convite
             </span>
             <h2 className="text-3xl lg:text-4xl font-extrabold tracking-tight leading-tight">
-              Controle financeiro de todas as suas empresas em um só lugar.
+              Controle financeiro pessoal e familiar em um só lugar.
             </h2>
             <p className="text-indigo-100/80 text-sm mt-3 leading-relaxed">
-              Alterne instantaneamente entre múltiplas empresas, gerencie colaboradores com
-              permissões granulares, contas bancárias e relatórios em tempo real.
+              Gerencie suas finanças pessoais, da casa ou da família. Convide seu parceiro(a) e
+              controlem juntos entradas, saídas, cartões e orçamentos.
             </p>
           </div>
 
@@ -145,12 +155,12 @@ export default function Index() {
                   <TrendingUp className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs text-indigo-200">Faturamento Consolidado</p>
-                  <p className="text-lg font-bold text-white">R$ 142.850,00</p>
+                  <p className="text-xs text-indigo-200">Saldo do Mês</p>
+                  <p className="text-lg font-bold text-white">R$ 4.280,00</p>
                 </div>
               </div>
               <span className="text-xs font-semibold px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded-lg">
-                +18.4% este mês
+                +12% este mês
               </span>
             </div>
 
@@ -160,11 +170,11 @@ export default function Index() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-300 flex items-center justify-center">
-                  <Layers className="w-5 h-5" />
+                  <Home className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs text-indigo-200">Empresas Conectadas</p>
-                  <p className="text-sm font-semibold text-white">Nexus Tech & Aurora Design</p>
+                  <p className="text-xs text-indigo-200">Casa e Família</p>
+                  <p className="text-sm font-semibold text-white">Contas, cartões e orçamentos</p>
                 </div>
               </div>
               <Users className="w-5 h-5 text-indigo-200" />
@@ -176,15 +186,15 @@ export default function Index() {
         <div className="grid grid-cols-3 gap-4 border-t border-white/10 pt-6 relative z-10 text-xs text-indigo-200">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>Multiempresa Real</span>
+            <span>Controle Pessoal</span>
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>Skip Cloud Auth</span>
+            <span>Convite por E-mail</span>
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>Papéis e Permissões</span>
+            <span>Multi-usuário</span>
           </div>
         </div>
       </div>
@@ -195,22 +205,22 @@ export default function Index() {
           {/* Mobile Logo Branding */}
           <div className="lg:hidden flex items-center gap-3 mb-6">
             <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold">
-              <Building2 className="w-5 h-5" />
+              <Wallet className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900">Finanças Multiempresa</h1>
-              <p className="text-xs text-slate-500">Gestão empresarial integrada</p>
+              <h1 className="text-xl font-bold text-slate-900">Controle Financeiro</h1>
+              <p className="text-xs text-slate-500">Pessoal e Familiar</p>
             </div>
           </div>
 
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-slate-900">
-              {tab === 'login' ? 'Acessar o Painel' : 'Criar Nova Conta'}
+              {tab === 'login' ? 'Acessar meu Controle' : 'Criar Conta (por Convite)'}
             </h2>
             <p className="text-sm text-slate-500 mt-1">
               {tab === 'login'
-                ? 'Entre com suas credenciais corporativas para gerenciar seus negócios.'
-                : 'Cadastre-se para criar sua empresa ou aceitar convites pendentes.'}
+                ? 'Entre com suas credenciais para acessar seus controles financeiros.'
+                : 'Cadastre-se usando o e-mail que recebeu o convite.'}
             </p>
           </div>
 
@@ -235,12 +245,12 @@ export default function Index() {
 
                 <div className="space-y-1.5">
                   <Label htmlFor="login-email" className="text-sm font-medium text-slate-700">
-                    E-mail Corporativo
+                    E-mail
                   </Label>
                   <Input
                     id="login-email"
                     type="email"
-                    placeholder="seu.nome@empresa.com.br"
+                    placeholder="seu.nome@email.com"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     className="rounded-xl h-11"
@@ -295,12 +305,13 @@ export default function Index() {
                 </div>
 
                 <div className="mt-4 p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900">
-                  <p className="font-semibold text-indigo-950 mb-1">Dica de Demonstração:</p>
+                  <p className="font-semibold text-indigo-950 mb-1 flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5" />
+                    Acesso por convite
+                  </p>
                   <p>
-                    Use <strong>carlos@empresa.com.br</strong> / senha <strong>12345678</strong>{' '}
-                    para acessar como Proprietário da Nexus Soluções e Aurora Comércio com dados
-                    preenchidos. Use <strong>lucas@empresa.com.br</strong> /{' '}
-                    <strong>12345678</strong> como Membro da Nexus e Administrador da Aurora.
+                    O acesso ao sistema é feito apenas por convite. Se você já recebeu um convite,
+                    use o e-mail convidado para se cadastrar.
                   </p>
                 </div>
               </form>
@@ -309,6 +320,17 @@ export default function Index() {
             {/* TAB: REGISTER */}
             <TabsContent value="register">
               <form onSubmit={handleRegister} className="space-y-4">
+                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900">
+                  <p className="font-semibold text-indigo-950 mb-1 flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5" />
+                    Cadastro por convite
+                  </p>
+                  <p>
+                    Para se cadastrar, você precisa receber um convite por e-mail do proprietário de
+                    um controle financeiro.
+                  </p>
+                </div>
+
                 {regError && (
                   <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
                     {regError}
@@ -331,12 +353,12 @@ export default function Index() {
 
                 <div className="space-y-1.5">
                   <Label htmlFor="reg-email" className="text-sm font-medium text-slate-700">
-                    E-mail Corporativo
+                    E-mail
                   </Label>
                   <Input
                     id="reg-email"
                     type="email"
-                    placeholder="joao@minhaempresa.com.br"
+                    placeholder="joao@email.com"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
                     className="rounded-xl h-11"
@@ -352,7 +374,7 @@ export default function Index() {
                     <Input
                       id="reg-pwd"
                       type="password"
-                      placeholder="Mínimo 6 dígitos"
+                      placeholder="Mínimo 8 caracteres"
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       className="rounded-xl h-11"

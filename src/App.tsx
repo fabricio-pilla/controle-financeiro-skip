@@ -6,7 +6,7 @@ import { AuthProvider } from '@/contexts/AuthContext'
 import { CompanyProvider } from '@/contexts/CompanyContext'
 
 import Index from './pages/Index'
-import CompaniesSelection from './pages/CompaniesSelection'
+import ControlsSelection from './pages/CompaniesSelection'
 import Dashboard from './pages/Dashboard'
 import TransactionsPage from './pages/TransactionsPage'
 import AccountsPage from './pages/AccountsPage'
@@ -28,11 +28,11 @@ const App = () => (
             {/* Public Authentication Route */}
             <Route path="/" element={<Index />} />
 
-            {/* Selection of Tenant / Companies */}
-            <Route path="/empresas" element={<CompaniesSelection />} />
+            {/* Selection of Financial Controls */}
+            <Route path="/controles" element={<ControlsSelection />} />
 
-            {/* Protected Multi-tenant Company Routes */}
-            <Route path="/empresa/:empresaId" element={<ProtectedCompanyRoute />}>
+            {/* Protected Financial Control Routes */}
+            <Route path="/controle/:controleId" element={<ProtectedCompanyRoute />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="lancamentos" element={<TransactionsPage />} />

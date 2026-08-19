@@ -30,19 +30,12 @@ interface CreateCompanyModalProps {
   onSuccess?: (companyId: string) => void
 }
 
-const SEGMENTS: SegmentType[] = [
-  'Serviços',
-  'Comércio',
-  'Indústria',
-  'Tecnologia',
-  'Varejo',
-  'Outro',
-]
+const SEGMENTS = ['Pessoal', 'Família', 'Casa', 'Casal', 'Indivíduo', 'Outro']
 
 export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateCompanyModalProps) {
   const { createCompany } = useCompany()
   const [name, setName] = useState('')
-  const [segment, setSegment] = useState<SegmentType>('Serviços')
+  const [segment, setSegment] = useState('Pessoal')
   const [color, setColor] = useState(PALETTE_COLORS[0])
   const [ownerEmail, setOwnerEmail] = useState('')
   const [description, setDescription] = useState('')
@@ -51,12 +44,12 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) {
-      toast.error('Informe o nome da empresa')
+      toast.error('Informe o nome do controle')
       return
     }
     const trimmedEmail = ownerEmail.trim()
     if (!trimmedEmail) {
-      toast.error('Informe o e-mail do responsável pela empresa')
+      toast.error('Informe o e-mail do responsável pelo controle')
       return
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
@@ -66,19 +59,25 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
 
     setIsSubmitting(true)
     try {
-      const comp = await createCompany(name, segment, color, trimmedEmail, description)
+      const comp = await createCompany(
+        name,
+        segment as SegmentType,
+        color,
+        trimmedEmail,
+        description,
+      )
       toast.success(
-        `Empresa "${comp.name}" criada com sucesso! O responsável (${trimmedEmail}) foi vinculado como Proprietário.`,
+        `Controle "${comp.name}" criado com sucesso! O responsável (${trimmedEmail}) foi vinculado como Proprietário.`,
       )
       setName('')
-      setSegment('Serviços')
+      setSegment('Pessoal')
       setColor(PALETTE_COLORS[0])
       setOwnerEmail('')
       setDescription('')
       onOpenChange(false)
       if (onSuccess) onSuccess(comp.id)
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao criar empresa')
+      toast.error(err?.message || 'Erro ao criar controle')
     } finally {
       setIsSubmitting(false)
     }
@@ -93,9 +92,11 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
               <Building2 className="w-5 h-5" />
             </div>
             <div>
-              <DialogTitle className="text-xl font-bold text-slate-900">Nova Empresa</DialogTitle>
+              <DialogTitle className="text-xl font-bold text-slate-900">
+                Criar Controle Financeiro
+              </DialogTitle>
               <DialogDescription className="text-sm text-slate-500">
-                Crie um novo tenant com categorias padrão e controle isolado.
+                Crie um novo controle para suas finanças pessoais ou familiares.
               </DialogDescription>
             </div>
           </div>
@@ -104,11 +105,11 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
           <div className="space-y-1.5">
             <Label htmlFor="company-name" className="text-sm font-medium text-slate-700">
-              Nome da Empresa *
+              Nome do controle *
             </Label>
             <Input
               id="company-name"
-              placeholder="Ex: Minha Empresa Ltda"
+              placeholder="Ex: Minhas Finanças"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="rounded-xl h-11"
@@ -118,9 +119,9 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
 
           <div className="space-y-1.5">
             <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
-              Segmento *
+              Tipo *
             </Label>
-            <Select value={segment} onValueChange={(v: SegmentType) => setSegment(v)}>
+            <Select value={segment} onValueChange={(v) => setSegment(v)}>
               <SelectTrigger className="rounded-xl h-11">
                 <SelectValue placeholder="Selecione..." />
               </SelectTrigger>
@@ -156,12 +157,12 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
 
           <div className="space-y-1.5">
             <Label htmlFor="company-owner-email" className="text-sm font-medium text-slate-700">
-              E-mail do Responsável *
+              E-mail do responsável *
             </Label>
             <Input
               id="company-owner-email"
               type="email"
-              placeholder="Ex: responsavel@empresa.com.br"
+              placeholder="Ex: responsavel@email.com"
               value={ownerEmail}
               onChange={(e) => setOwnerEmail(e.target.value)}
               className="rounded-xl h-11"
@@ -169,8 +170,8 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
               autoComplete="off"
             />
             <p className="text-xs text-slate-500">
-              Esta pessoa será o Proprietário da empresa e terá acesso a ela. A empresa não será
-              vinculada ao seu próprio e-mail, a menos que você informe o seu.
+              Esta pessoa será o Proprietário do controle financeiro. Apenas e-mails convidados
+              terão acesso.
             </p>
           </div>
 
@@ -180,7 +181,7 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
             </Label>
             <Textarea
               id="company-description"
-              placeholder="Breve descrição do segmento de atuação da empresa..."
+              placeholder="Breve descrição do seu controle..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="rounded-xl min-h-[80px] resize-none"
@@ -207,7 +208,7 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
                   Criando...
                 </>
               ) : (
-                'Criar Empresa'
+                'Criar Controle'
               )}
             </Button>
           </DialogFooter>

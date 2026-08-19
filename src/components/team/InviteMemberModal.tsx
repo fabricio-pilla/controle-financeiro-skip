@@ -73,7 +73,7 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
                 Convidar Membro
               </DialogTitle>
               <DialogDescription className="text-sm text-slate-500">
-                Adicione colaboradores à gestão financeira da sua empresa.
+                Convide familiares ou parceiros para gerenciar juntos este controle financeiro.
               </DialogDescription>
             </div>
           </div>
@@ -87,7 +87,7 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
             <Input
               id="invite-email"
               type="email"
-              placeholder="colaborador@empresa.com.br"
+              placeholder="pessoa@email.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="rounded-xl h-11"
@@ -119,7 +119,7 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
                 <SelectItem value="owner">
                   <div className="flex items-center gap-2">
                     <Shield className="w-4 h-4 text-purple-600" />
-                    <span>Proprietário (Acesso completo e exclusão da empresa)</span>
+                    <span>Proprietário (Acesso completo e exclusão do controle)</span>
                   </div>
                 </SelectItem>
               </SelectContent>
@@ -129,7 +129,7 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
             <p className="font-semibold text-slate-800 mb-1">Como funciona o convite:</p>
             <p>
-              Se o colaborador já possuir conta no Skip Cloud, a empresa aparecerá no painel dele
+              Se o colaborador já possuir conta no Skip Cloud, o controle aparecerá no painel dele
               imediatamente. Caso contrário, ele terá acesso total após o cadastro com este mesmo
               e-mail.
             </p>

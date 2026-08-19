@@ -171,7 +171,7 @@ export function TransactionModal({
             {isEditing ? 'Editar Lançamento' : 'Novo Lançamento'}
           </DialogTitle>
           <DialogDescription className="text-sm text-slate-500">
-            Preencha os dados do registro financeiro da sua empresa.
+            Preencha os dados do registro financeiro do seu controle.
           </DialogDescription>
         </DialogHeader>
 

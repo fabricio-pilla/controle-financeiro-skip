@@ -128,7 +128,7 @@ export default function TransactionsPage() {
             Lançamentos Financeiros
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Registro detalhado de todas as receitas e despesas da empresa.
+            Registro detalhado de todas as receitas e despesas do controle.
           </p>
         </div>
 

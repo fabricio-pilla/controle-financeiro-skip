@@ -52,10 +52,10 @@ export default function TeamPage() {
     if (!memberToRemove) return
     try {
       await removeMember(memberToRemove.id)
-      toast.success('Membro removido da empresa com sucesso!')
+      toast.success('Membro removido do controle com sucesso!')
       setMemberToRemove(null)
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao remover colaborador.')
+      toast.error(err?.message || 'Erro ao remover participante.')
     }
   }
 
@@ -94,7 +94,7 @@ export default function TeamPage() {
             Equipe & Colaboradores
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Gerencie o acesso à empresa{' '}
+            Gerencie o acesso ao controle{' '}
             <strong className="text-slate-700">{currentCompany?.name}</strong> e defina níveis de
             permissão.
           </p>
@@ -125,7 +125,7 @@ export default function TeamPage() {
           <div>
             <h2 className="text-xs font-bold text-slate-900">Proprietário (Owner)</h2>
             <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-              Acesso irrestrito a todos os dados, configurações gerais e exclusão da empresa.
+              Acesso irrestrito a todos os dados, configurações gerais e exclusão do controle.
             </p>
           </div>
         </div>
@@ -138,7 +138,7 @@ export default function TeamPage() {
             <h2 className="text-xs font-bold text-slate-900">Administrador (Admin)</h2>
             <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
               Convida membros e altera papéis (exceto Proprietário). Gerencia contas, categorias e
-              lançamentos. Não pode excluir a empresa.
+              lançamentos. Não pode excluir o controle.
             </p>
           </div>
         </div>
@@ -148,7 +148,7 @@ export default function TeamPage() {
             <UserIcon className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-xs font-bold text-slate-900">Membro (Colaborador)</h2>
+            <h2 className="text-xs font-bold text-slate-900">Membro (Participante)</h2>
             <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
               Pode criar e visualizar lançamentos financeiros. Gestão e configurações desabilitadas.
             </p>
@@ -265,7 +265,7 @@ export default function TeamPage() {
                           size="icon"
                           onClick={() => handleRemovePrompt(mem)}
                           className="h-8 w-8 text-slate-400 hover:text-rose-600 rounded-lg"
-                          title="Remover da empresa"
+                          title="Remover do controle"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
@@ -291,7 +291,7 @@ export default function TeamPage() {
         title="Remover Colaborador"
         description={`Tem certeza que deseja remover "${
           memberToRemove?.user?.name || memberToRemove?.invited_email
-        }" desta empresa? Ele perderá imediatamente o acesso a todas as contas e relatórios.`}
+        }" deste controle? Ele perderá imediatamente o acesso a todas as contas e relatórios.`}
         confirmText="Remover Colaborador"
         variant="danger"
         onConfirm={confirmRemove}

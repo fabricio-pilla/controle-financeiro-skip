@@ -1,9 +1,9 @@
 /**
  * Skip Cloud (PocketBase) data service.
  *
- * Replaces the previous localStorage/sessionStorage mock with real API calls
- * against the connected PocketBase backend. All data is persisted server-side
- * and isolated per company (tenant) through the `company_id` field.
+ * All data is persisted server-side and isolated per financial control
+ * (tenant) through the `control_id` field. Collections reflect the personal
+ * finance schema: `financial_controls`, `control_members`, etc.
  */
 import {
   User,
@@ -78,6 +78,7 @@ function mapCompany(r: any): Company {
     description: r.description || undefined,
     created_at: r.created || new Date().toISOString(),
     owner_id: r.owner_id || '',
+    owner_email: r.owner_email || undefined,
   }
 }
 
@@ -87,7 +88,7 @@ function mapMember(r: any, usersCache?: Record<string, User>): CompanyMember {
     : usersCache?.[r.user_id]
   return {
     id: r.id,
-    company_id: r.company_id || '',
+    control_id: r.control_id || '',
     user_id: r.user_id || '',
     email: r.email || '',
     role: (r.role as UserRole) || 'member',
@@ -101,7 +102,7 @@ function mapMember(r: any, usersCache?: Record<string, User>): CompanyMember {
 function mapAccount(r: any): Account {
   return {
     id: r.id,
-    company_id: r.company_id || '',
+    control_id: r.control_id || '',
     name: r.name || '',
     type: (r.type as AccountType) || 'banco',
     balance: Number(r.balance) || 0,
@@ -115,7 +116,7 @@ function mapAccount(r: any): Account {
 function mapCategory(r: any): Category {
   return {
     id: r.id,
-    company_id: r.company_id || '',
+    control_id: r.control_id || '',
     name: r.name || '',
     type: (r.type as TransactionType) || 'despesa',
     color: r.color || '#6366F1',
@@ -138,7 +139,7 @@ function mapTransaction(
   const user = r.expand?.user_id ? mapUser(r.expand.user_id) : usersCache?.[r.user_id]
   return {
     id: r.id,
-    company_id: r.company_id || '',
+    control_id: r.control_id || '',
     account_id: r.account_id || '',
     category_id: r.category_id || '',
     user_id: r.user_id || '',
@@ -206,6 +207,23 @@ class SkipCloudService {
 
   async register(name: string, email: string, password: string): Promise<User> {
     const normalizedEmail = email.trim().toLowerCase()
+
+    // --- Invite-only: a new user CANNOT register without a pending invitation ---
+    let hasPendingInvite = false
+    try {
+      const pending = await pb.collection('control_members').getFullList({
+        filter: `email="${normalizedEmail}" && status="pending"`,
+      })
+      hasPendingInvite = pending.length > 0
+    } catch {
+      // If the query itself fails, fail safe by blocking registration
+    }
+    if (!hasPendingInvite) {
+      throw new Error(
+        'Este e-mail não possui convite pendente. Solicite um convite ao proprietário de um controle financeiro.',
+      )
+    }
+
     try {
       const record = await pb.collection('users').create({
         name: name.trim(),
@@ -215,11 +233,11 @@ class SkipCloudService {
       })
       // Auto-activate any pending invitations for this email
       try {
-        const pending = await pb.collection('company_members').getFullList({
+        const pending = await pb.collection('control_members').getFullList({
           filter: `email="${normalizedEmail}" && status="pending"`,
         })
         for (const m of pending) {
-          await pb.collection('company_members').update(m.id, {
+          await pb.collection('control_members').update(m.id, {
             user_id: record.id,
             status: 'active',
           })
@@ -238,16 +256,16 @@ class SkipCloudService {
     pb.authStore.clear()
   }
 
-  // --- COMPANIES ---
+  // --- FINANCIAL CONTROLS ---
   async getUserCompanies(userId: string): Promise<Company[]> {
     try {
-      const members = await pb.collection('company_members').getFullList({
+      const members = await pb.collection('control_members').getFullList({
         filter: `user_id="${userId}" && status="active"`,
       })
-      const companyIds = members.map((m: any) => m.company_id).filter(Boolean)
-      if (companyIds.length === 0) return []
-      const orFilter = companyIds.map((id) => `id="${id}"`).join(' || ')
-      const comps = await pb.collection('companies').getFullList({ filter: orFilter })
+      const controlIds = members.map((m: any) => m.control_id).filter(Boolean)
+      if (controlIds.length === 0) return []
+      const orFilter = controlIds.map((id: string) => `id="${id}"`).join(' || ')
+      const comps = await pb.collection('financial_controls').getFullList({ filter: orFilter })
       return comps.map(mapCompany)
     } catch (e: any) {
       throw pbErr(e)
@@ -256,7 +274,7 @@ class SkipCloudService {
 
   async getCompany(companyId: string): Promise<Company | null> {
     try {
-      const r = await pb.collection('companies').getOne(companyId)
+      const r = await pb.collection('financial_controls').getOne(companyId)
       return mapCompany(r)
     } catch {
       return null
@@ -272,16 +290,17 @@ class SkipCloudService {
   ): Promise<Company> {
     const normalizedEmail = ownerEmail.trim().toLowerCase()
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
-      throw new Error('Informe um e-mail válido para o responsável da empresa.')
+      throw new Error('Informe um e-mail válido para o responsável do controle.')
     }
     try {
-      // Create the company
-      const comp = await pb.collection('companies').create({
+      // Create the financial control
+      const comp = await pb.collection('financial_controls').create({
         name: name.trim(),
         segment,
         color,
         description: description?.trim() || '',
         owner_id: pb.authStore.model?.id || '',
+        owner_email: normalizedEmail,
       })
       const companyId = comp.id
 
@@ -306,19 +325,19 @@ class SkipCloudService {
       }
 
       // Link owner as member
-      await pb.collection('company_members').create({
-        company_id: companyId,
+      await pb.collection('control_members').create({
+        control_id: companyId,
         user_id: ownerUserId,
         email: normalizedEmail,
+        invited_email: normalizedEmail,
         role: 'owner',
         status: 'active',
       })
 
       // Seed default categories
-      const cats = [...DEFAULT_EXPENSE_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]
       for (const c of DEFAULT_EXPENSE_CATEGORIES) {
         await pb.collection('categories').create({
-          company_id: companyId,
+          control_id: companyId,
           name: c.name,
           type: 'despesa',
           color: c.color,
@@ -328,7 +347,7 @@ class SkipCloudService {
       }
       for (const c of DEFAULT_INCOME_CATEGORIES) {
         await pb.collection('categories').create({
-          company_id: companyId,
+          control_id: companyId,
           name: c.name,
           type: 'receita',
           color: c.color,
@@ -336,11 +355,10 @@ class SkipCloudService {
           is_default: true,
         })
       }
-      void cats
 
       // Create a starter account
       await pb.collection('accounts').create({
-        company_id: companyId,
+        control_id: companyId,
         name: 'Conta Principal',
         type: 'banco',
         balance: 0,
@@ -348,7 +366,7 @@ class SkipCloudService {
         bank: 'Banco Principal',
       })
 
-      const fresh = await pb.collection('companies').getOne(companyId)
+      const fresh = await pb.collection('financial_controls').getOne(companyId)
       return mapCompany(fresh)
     } catch (e: any) {
       throw pbErr(e)
@@ -360,7 +378,7 @@ class SkipCloudService {
     data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>,
   ): Promise<Company> {
     try {
-      const r = await pb.collection('companies').update(companyId, {
+      const r = await pb.collection('financial_controls').update(companyId, {
         name: data.name,
         segment: data.segment,
         color: data.color,
@@ -384,16 +402,16 @@ class SkipCloudService {
       // membersCount comes from getList(1,1).totalItems (no rows serialized for
       // the full list), accounts/transactions only pull type+amount/balance.
       const [membersPage, accs, txs] = await Promise.all([
-        pb.collection('company_members').getList(1, 1, {
-          filter: `company_id="${companyId}" && status="active"`,
+        pb.collection('control_members').getList(1, 1, {
+          filter: `control_id="${companyId}" && status="active"`,
           // no expand / extra fields — we only need the count
         }),
         pb.collection('accounts').getFullList({
-          filter: `company_id="${companyId}"`,
+          filter: `control_id="${companyId}"`,
           fields: 'type,balance',
         }),
         pb.collection('transactions').getFullList({
-          filter: `company_id="${companyId}"`,
+          filter: `control_id="${companyId}"`,
           fields: 'type,amount',
         }),
       ])
@@ -422,17 +440,17 @@ class SkipCloudService {
 
   async deleteCompany(companyId: string): Promise<void> {
     try {
-      await pb.collection('companies').delete(companyId)
+      await pb.collection('financial_controls').delete(companyId)
     } catch (e: any) {
       throw pbErr(e)
     }
   }
 
-  // --- COMPANY MEMBERS ---
+  // --- CONTROL MEMBERS ---
   async getCompanyMembers(companyId: string): Promise<CompanyMember[]> {
     try {
-      const recs = await pb.collection('company_members').getFullList({
-        filter: `company_id="${companyId}"`,
+      const recs = await pb.collection('control_members').getFullList({
+        filter: `control_id="${companyId}"`,
         expand: 'user_id',
       })
       return recs.map((r: any) => mapMember(r))
@@ -444,8 +462,8 @@ class SkipCloudService {
   async getUserRoleInCompany(companyId: string, userId: string): Promise<UserRole | null> {
     try {
       const r = await pb
-        .collection('company_members')
-        .getFirstListItem(`company_id="${companyId}" && user_id="${userId}" && status="active"`)
+        .collection('control_members')
+        .getFirstListItem(`control_id="${companyId}" && user_id="${userId}" && status="active"`)
       return (r.role as UserRole) || null
     } catch {
       return null
@@ -458,9 +476,9 @@ class SkipCloudService {
       // Already a member?
       try {
         const existing = await pb
-          .collection('company_members')
-          .getFirstListItem(`company_id="${companyId}" && email="${normalized}"`)
-        if (existing) throw new Error('Este e-mail já está associado a esta empresa.')
+          .collection('control_members')
+          .getFirstListItem(`control_id="${companyId}" && email="${normalized}"`)
+        if (existing) throw new Error('Este e-mail já está associado a este controle.')
       } catch (e: any) {
         if (e?.message?.includes('já está associado')) throw e
       }
@@ -476,8 +494,8 @@ class SkipCloudService {
         // pending invitation
       }
 
-      const r = await pb.collection('company_members').create({
-        company_id: companyId,
+      const r = await pb.collection('control_members').create({
+        control_id: companyId,
         user_id: userId,
         email: normalized,
         invited_email: normalized,
@@ -493,16 +511,16 @@ class SkipCloudService {
   async updateMemberRole(memberId: string, role: UserRole): Promise<CompanyMember> {
     try {
       // Prevent demoting the last owner
-      const member = await pb.collection('company_members').getOne(memberId)
+      const member = await pb.collection('control_members').getOne(memberId)
       if (member.role === 'owner' && role !== 'owner') {
-        const owners = await pb.collection('company_members').getFullList({
-          filter: `company_id="${member.company_id}" && role="owner" && status="active"`,
+        const owners = await pb.collection('control_members').getFullList({
+          filter: `control_id="${member.control_id}" && role="owner" && status="active"`,
         })
         if (owners.length <= 1) {
-          throw new Error('A empresa deve possuir pelo menos um Proprietário.')
+          throw new Error('O controle deve possuir pelo menos um Proprietário.')
         }
       }
-      const r = await pb.collection('company_members').update(memberId, { role })
+      const r = await pb.collection('control_members').update(memberId, { role })
       return mapMember(r)
     } catch (e: any) {
       throw pbErr(e)
@@ -511,16 +529,16 @@ class SkipCloudService {
 
   async removeMember(memberId: string): Promise<void> {
     try {
-      const member = await pb.collection('company_members').getOne(memberId)
+      const member = await pb.collection('control_members').getOne(memberId)
       if (member.role === 'owner') {
-        const owners = await pb.collection('company_members').getFullList({
-          filter: `company_id="${member.company_id}" && role="owner" && status="active"`,
+        const owners = await pb.collection('control_members').getFullList({
+          filter: `control_id="${member.control_id}" && role="owner" && status="active"`,
         })
         if (owners.length <= 1) {
-          throw new Error('O último proprietário não pode ser removido da empresa.')
+          throw new Error('O último proprietário não pode ser removido do controle.')
         }
       }
-      await pb.collection('company_members').delete(memberId)
+      await pb.collection('control_members').delete(memberId)
     } catch (e: any) {
       throw pbErr(e)
     }
@@ -530,7 +548,7 @@ class SkipCloudService {
   async getAccounts(companyId: string): Promise<Account[]> {
     try {
       const recs = await pb.collection('accounts').getFullList({
-        filter: `company_id="${companyId}"`,
+        filter: `control_id="${companyId}"`,
         sort: '-created',
       })
       return recs.map(mapAccount)
@@ -552,7 +570,7 @@ class SkipCloudService {
   ): Promise<Account> {
     try {
       const payload: any = {
-        company_id: companyId,
+        control_id: companyId,
         name: data.name.trim(),
         type: data.type,
         balance: Number(data.balance) || 0,
@@ -571,7 +589,7 @@ class SkipCloudService {
 
   async updateAccount(
     accountId: string,
-    data: Partial<Omit<Account, 'id' | 'company_id' | 'created_at'>>,
+    data: Partial<Omit<Account, 'id' | 'control_id' | 'created_at'>>,
   ): Promise<Account> {
     try {
       const payload: any = {}
@@ -606,7 +624,7 @@ class SkipCloudService {
   async getCategories(companyId: string): Promise<Category[]> {
     try {
       const recs = await pb.collection('categories').getFullList({
-        filter: `company_id="${companyId}"`,
+        filter: `control_id="${companyId}"`,
         sort: '-created',
       })
       return recs.map(mapCategory)
@@ -621,7 +639,7 @@ class SkipCloudService {
   ): Promise<Category> {
     try {
       const r = await pb.collection('categories').create({
-        company_id: companyId,
+        control_id: companyId,
         name: data.name.trim(),
         type: data.type,
         color: data.color || '#6366F1',
@@ -636,7 +654,7 @@ class SkipCloudService {
 
   async updateCategory(
     categoryId: string,
-    data: Partial<Omit<Category, 'id' | 'company_id' | 'created_at'>>,
+    data: Partial<Omit<Category, 'id' | 'control_id' | 'created_at'>>,
   ): Promise<Category> {
     try {
       const payload: any = {}
@@ -670,14 +688,14 @@ class SkipCloudService {
     try {
       const [recs, accs, cats, mems] = await Promise.all([
         pb.collection('transactions').getFullList({
-          filter: `company_id="${companyId}"`,
+          filter: `control_id="${companyId}"`,
           sort: '-date,-created',
           expand: 'account_id,category_id,user_id',
         }),
-        pb.collection('accounts').getFullList({ filter: `company_id="${companyId}"` }),
-        pb.collection('categories').getFullList({ filter: `company_id="${companyId}"` }),
-        pb.collection('company_members').getFullList({
-          filter: `company_id="${companyId}"`,
+        pb.collection('accounts').getFullList({ filter: `control_id="${companyId}"` }),
+        pb.collection('categories').getFullList({ filter: `control_id="${companyId}"` }),
+        pb.collection('control_members').getFullList({
+          filter: `control_id="${companyId}"`,
           expand: 'user_id',
         }),
       ])
@@ -751,7 +769,7 @@ class SkipCloudService {
           const parcelAmount =
             i === 1 ? Math.round((baseAmount + remainder) * 100) / 100 : baseAmount
           const payload: any = {
-            company_id: companyId,
+            control_id: companyId,
             user_id: userId,
             type: data.type,
             amount: parcelAmount,
@@ -783,7 +801,7 @@ class SkipCloudService {
 
       // Single transaction
       const payload: any = {
-        company_id: companyId,
+        control_id: companyId,
         user_id: userId,
         type: data.type,
         amount: Number(data.amount),
@@ -825,7 +843,7 @@ class SkipCloudService {
 
   async updateTransaction(
     transactionId: string,
-    data: Partial<Omit<Transaction, 'id' | 'company_id' | 'created_at' | 'user_id'>>,
+    data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
   ): Promise<Transaction> {
     try {
       const existing = await pb.collection('transactions').getOne(transactionId)

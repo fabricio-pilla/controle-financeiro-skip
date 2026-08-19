@@ -37,14 +37,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-const SEGMENTS: SegmentType[] = [
-  'Serviços',
-  'Comércio',
-  'Indústria',
-  'Tecnologia',
-  'Varejo',
-  'Outro',
-]
+const SEGMENTS = ['Pessoal', 'Família', 'Casa', 'Casal', 'Indivíduo', 'Outro']
 
 export default function SettingsPage() {
   const { user, logout } = useAuth()
@@ -52,9 +45,9 @@ export default function SettingsPage() {
     useCompany()
   const navigate = useNavigate()
 
-  // Tab 1: Empresa details
+  // Tab 1: Controle details
   const [name, setName] = useState(currentCompany?.name || '')
-  const [segment, setSegment] = useState<SegmentType>(currentCompany?.segment || 'Serviços')
+  const [segment, setSegment] = useState<string>(currentCompany?.segment || 'Pessoal')
   const [color, setColor] = useState(currentCompany?.color || PALETTE_COLORS[0])
   const [description, setDescription] = useState(currentCompany?.description || '')
   const [isSavingCompany, setIsSavingCompany] = useState(false)
@@ -81,7 +74,7 @@ export default function SettingsPage() {
   const handleSaveCompany = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) {
-      toast.error('Informe o nome da empresa.')
+      toast.error('Informe o nome do controle.')
       return
     }
 
@@ -89,13 +82,13 @@ export default function SettingsPage() {
     try {
       await updateCompany({
         name,
-        segment,
+        segment: segment as SegmentType,
         color,
         description,
       })
-      toast.success('Informações da empresa salvas com sucesso!')
+      toast.success('Informações do controle salvas com sucesso!')
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao salvar empresa.')
+      toast.error(err?.message || 'Erro ao salvar controle.')
     } finally {
       setIsSavingCompany(false)
     }
@@ -103,18 +96,18 @@ export default function SettingsPage() {
 
   const handleDeleteCompany = async () => {
     if (deleteConfirmationText.trim() !== currentCompany?.name.trim()) {
-      toast.error('O nome digitado não corresponde exatamente ao nome da empresa.')
+      toast.error('O nome digitado não corresponde exatamente ao nome do controle.')
       return
     }
 
     setIsDeletingCompany(true)
     try {
       await deleteCompany()
-      toast.success('Empresa excluída com sucesso!')
+      toast.success('Controle excluído com sucesso!')
       setDeleteModalOpen(false)
-      navigate('/empresas')
+      navigate('/controles')
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao excluir empresa.')
+      toast.error(err?.message || 'Erro ao excluir controle.')
     } finally {
       setIsDeletingCompany(false)
     }
@@ -123,7 +116,7 @@ export default function SettingsPage() {
   const handleSwitchCompany = async (targetId: string) => {
     const ok = await selectCompany(targetId)
     if (ok) {
-      navigate(`/empresa/${targetId}/dashboard`)
+      navigate(`/controle/${targetId}/dashboard`)
     }
   }
 
@@ -137,21 +130,21 @@ export default function SettingsPage() {
       {/* Top Header */}
       <div className="pb-2 border-b border-slate-200">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-          Configurações da Empresa
+          Configurações do Controle
         </h1>
         <p className="text-sm text-slate-500 mt-0.5">
           Gerencie dados cadastrais, preferências do ambiente e credenciais de acesso.
         </p>
       </div>
 
-      <Tabs defaultValue="empresa" className="space-y-6">
+      <Tabs defaultValue="controle" className="space-y-6">
         <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-3 max-w-md">
           <TabsTrigger
-            value="empresa"
+            value="controle"
             className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
           >
             <Building2 className="w-4 h-4" />
-            <span>Empresa</span>
+            <span>Controle</span>
           </TabsTrigger>
           <TabsTrigger
             value="preferencias"
@@ -169,18 +162,18 @@ export default function SettingsPage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* TAB 1: EMPRESA */}
-        <TabsContent value="empresa" className="space-y-6 focus-visible:outline-none">
+        {/* TAB 1: CONTROLE */}
+        <TabsContent value="controle" className="space-y-6 focus-visible:outline-none">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h2 className="text-base font-bold text-slate-900 mb-1">Dados da Organização</h2>
+            <h2 className="text-base font-bold text-slate-900 mb-1">Dados do Controle</h2>
             <p className="text-xs text-slate-500 mb-6">
-              Esses dados identificam seu tenant no relatório consolidado.
+              Esses dados identificam seu controle financeiro.
             </p>
 
             <form onSubmit={handleSaveCompany} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="company-name" className="text-sm font-medium text-slate-700">
-                  Nome Fantasia / Razão Social *
+                  Nome do Controle *
                 </Label>
                 <Input
                   id="company-name"
@@ -193,9 +186,9 @@ export default function SettingsPage() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
-                  Segmento de Mercado
+                  Tipo
                 </Label>
-                <Select value={segment} onValueChange={(v: SegmentType) => setSegment(v)}>
+                <Select value={segment} onValueChange={(v) => setSegment(v)}>
                   <SelectTrigger id="company-segment" className="rounded-xl h-11">
                     <SelectValue />
                   </SelectTrigger>
@@ -235,7 +228,7 @@ export default function SettingsPage() {
                 </Label>
                 <Textarea
                   id="company-description"
-                  placeholder="Breve descrição do segmento de atuação da empresa..."
+                  placeholder="Breve descrição do seu controle..."
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="rounded-xl min-h-[80px] resize-none"
@@ -266,10 +259,10 @@ export default function SettingsPage() {
             <div className="bg-rose-50/50 border border-rose-200 p-6 rounded-2xl shadow-sm space-y-4">
               <div className="flex items-center gap-2.5 text-rose-700">
                 <AlertTriangle className="w-5 h-5 shrink-0" />
-                <h2 className="text-base font-bold">Zona de Perigo — Exclusão da Empresa</h2>
+                <h2 className="text-base font-bold">Zona de Perigo — Exclusão do Controle</h2>
               </div>
               <p className="text-xs text-rose-600/90 leading-relaxed">
-                A exclusão desta organização apagará permanentemente todas as contas bancárias,
+                A exclusão deste controle apagará permanentemente todas as contas bancárias,
                 categorias, lançamentos de extrato e revogará o acesso de todos os colaboradores
                 associados. Esta ação <strong>não pode ser desfeita</strong>.
               </p>
@@ -279,7 +272,7 @@ export default function SettingsPage() {
                   onClick={() => setDeleteModalOpen(true)}
                   className="rounded-xl h-11 bg-rose-600 hover:bg-rose-700 text-white font-semibold"
                 >
-                  Excluir Empresa Definitivamente
+                  Excluir Controle Definitivamente
                 </Button>
               </div>
             </div>
@@ -337,9 +330,9 @@ export default function SettingsPage() {
         <TabsContent value="sessao" className="space-y-6 focus-visible:outline-none">
           {/* Switch Company Card */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-            <h2 className="text-base font-bold text-slate-900">Minhas Outras Empresas</h2>
+            <h2 className="text-base font-bold text-slate-900">Meus Outros Controles</h2>
             <p className="text-xs text-slate-500">
-              Alterne rapidamente para outro ambiente cadastrado no seu usuário.
+              Alterne rapidamente para outro controle cadastrado no seu usuário.
             </p>
 
             <div className="space-y-2.5">
@@ -364,7 +357,7 @@ export default function SettingsPage() {
                     {isCurrent ? (
                       <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full flex items-center gap-1">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        Empresa Atual
+                        Controle Atual
                       </span>
                     ) : (
                       <Button
@@ -393,11 +386,11 @@ export default function SettingsPage() {
             <div className="pt-2 flex items-center gap-3">
               <Button
                 variant="outline"
-                onClick={() => navigate('/empresas')}
+                onClick={() => navigate('/controles')}
                 className="rounded-xl h-11"
               >
                 <Building className="w-4 h-4 mr-2" />
-                Trocar Empresa
+                Trocar Controle
               </Button>
               <Button
                 variant="destructive"
@@ -422,7 +415,7 @@ export default function SettingsPage() {
               </div>
               <div>
                 <DialogTitle className="text-xl font-bold text-slate-900">
-                  Excluir Empresa
+                  Excluir Controle
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-500 mt-1">
                   Esta operação é irreversível. Todos os lançamentos e contas serão destruídos.
@@ -434,7 +427,7 @@ export default function SettingsPage() {
           <div className="space-y-4 py-3">
             <p className="text-xs text-slate-600">
               Para confirmar a exclusão de <strong>{currentCompany?.name}</strong>, digite o nome
-              exato da empresa no campo abaixo:
+              exato do controle no campo abaixo:
             </p>
 
             <Input
@@ -469,7 +462,7 @@ export default function SettingsPage() {
                   Excluindo...
                 </>
               ) : (
-                'Confirmar Exclusão'
+                'Excluir Controle Definitivamente'
               )}
             </Button>
           </DialogFooter>

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-19T12:02:58.725Z",
+  "generatedAt": "2026-08-19T15:30:25.356Z",
   "collections": [
     {
       "name": "users",
@@ -45,7 +45,7 @@
       ]
     },
     {
-      "name": "companies",
+      "name": "financial_controls",
       "type": "base",
       "apiRules": {
         "list": "@request.auth.id != ''",
@@ -62,20 +62,13 @@
           "system": false
         },
         {
-          "name": "segment",
-          "type": "select",
-          "required": true,
-          "system": false,
-          "selectValues": ["Serviços", "Comércio", "Indústria", "Tecnologia", "Varejo", "Outro"]
-        },
-        {
-          "name": "color",
+          "name": "description",
           "type": "text",
           "required": false,
           "system": false
         },
         {
-          "name": "description",
+          "name": "color",
           "type": "text",
           "required": false,
           "system": false
@@ -87,68 +80,7 @@
           "system": false
         },
         {
-          "name": "created",
-          "type": "autodate",
-          "required": false,
-          "system": false,
-          "autodateTriggers": ["onCreate"]
-        },
-        {
-          "name": "updated",
-          "type": "autodate",
-          "required": false,
-          "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
-        }
-      ],
-      "indexes": ["CREATE INDEX idx_companies_owner ON companies (owner_id)"]
-    },
-    {
-      "name": "company_members",
-      "type": "base",
-      "apiRules": {
-        "list": "@request.auth.id != ''",
-        "view": "@request.auth.id != ''",
-        "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != ''",
-        "delete": "@request.auth.id != ''"
-      },
-      "fields": [
-        {
-          "name": "company_id",
-          "type": "relation",
-          "required": true,
-          "system": false,
-          "collectionRef": "companies"
-        },
-        {
-          "name": "user_id",
-          "type": "text",
-          "required": false,
-          "system": false
-        },
-        {
-          "name": "email",
-          "type": "email",
-          "required": false,
-          "system": false
-        },
-        {
-          "name": "role",
-          "type": "select",
-          "required": true,
-          "system": false,
-          "selectValues": ["owner", "admin", "member"]
-        },
-        {
-          "name": "status",
-          "type": "select",
-          "required": true,
-          "system": false,
-          "selectValues": ["active", "pending"]
-        },
-        {
-          "name": "invited_email",
+          "name": "owner_email",
           "type": "email",
           "required": false,
           "system": false
@@ -169,8 +101,143 @@
         }
       ],
       "indexes": [
-        "CREATE UNIQUE INDEX idx_company_members_company_email ON company_members (company_id, email) WHERE email != ''",
-        "CREATE INDEX idx_company_members_user ON company_members (user_id)"
+        "CREATE INDEX idx_financial_controls_owner ON financial_controls (owner_id)",
+        "CREATE INDEX idx_financial_controls_owner_email ON financial_controls (owner_email)"
+      ]
+    },
+    {
+      "name": "control_members",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "control_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "financial_controls"
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "invited_email",
+          "type": "email",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["owner", "admin", "member"]
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["active", "pending"]
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_control_members_control_email ON control_members (control_id, email) WHERE email != ''",
+        "CREATE INDEX idx_control_members_user ON control_members (user_id)"
+      ]
+    },
+    {
+      "name": "control_invitations",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "control_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "financial_controls"
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["owner", "admin", "member"]
+        },
+        {
+          "name": "token",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["pending", "accepted", "expired"]
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_control_invitations_token ON control_invitations (token)",
+        "CREATE INDEX idx_control_invitations_email ON control_invitations (email)",
+        "CREATE INDEX idx_control_invitations_control ON control_invitations (control_id)"
       ]
     },
     {
@@ -185,11 +252,11 @@
       },
       "fields": [
         {
-          "name": "company_id",
+          "name": "control_id",
           "type": "relation",
           "required": true,
           "system": false,
-          "collectionRef": "companies"
+          "collectionRef": "financial_controls"
         },
         {
           "name": "name",
@@ -243,7 +310,7 @@
           "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
-      "indexes": ["CREATE INDEX idx_accounts_company ON accounts (company_id)"]
+      "indexes": ["CREATE INDEX idx_accounts_control ON accounts (control_id)"]
     },
     {
       "name": "credit_cards",
@@ -257,11 +324,11 @@
       },
       "fields": [
         {
-          "name": "company_id",
+          "name": "control_id",
           "type": "relation",
           "required": true,
           "system": false,
-          "collectionRef": "companies"
+          "collectionRef": "financial_controls"
         },
         {
           "name": "name",
@@ -320,7 +387,7 @@
           "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
-      "indexes": ["CREATE INDEX idx_credit_cards_company ON credit_cards (company_id)"]
+      "indexes": ["CREATE INDEX idx_credit_cards_control ON credit_cards (control_id)"]
     },
     {
       "name": "categories",
@@ -334,11 +401,11 @@
       },
       "fields": [
         {
-          "name": "company_id",
+          "name": "control_id",
           "type": "relation",
           "required": true,
           "system": false,
-          "collectionRef": "companies"
+          "collectionRef": "financial_controls"
         },
         {
           "name": "name",
@@ -387,8 +454,8 @@
         }
       ],
       "indexes": [
-        "CREATE INDEX idx_categories_company ON categories (company_id)",
-        "CREATE INDEX idx_categories_company_type ON categories (company_id, type)"
+        "CREATE INDEX idx_categories_control ON categories (control_id)",
+        "CREATE INDEX idx_categories_control_type ON categories (control_id, type)"
       ]
     },
     {
@@ -403,11 +470,11 @@
       },
       "fields": [
         {
-          "name": "company_id",
+          "name": "control_id",
           "type": "relation",
           "required": true,
           "system": false,
-          "collectionRef": "companies"
+          "collectionRef": "financial_controls"
         },
         {
           "name": "category_id",
@@ -449,7 +516,7 @@
           "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
-      "indexes": ["CREATE INDEX idx_budgets_company ON budgets (company_id)"]
+      "indexes": ["CREATE INDEX idx_budgets_control ON budgets (control_id)"]
     },
     {
       "name": "goals",
@@ -463,11 +530,11 @@
       },
       "fields": [
         {
-          "name": "company_id",
+          "name": "control_id",
           "type": "relation",
           "required": true,
           "system": false,
-          "collectionRef": "companies"
+          "collectionRef": "financial_controls"
         },
         {
           "name": "name",
@@ -514,7 +581,7 @@
           "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
-      "indexes": ["CREATE INDEX idx_goals_company ON goals (company_id)"]
+      "indexes": ["CREATE INDEX idx_goals_control ON goals (control_id)"]
     },
     {
       "name": "transactions",
@@ -528,11 +595,11 @@
       },
       "fields": [
         {
-          "name": "company_id",
+          "name": "control_id",
           "type": "relation",
           "required": true,
           "system": false,
-          "collectionRef": "companies"
+          "collectionRef": "financial_controls"
         },
         {
           "name": "user_id",
@@ -658,8 +725,8 @@
         }
       ],
       "indexes": [
-        "CREATE INDEX idx_transactions_company ON transactions (company_id)",
-        "CREATE INDEX idx_transactions_company_date ON transactions (company_id, date)",
+        "CREATE INDEX idx_transactions_control ON transactions (control_id)",
+        "CREATE INDEX idx_transactions_control_date ON transactions (control_id, date)",
         "CREATE INDEX idx_transactions_account ON transactions (account_id)",
         "CREATE INDEX idx_transactions_category ON transactions (category_id)"
       ]
