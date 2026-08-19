@@ -29,6 +29,7 @@ export interface CompanyMember {
   user_id: string
   role: UserRole
   status: MemberStatus
+  email?: string
   invited_email?: string
   created_at: string
   // Populated fields for UI
@@ -54,6 +55,7 @@ export interface Category {
   type: TransactionType
   color: string
   icon: string
+  is_default?: boolean
   created_at: string
 }
 
@@ -68,6 +70,8 @@ export interface Transaction {
   type: TransactionType
   date: string // YYYY-MM-DD
   is_recurring?: boolean
+  recurring?: boolean
+  paid?: boolean
   recurrence_type?: RecurrenceType
   installments_total?: number
   installment_number?: number

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-19T02:38:35.753Z",
+  "generatedAt": "2026-08-19T02:42:05.249Z",
   "collections": [
     {
       "name": "users",
@@ -29,14 +29,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -66,7 +71,14 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["Serviços", "Comércio", "Indústria", "Tecnologia", "Varejo", "Outro"]
+          "selectValues": [
+            "Serviços",
+            "Comércio",
+            "Indústria",
+            "Tecnologia",
+            "Varejo",
+            "Outro"
+          ]
         },
         {
           "name": "color",
@@ -91,17 +103,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_companies_owner ON companies (owner_id)"]
+      "indexes": [
+        "CREATE INDEX idx_companies_owner ON companies (owner_id)"
+      ]
     },
     {
       "name": "company_members",
@@ -138,14 +157,21 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["owner", "admin", "member"]
+          "selectValues": [
+            "owner",
+            "admin",
+            "member"
+          ]
         },
         {
           "name": "status",
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["active", "pending"]
+          "selectValues": [
+            "active",
+            "pending"
+          ]
         },
         {
           "name": "invited_email",
@@ -158,14 +184,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -202,7 +233,13 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["carteira", "banco", "pix", "credito", "investimento"]
+          "selectValues": [
+            "carteira",
+            "banco",
+            "pix",
+            "credito",
+            "investimento"
+          ]
         },
         {
           "name": "balance",
@@ -233,17 +270,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_accounts_company ON accounts (company_id)"]
+      "indexes": [
+        "CREATE INDEX idx_accounts_company ON accounts (company_id)"
+      ]
     },
     {
       "name": "credit_cards",
@@ -310,17 +354,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_credit_cards_company ON credit_cards (company_id)"]
+      "indexes": [
+        "CREATE INDEX idx_credit_cards_company ON credit_cards (company_id)"
+      ]
     },
     {
       "name": "categories",
@@ -351,7 +402,10 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["receita", "despesa"]
+          "selectValues": [
+            "receita",
+            "despesa"
+          ]
         },
         {
           "name": "color",
@@ -376,14 +430,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -439,17 +498,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_budgets_company ON budgets (company_id)"]
+      "indexes": [
+        "CREATE INDEX idx_budgets_company ON budgets (company_id)"
+      ]
     },
     {
       "name": "goals",
@@ -504,17 +570,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_goals_company ON goals (company_id)"]
+      "indexes": [
+        "CREATE INDEX idx_goals_company ON goals (company_id)"
+      ]
     },
     {
       "name": "transactions",
@@ -545,7 +618,10 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["receita", "despesa"]
+          "selectValues": [
+            "receita",
+            "despesa"
+          ]
         },
         {
           "name": "amount",
@@ -603,7 +679,11 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["mensal", "semanal", "anual"]
+          "selectValues": [
+            "mensal",
+            "semanal",
+            "anual"
+          ]
         },
         {
           "name": "installment_number",
@@ -640,21 +720,30 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["mensal", "semanal", "anual"]
+          "selectValues": [
+            "mensal",
+            "semanal",
+            "anual"
+          ]
         },
         {
           "name": "created",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [

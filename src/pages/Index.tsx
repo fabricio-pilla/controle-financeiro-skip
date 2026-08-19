@@ -25,7 +25,7 @@ export default function Index() {
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState('carlos@empresa.com.br')
-  const [loginPassword, setLoginPassword] = useState('123456')
+  const [loginPassword, setLoginPassword] = useState('12345678')
   const [loginError, setLoginError] = useState('')
 
   // Register form state
@@ -57,7 +57,7 @@ export default function Index() {
 
     setIsSubmitting(true)
     try {
-      await login(loginEmail)
+      await login(loginEmail, loginPassword)
       toast.success('Login realizado com sucesso! Bem-vindo de volta.')
       navigate('/empresas')
     } catch (err: any) {
@@ -80,8 +80,8 @@ export default function Index() {
       setRegError('Informe um e-mail válido.')
       return
     }
-    if (regPassword.length < 6) {
-      setRegError('A senha deve ter no mínimo 6 caracteres.')
+    if (regPassword.length < 8) {
+      setRegError('A senha deve ter no mínimo 8 caracteres.')
       return
     }
     if (regPassword !== regConfirm) {
@@ -91,7 +91,7 @@ export default function Index() {
 
     setIsSubmitting(true)
     try {
-      await register(regName, regEmail)
+      await register(regName, regEmail, regPassword)
       toast.success('Conta criada com sucesso! Bem-vindo ao Skip Gestão.')
       navigate('/empresas')
     } catch (err: any) {
@@ -256,7 +256,7 @@ export default function Index() {
                     <button
                       type="button"
                       onClick={() =>
-                        toast.info('Para fins de demonstração, qualquer senha é válida.')
+                        toast.info('Recuperação de senha ainda não implementada nesta demo.')
                       }
                       className="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
                     >
@@ -297,10 +297,10 @@ export default function Index() {
                 <div className="mt-4 p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900">
                   <p className="font-semibold text-indigo-950 mb-1">Dica de Demonstração:</p>
                   <p>
-                    Use <strong>carlos@empresa.com.br</strong> para acessar como Proprietário da
-                    Nexus Soluções e Aurora Comércio com dados preenchidos. Use{' '}
-                    <strong>lucas@empresa.com.br</strong> para acessar como Membro da Nexus e
-                    Administrador da Aurora.
+                    Use <strong>carlos@empresa.com.br</strong> / senha <strong>12345678</strong>{' '}
+                    para acessar como Proprietário da Nexus Soluções e Aurora Comércio com dados
+                    preenchidos. Use <strong>lucas@empresa.com.br</strong> /{' '}
+                    <strong>12345678</strong> como Membro da Nexus e Administrador da Aurora.
                   </p>
                 </div>
               </form>
