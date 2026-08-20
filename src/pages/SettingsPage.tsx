@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
-import { SegmentType } from '@/types/database'
 import { PALETTE_COLORS } from '@/lib/skip-cloud'
 import { toast } from 'sonner'
 import {
@@ -19,13 +18,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -37,8 +29,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-const SEGMENTS = ['Pessoal', 'Família', 'Casa', 'Casal', 'Indivíduo', 'Outro']
-
 export default function SettingsPage() {
   const { user, logout } = useAuth()
   const { currentCompany, userCompanies, isOwner, updateCompany, deleteCompany, selectCompany } =
@@ -47,7 +37,6 @@ export default function SettingsPage() {
 
   // Tab 1: Controle details
   const [name, setName] = useState(currentCompany?.name || '')
-  const [segment, setSegment] = useState<string>(currentCompany?.segment || 'Pessoal')
   const [color, setColor] = useState(currentCompany?.color || PALETTE_COLORS[0])
   const [description, setDescription] = useState(currentCompany?.description || '')
   const [isSavingCompany, setIsSavingCompany] = useState(false)
@@ -65,7 +54,6 @@ export default function SettingsPage() {
   React.useEffect(() => {
     if (currentCompany) {
       setName(currentCompany.name)
-      setSegment(currentCompany.segment)
       setColor(currentCompany.color)
       setDescription(currentCompany.description || '')
     }
@@ -82,7 +70,6 @@ export default function SettingsPage() {
     try {
       await updateCompany({
         name,
-        segment: segment as SegmentType,
         color,
         description,
       })
@@ -182,24 +169,6 @@ export default function SettingsPage() {
                   className="rounded-xl h-11"
                   required
                 />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
-                  Tipo
-                </Label>
-                <Select value={segment} onValueChange={(v) => setSegment(v)}>
-                  <SelectTrigger id="company-segment" className="rounded-xl h-11">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    {SEGMENTS.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
 
               <div className="space-y-2 pt-1">
@@ -350,7 +319,6 @@ export default function SettingsPage() {
                       />
                       <div>
                         <p className="text-sm font-bold text-slate-900">{comp.name}</p>
-                        <p className="text-xs text-slate-400">{comp.segment}</p>
                       </div>
                     </div>
 

@@ -2,7 +2,6 @@ export type UserRole = 'owner' | 'admin' | 'member'
 export type MemberStatus = 'active' | 'pending'
 export type AccountType = 'carteira' | 'banco' | 'pix' | 'credito' | 'investimento'
 export type TransactionType = 'receita' | 'despesa'
-export type SegmentType = 'Pessoal' | 'Família' | 'Casa' | 'Casal' | 'Indivíduo' | 'Outro'
 export type RecurrenceType = 'mensal' | 'semanal' | 'anual'
 
 export interface User {
@@ -16,7 +15,6 @@ export interface User {
 export interface Company {
   id: string
   name: string
-  segment: SegmentType
   color: string
   description?: string
   created_at: string

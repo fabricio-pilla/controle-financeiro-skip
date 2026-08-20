@@ -121,9 +121,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                   <p className="text-sm font-semibold text-slate-100 truncate">
                     {currentCompany?.name || 'Selecione o controle'}
                   </p>
-                  <p className="text-[11px] text-slate-400 truncate capitalize">
-                    {currentCompany?.segment || 'Finanças pessoais'} • {roleLabel}
-                  </p>
+                  <p className="text-[11px] text-slate-400 truncate">{roleLabel}</p>
                 </div>
               </div>
               <ChevronDown className="w-4 h-4 text-slate-400 shrink-0 ml-2" />

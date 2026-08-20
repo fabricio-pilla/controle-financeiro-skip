@@ -10,15 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { useCompany } from '@/contexts/CompanyContext'
-import { SegmentType } from '@/types/database'
 import { PALETTE_COLORS } from '@/lib/skip-cloud'
 import { toast } from 'sonner'
 import { Loader2, Building2 } from 'lucide-react'
@@ -30,12 +22,9 @@ interface CreateCompanyModalProps {
   onSuccess?: (companyId: string) => void
 }
 
-const SEGMENTS = ['Pessoal', 'Família', 'Casa', 'Casal', 'Indivíduo', 'Outro']
-
 export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateCompanyModalProps) {
   const { createCompany } = useCompany()
   const [name, setName] = useState('')
-  const [segment, setSegment] = useState('Pessoal')
   const [color, setColor] = useState(PALETTE_COLORS[0])
   const [ownerEmail, setOwnerEmail] = useState('')
   const [description, setDescription] = useState('')
@@ -59,18 +48,11 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
 
     setIsSubmitting(true)
     try {
-      const comp = await createCompany(
-        name,
-        segment as SegmentType,
-        color,
-        trimmedEmail,
-        description,
-      )
+      const comp = await createCompany(name, color, trimmedEmail, description)
       toast.success(
         `Controle "${comp.name}" criado com sucesso! O responsável (${trimmedEmail}) foi vinculado como Proprietário.`,
       )
       setName('')
-      setSegment('Pessoal')
       setColor(PALETTE_COLORS[0])
       setOwnerEmail('')
       setDescription('')
@@ -115,24 +97,6 @@ export function CreateCompanyModal({ open, onOpenChange, onSuccess }: CreateComp
               className="rounded-xl h-11"
               required
             />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="company-segment" className="text-sm font-medium text-slate-700">
-              Tipo *
-            </Label>
-            <Select value={segment} onValueChange={(v) => setSegment(v)}>
-              <SelectTrigger className="rounded-xl h-11">
-                <SelectValue placeholder="Selecione..." />
-              </SelectTrigger>
-              <SelectContent className="rounded-xl">
-                {SEGMENTS.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
 
           <div className="space-y-2">

@@ -12,7 +12,6 @@ import {
   Account,
   Category,
   Transaction,
-  SegmentType,
   AccountType,
   TransactionType,
   UserRole,
@@ -75,7 +74,6 @@ function mapCompany(r: any): Company {
   return {
     id: r.id,
     name: r.name || '',
-    segment: (r.segment as SegmentType) || 'Outro',
     color: r.color || '#6366F1',
     description: r.description || undefined,
     created_at: r.created || new Date().toISOString(),
@@ -285,7 +283,6 @@ class SkipCloudService {
 
   async createCompany(
     name: string,
-    segment: SegmentType,
     color: string,
     ownerEmail: string,
     description?: string,
@@ -298,7 +295,6 @@ class SkipCloudService {
       // Create the financial control
       const comp = await pb.collection('financial_controls').create({
         name: name.trim(),
-        segment,
         color,
         description: description?.trim() || '',
         owner_id: pb.authStore.model?.id || '',
@@ -391,15 +387,14 @@ class SkipCloudService {
 
   async updateCompany(
     companyId: string,
-    data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>,
+    data: Partial<Pick<Company, 'name' | 'color' | 'description'>>,
   ): Promise<Company> {
     try {
-      const r = await pb.collection('financial_controls').update(companyId, {
-        name: data.name,
-        segment: data.segment,
-        color: data.color,
-        description: data.description,
-      })
+      const payload: any = {}
+      if (data.name !== undefined) payload.name = data.name
+      if (data.color !== undefined) payload.color = data.color
+      if (data.description !== undefined) payload.description = data.description
+      const r = await pb.collection('financial_controls').update(companyId, payload)
       return mapCompany(r)
     } catch (e: any) {
       throw pbErr(e)

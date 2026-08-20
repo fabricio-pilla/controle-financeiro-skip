@@ -13,7 +13,6 @@ import {
   Category,
   Transaction,
   UserRole,
-  SegmentType,
   AccountType,
   TransactionType,
 } from '@/types/database'
@@ -45,13 +44,12 @@ interface CompanyContextType {
   reloadUserCompanies: () => Promise<void>
   createCompany: (
     name: string,
-    segment: SegmentType,
     color: string,
     ownerEmail: string,
     description?: string,
   ) => Promise<Company>
   updateCompany: (
-    data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>,
+    data: Partial<Pick<Company, 'name' | 'color' | 'description'>>,
   ) => Promise<Company>
   getCompanyStats: (companyId: string) => Promise<{
     membersCount: number
@@ -225,14 +223,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   )
 
   const createCompany = useCallback(
-    async (
-      name: string,
-      segment: SegmentType,
-      color: string,
-      ownerEmail: string,
-      description?: string,
-    ) => {
-      const comp = await skipCloud.createCompany(name, segment, color, ownerEmail, description)
+    async (name: string, color: string, ownerEmail: string, description?: string) => {
+      const comp = await skipCloud.createCompany(name, color, ownerEmail, description)
       // Do NOT select the new company: it belongs to the informed owner, not
       // necessarily the current admin. Just refresh the list of companies the
       // current user can see.
@@ -243,7 +235,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   )
 
   const updateCompany = useCallback(
-    async (data: Partial<Pick<Company, 'name' | 'segment' | 'color' | 'description'>>) => {
+    async (data: Partial<Pick<Company, 'name' | 'color' | 'description'>>) => {
       if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const updated = await skipCloud.updateCompany(currentCompany.id, data)
       setCurrentCompany(updated)

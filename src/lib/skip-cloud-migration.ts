@@ -25,7 +25,6 @@ export const SKIP_CLOUD_SCHEMA = {
       fields: {
         id: 'string (primary key, uuid)',
         name: 'string (required)',
-        segment: 'enum (Pessoal, Família, Casa, Casal, Indivíduo, Outro)',
         color: 'string (hex)',
         description: 'text (optional)',
         created_at: 'timestamp (default now())',
