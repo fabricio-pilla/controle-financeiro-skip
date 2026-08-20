@@ -308,15 +308,12 @@ class SkipCloudService {
 
       // Find or create the owner user by email
       let ownerUserId = ''
-      let ownerExists = false
-      try {
-        const found = await pb.collection('users').getFirstListItem(`email="${normalizedEmail}"`)
-        ownerUserId = found.id
-        ownerExists = true
-      } catch {
-        // user does not exist yet -> create pending owner
-      }
-      if (!ownerExists) {
+      const existingUsers = await pb.collection('users').getList(1, 1, {
+        filter: `email="${normalizedEmail}"`,
+      })
+      if (existingUsers.items.length > 0) {
+        ownerUserId = existingUsers.items[0].id
+      } else {
         const newOwner = await pb.collection('users').create({
           name: normalizedEmail.split('@')[0].replace(/[._-]+/g, ' '),
           email: normalizedEmail,
@@ -505,12 +502,12 @@ class SkipCloudService {
       // Find existing user
       let userId = ''
       let status: 'active' | 'pending' = 'pending'
-      try {
-        const found = await pb.collection('users').getFirstListItem(`email="${normalized}"`)
-        userId = found.id
+      const existingUser = await pb.collection('users').getList(1, 1, {
+        filter: `email="${normalized}"`,
+      })
+      if (existingUser.items.length > 0) {
+        userId = existingUser.items[0].id
         status = 'active'
-      } catch {
-        // pending invitation
       }
 
       const r = await pb.collection('control_members').create({
