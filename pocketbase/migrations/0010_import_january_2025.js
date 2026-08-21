@@ -1,5 +1,7 @@
 /// <reference path="../pb_data/types.d.ts" />
 
+// Migration 0010: Importação das transações de Janeiro/2025 para o controle "Casa"
+
 migrate(
   (app) => {
     const CONTROL_ID = 'y9ewjfbhzoihnq0'
