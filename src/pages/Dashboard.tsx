@@ -16,6 +16,8 @@ import {
   ArrowRight,
   Building2,
   Calendar,
+  Repeat,
+  Package,
   Sparkles,
 } from 'lucide-react'
 import {
@@ -60,13 +62,19 @@ export default function Dashboard() {
   const [newTxOpen, setNewTxOpen] = useState(false)
   const [aiTxOpen, setAiTxOpen] = useState(false)
 
-  // Filter transactions based on period
+  // Filter transactions based on period and ignore parent installment records (installment_number=0 && installment_total>0)
   const filteredTransactions = useMemo(() => {
     const now = new Date()
     const currentYear = now.getFullYear()
     const currentMonth = now.getMonth()
 
     return transactions.filter((t) => {
+      // Ignore parent installment records
+      const isParent =
+        (t.installment_number === 0 || t.installment_number === undefined) &&
+        (t.installments_total || 0) > 0
+      if (isParent) return false
+
       const txDate = new Date(t.date)
       if (period === 'this_month') {
         return txDate.getFullYear() === currentYear && txDate.getMonth() === currentMonth
@@ -131,6 +139,12 @@ export default function Dashboard() {
     }))
 
     transactions.forEach((tx) => {
+      // Ignore parent installment records
+      const isParent =
+        (tx.installment_number === 0 || tx.installment_number === undefined) &&
+        (tx.installments_total || 0) > 0
+      if (isParent) return
+
       const d = new Date(tx.date)
       if (d.getFullYear() === curYear) {
         const mIdx = d.getMonth()
@@ -165,9 +179,17 @@ export default function Dashboard() {
     return result.sort((a, b) => b.value - a.value).slice(0, 6)
   }, [filteredTransactions, categories])
 
-  // Last 5 transactions
+  // Last 5 transactions (ignoring parent installment records)
   const latestTransactions = useMemo(() => {
-    return transactions.slice(0, 5)
+    return transactions
+      .filter(
+        (t) =>
+          !(
+            (t.installment_number === 0 || t.installment_number === undefined) &&
+            (t.installments_total || 0) > 0
+          ),
+      )
+      .slice(0, 5)
   }, [transactions])
 
   return (
@@ -465,7 +487,39 @@ export default function Dashboard() {
                       <td className="py-3 px-3 text-xs text-slate-500 whitespace-nowrap">
                         {formatDateBR(tx.date)}
                       </td>
-                      <td className="py-3 px-3 font-medium text-slate-900">{tx.description}</td>
+                      <td className="py-3 px-3 font-medium text-slate-900">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{tx.description}</span>
+                          {tx.is_recurring && (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200"
+                              title={`Recorrente (${tx.recurrence_type || 'mensal'})`}
+                            >
+                              <Repeat className="w-2.5 h-2.5 text-sky-600" />
+                              <span>
+                                {tx.recurrence_type
+                                  ? tx.recurrence_type.charAt(0).toUpperCase() +
+                                    tx.recurrence_type.slice(1)
+                                  : 'Recorrente'}
+                              </span>
+                            </span>
+                          )}
+                          {Boolean(
+                            tx.parent_transaction_id ||
+                            (tx.installment_number && tx.installment_number > 0),
+                          ) && (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                              title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total || '?'}`}
+                            >
+                              <Package className="w-2.5 h-2.5 text-amber-600" />
+                              <span>
+                                {tx.installment_number || 1}/{tx.installments_total || '?'}
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 px-3">
                         <span
                           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium"

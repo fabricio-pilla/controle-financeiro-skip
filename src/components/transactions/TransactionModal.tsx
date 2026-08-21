@@ -22,7 +22,16 @@ import { Switch } from '@/components/ui/switch'
 import { useCompany } from '@/contexts/CompanyContext'
 import { Transaction, TransactionType, RecurrenceType } from '@/types/database'
 import { toast } from 'sonner'
-import { Loader2, ArrowUpRight, ArrowDownRight, Tag, Wallet, CreditCard } from 'lucide-react'
+import {
+  Loader2,
+  ArrowUpRight,
+  ArrowDownRight,
+  Tag,
+  Wallet,
+  CreditCard,
+  Package,
+  Repeat,
+} from 'lucide-react'
 import { formatCurrency } from '@/lib/formatters'
 
 interface TransactionModalProps {
@@ -38,9 +47,18 @@ export function TransactionModal({
   transaction,
   defaultType = 'despesa',
 }: TransactionModalProps) {
-  const { accounts, categories, createTransaction, updateTransaction } = useCompany()
+  const { accounts, categories, transactions, createTransaction, updateTransaction } = useCompany()
 
   const isEditing = Boolean(transaction)
+  const isInstallment = Boolean(
+    transaction &&
+    (transaction.parent_transaction_id ||
+      (transaction.installment_number && transaction.installment_number > 0)),
+  )
+  const parentTransaction = React.useMemo(() => {
+    if (!transaction?.parent_transaction_id) return null
+    return transactions.find((t) => t.id === transaction.parent_transaction_id) || null
+  }, [transaction, transactions])
   const [type, setType] = useState<TransactionType>(transaction?.type || defaultType)
   const [description, setDescription] = useState(transaction?.description || '')
   const [amountStr, setAmountStr] = useState(transaction ? String(transaction.amount) : '')
@@ -176,6 +194,39 @@ export function TransactionModal({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          {/* Informative banner for installment transactions */}
+          {isEditing && isInstallment && (
+            <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/70 text-amber-900 text-xs space-y-1.5 animate-fade-in">
+              <div className="flex items-center gap-1.5 font-semibold text-amber-800">
+                <Package className="w-4 h-4 text-amber-600" />
+                <span>
+                  Esta transação é uma parcela ({transaction?.installment_number || 1}/
+                  {transaction?.installments_total || '?'})
+                </span>
+              </div>
+              <p className="text-amber-700 leading-relaxed">
+                {parentTransaction ? (
+                  <>
+                    Vinculada à compra principal:{' '}
+                    <strong className="font-semibold text-amber-900">
+                      {parentTransaction.description}
+                    </strong>{' '}
+                    (Total da compra:{' '}
+                    <strong className="font-semibold text-amber-900">
+                      {formatCurrency(parentTransaction.amount)}
+                    </strong>
+                    ).
+                  </>
+                ) : (
+                  <>
+                    Esta transação faz parte de um plano de parcelamento em{' '}
+                    {transaction?.installments_total || '?'}x.
+                  </>
+                )}
+              </p>
+            </div>
+          )}
+
           {/* Type Selector Tabs */}
           <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
             <button

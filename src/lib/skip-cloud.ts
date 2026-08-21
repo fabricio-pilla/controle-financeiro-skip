@@ -148,12 +148,25 @@ function mapTransaction(
     type: (r.type as TransactionType) || 'despesa',
     date: r.date || new Date().toISOString().split('T')[0],
     paid: r.paid !== undefined ? Boolean(r.paid) : true,
-    recurring: r.is_recurring !== undefined ? Boolean(r.is_recurring) : false,
-    recurrence_type: r.recurrence_type || undefined,
+    is_recurring:
+      r.is_recurring !== undefined
+        ? Boolean(r.is_recurring)
+        : r.recurring !== undefined
+          ? Boolean(r.recurring)
+          : false,
+    recurring:
+      r.is_recurring !== undefined
+        ? Boolean(r.is_recurring)
+        : r.recurring !== undefined
+          ? Boolean(r.recurring)
+          : false,
+    recurrence_type: r.recurrence_type || r.recurrence_period || undefined,
     installments_total:
       r.installment_total !== undefined && r.installment_total !== null
         ? Number(r.installment_total)
-        : undefined,
+        : r.installments_total !== undefined && r.installments_total !== null
+          ? Number(r.installments_total)
+          : undefined,
     installment_number:
       r.installment_number !== undefined && r.installment_number !== null
         ? Number(r.installment_number)
@@ -423,7 +436,7 @@ class SkipCloudService {
         }),
         pb.collection('transactions').getFullList({
           filter: `control_id="${companyId}"`,
-          fields: 'type,amount',
+          fields: 'type,amount,installment_number,installment_total',
         }),
       ])
       const balance = accs.reduce((acc: number, a: any) => {
@@ -432,7 +445,15 @@ class SkipCloudService {
       }, 0)
       let income = 0
       let expense = 0
+      let count = 0
       for (const t of txs as any[]) {
+        // Ignorar registros pai de parcelamento (installment_number=0 e installment_total>0)
+        const isParent =
+          (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
+          Number(t.installment_total) > 0
+        if (isParent) continue
+
+        count++
         const amt = Number(t.amount) || 0
         if (t.type === 'receita') income += amt
         else if (t.type === 'despesa') expense += amt
@@ -442,7 +463,7 @@ class SkipCloudService {
         balance,
         income,
         expense,
-        transactionsCount: txs.length,
+        transactionsCount: count,
       }
     } catch (e: any) {
       throw pbErr(e)

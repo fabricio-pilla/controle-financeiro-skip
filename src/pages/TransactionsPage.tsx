@@ -20,6 +20,7 @@ import {
   TrendingUp,
   TrendingDown,
   Repeat,
+  Package,
   Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -51,9 +52,15 @@ export default function TransactionsPage() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [txToDelete, setTxToDelete] = useState<Transaction | null>(null)
 
-  // Filtered transactions
+  // Filtered transactions (ignoring parent installment records)
   const filteredList = useMemo(() => {
     return transactions.filter((tx) => {
+      // Ignore parent installment records (installment_number=0 && installment_total>0)
+      const isParent =
+        (tx.installment_number === 0 || tx.installment_number === undefined) &&
+        (tx.installments_total || 0) > 0
+      if (isParent) return false
+
       // Search
       if (searchTerm.trim()) {
         const matchesDesc = tx.description.toLowerCase().includes(searchTerm.toLowerCase().trim())
@@ -289,14 +296,34 @@ export default function TransactionsPage() {
                     {formatDateBR(tx.date)}
                   </td>
                   <td className="py-3.5 px-4 font-semibold text-slate-900">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span>{tx.description}</span>
                       {tx.is_recurring && (
                         <span
-                          className="p-1 rounded bg-slate-100 text-slate-500"
-                          title="Recorrente"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200"
+                          title={`Recorrente (${tx.recurrence_type ? tx.recurrence_type.charAt(0).toUpperCase() + tx.recurrence_type.slice(1) : 'Mensal'})`}
                         >
-                          <Repeat className="w-3 h-3" />
+                          <Repeat className="w-3 h-3 text-sky-600" />
+                          <span>
+                            {tx.recurrence_type
+                              ? tx.recurrence_type.charAt(0).toUpperCase() +
+                                tx.recurrence_type.slice(1)
+                              : 'Recorrente'}
+                          </span>
+                        </span>
+                      )}
+                      {Boolean(
+                        tx.parent_transaction_id ||
+                        (tx.installment_number && tx.installment_number > 0),
+                      ) && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                          title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total || '?'}`}
+                        >
+                          <Package className="w-3 h-3 text-amber-600" />
+                          <span>
+                            {tx.installment_number || 1}/{tx.installments_total || '?'}
+                          </span>
                         </span>
                       )}
                     </div>
@@ -402,8 +429,40 @@ export default function TransactionsPage() {
                 >
                   <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-5 h-5" />
                 </div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-sm text-slate-900 truncate">{tx.description}</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p className="font-semibold text-sm text-slate-900 truncate">
+                      {tx.description}
+                    </p>
+                    {tx.is_recurring && (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200"
+                        title="Recorrente"
+                      >
+                        <Repeat className="w-2.5 h-2.5 text-sky-600" />
+                        <span>
+                          {tx.recurrence_type
+                            ? tx.recurrence_type.charAt(0).toUpperCase() +
+                              tx.recurrence_type.slice(1)
+                            : 'Recorrente'}
+                        </span>
+                      </span>
+                    )}
+                    {Boolean(
+                      tx.parent_transaction_id ||
+                      (tx.installment_number && tx.installment_number > 0),
+                    ) && (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                        title="Parcela"
+                      >
+                        <Package className="w-2.5 h-2.5 text-amber-600" />
+                        <span>
+                          {tx.installment_number || 1}/{tx.installments_total || '?'}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
                     <span>{formatDateBR(tx.date)}</span>
                     <span>•</span>

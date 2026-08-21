@@ -24,6 +24,12 @@ export default function CategoriesPage() {
     const stats: Record<string, { count: number; totalAmount: number }> = {}
 
     transactions.forEach((tx) => {
+      // Ignorar registros pai de parcelamento
+      const isParent =
+        (tx.installment_number === 0 || tx.installment_number === undefined) &&
+        (tx.installments_total || 0) > 0
+      if (isParent) return
+
       if (!stats[tx.category_id]) {
         stats[tx.category_id] = { count: 0, totalAmount: 0 }
       }
