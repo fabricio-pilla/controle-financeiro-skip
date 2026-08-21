@@ -56,9 +56,7 @@ export default function Dashboard() {
   const { user } = useAuth()
   const { currentCompany, accounts, categories, transactions, canManageTransactions } = useCompany()
 
-  const [period, setPeriod] = useState<'this_month' | 'last_month' | 'this_year' | 'all'>(
-    'this_month',
-  )
+  const [period, setPeriod] = useState<'this_month' | 'last_month' | 'this_year' | 'all'>('all')
   const [newTxOpen, setNewTxOpen] = useState(false)
   const [aiTxOpen, setAiTxOpen] = useState(false)
 
