@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { NavLink, useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -34,7 +34,7 @@ import { AiTransactionModal } from '@/components/transactions/AiTransactionModal
 import { getInitials } from '@/lib/formatters'
 
 interface AppLayoutProps {
-  children: React.ReactNode
+  children: ReactNode
 }
 
 export function AppLayout({ children }: AppLayoutProps) {

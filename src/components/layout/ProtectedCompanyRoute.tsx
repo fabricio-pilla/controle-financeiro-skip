@@ -2,6 +2,7 @@ import { Navigate, Outlet, useParams } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
+import { AppLayout } from './AppLayout'
 
 /**
  * Guards routes that require an active financial control (tenant) selected.
@@ -75,5 +76,9 @@ export default function ProtectedCompanyRoute() {
     )
   }
 
-  return <Outlet />
+  return (
+    <AppLayout>
+      <Outlet />
+    </AppLayout>
+  )
 }
