@@ -1,412 +1,518 @@
 import PocketBase from 'pocketbase'
+import * as XLSX from 'xlsx'
 
-const CONTROL_ID = 'y9ewjfbhzoihnq0'
 const PB_URL =
   process.env.VITE_POCKETBASE_URL ||
   process.env.PB_INSTANCE_URL ||
+  process.env.POCKETBASE_URL ||
   'https://gestao-multiempresa-skip-b345f.shrd00.internal.goskip.dev'
 
-// Fontes de dados
-const CSV_URL =
-  'https://docs.google.com/spreadsheets/d/1sL0g0mw5uVhqhdZX7KMDSK_jgSg4tHrQc5AmAnB-13c/export?format=csv&gid=1277960163'
 const XLSX_URL =
   'https://dagtlwojkqyivnjgveda.supabase.co/storage/v1/object/public/message-attachments/87a0dacd-54e6-4142-b13f-981b9d996158/financeiro-2026-89ba7.xlsx'
 
-// Regras de mapeamento Orçamento + Categoria -> Categoria do sistema
-function mapCategory(tipo, orcamento, categoria, categoriesMap) {
-  const normTipo = (tipo || '').trim().toLowerCase()
-  const normOrcamento = (orcamento || '').trim().toLowerCase()
-  const normCategoria = (categoria || '').trim().toLowerCase()
+// Normalizador de texto para comparação (remove acentos, espaços extras e minúsculas)
+function normalizeText(text) {
+  if (!text) return ''
+  return text
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
 
-  // Receitas
-  if (normTipo === 'entrada' || normTipo === 'receita') {
-    if (normCategoria === 'salário' || normCategoria === 'salario') {
-      return categoriesMap['receita:salário'] || categoriesMap['receita:salario']
+// 1. Mapeamento de Categoria
+function mapCategory(tipoStr, categoriaStr, categoriesMap) {
+  const normTipo = normalizeText(tipoStr)
+  const normCat = normalizeText(categoriaStr)
+
+  // Se for Receita / Entrada
+  if (normTipo === 'receita' || normTipo === 'entrada' || normCat === 'salario') {
+    if (normCat.includes('salario')) {
+      return (
+        categoriesMap['receita:salario'] ||
+        categoriesMap['receita:salário'] ||
+        categoriesMap['receita:outros']
+      )
     }
-    if (normOrcamento === 'investimento') {
-      return categoriesMap['receita:investimentos'] || categoriesMap['receita:investimento']
+    if (normCat.includes('investimento')) {
+      return (
+        categoriesMap['receita:investimentos'] ||
+        categoriesMap['receita:investimento'] ||
+        categoriesMap['receita:outros']
+      )
     }
-    return categoriesMap['receita:outros']
+    return categoriesMap['receita:outros'] || categoriesMap['receita:salario']
   }
 
-  // Despesas
-  // Orçamento "Casa" -> Moradia (tudo)
-  if (normOrcamento === 'casa') {
-    return categoriesMap['despesa:moradia']
-  }
-
-  // Orçamento "Família"
-  if (normOrcamento === 'família' || normOrcamento === 'familia') {
-    if (
-      normCategoria.includes('supermercado') ||
-      normCategoria.includes('restaurante') ||
-      normCategoria.includes('suplemento') ||
-      normCategoria.includes('alimentação') ||
-      normCategoria.includes('alimentacao')
-    ) {
-      return categoriesMap['despesa:alimentação'] || categoriesMap['despesa:alimentacao']
-    }
-    if (
-      normCategoria.includes('plano de saúde') ||
-      normCategoria.includes('plano de saude') ||
-      normCategoria.includes('farmácia') ||
-      normCategoria.includes('farmacia') ||
-      normCategoria.includes('médic') ||
-      normCategoria.includes('saúde') ||
-      normCategoria.includes('saude')
-    ) {
-      return categoriesMap['despesa:saúde'] || categoriesMap['despesa:saude']
-    }
-    if (
-      normCategoria.includes('lazer') ||
-      normCategoria.includes('viagen') ||
-      normCategoria.includes('comemoraç') ||
-      normCategoria.includes('comemorac')
-    ) {
-      return categoriesMap['despesa:lazer']
-    }
-    if (
-      normCategoria.includes('assinatura') ||
-      normCategoria.includes('presente') ||
-      normCategoria.includes('lavanderia') ||
-      normCategoria.includes('igreja') ||
-      normCategoria.includes('diversos')
-    ) {
-      return categoriesMap['despesa:pessoal']
-    }
+  // Despesas por Categoria específica conforme especificação:
+  // "Celular", "Roupas e Acessórios", "Cabelereiro", "Jogos", "Educação", "Presentes", "Impostos", "IF homem", "Compras diversas", "Outros", "Tarifas Bancárias" → Pessoal
+  if (
+    normCat.includes('celular') ||
+    normCat.includes('roupas') ||
+    normCat.includes('acessorios') ||
+    normCat.includes('cabelereiro') ||
+    normCat.includes('cabeleireiro') ||
+    normCat.includes('salao') ||
+    normCat.includes('jogos') ||
+    normCat.includes('educacao') ||
+    normCat.includes('curso') ||
+    normCat.includes('presente') ||
+    normCat.includes('imposto') ||
+    normCat.includes('if homem') ||
+    normCat.includes('compras diversas') ||
+    normCat.includes('outros') ||
+    normCat.includes('tarifa') ||
+    normCat.includes('bancaria') ||
+    normCat.includes('assinatura') ||
+    normCat.includes('igreja') ||
+    normCat.includes('doacao') ||
+    normCat.includes('cuidados pessoais') ||
+    normCat.includes('multa')
+  ) {
     return categoriesMap['despesa:pessoal']
   }
 
-  // Orçamento "Automóvel" -> Transporte (tudo)
+  // "Transporte", "Estacionamento" → Transporte
   if (
-    normOrcamento === 'automóvel' ||
-    normOrcamento === 'automovel' ||
-    normOrcamento === 'transporte'
+    normCat.includes('transporte') ||
+    normCat.includes('estacionamento') ||
+    normCat.includes('pedagio') ||
+    normCat.includes('combustivel') ||
+    normCat.includes('gasolina') ||
+    normCat.includes('uber') ||
+    normCat.includes('99') ||
+    normCat.includes('ipva')
   ) {
     return categoriesMap['despesa:transporte']
   }
 
-  // Orçamento "Investimento" -> Investimentos (despesa)
-  if (normOrcamento === 'investimento' || normOrcamento === 'investimentos') {
-    return categoriesMap['despesa:investimentos'] || categoriesMap['despesa:investimento']
-  }
-
-  // Orçamento "Fabrício" ou "Raffaela"
+  // "Supermercado", "Feira", "Açougue", "Padaria", "Delivery/Hamburgueria", "Restaurante", "Guloseimas" → Alimentação
   if (
-    normOrcamento === 'fabrício' ||
-    normOrcamento === 'fabricio' ||
-    normOrcamento === 'raffaela' ||
-    normOrcamento === 'rafaela'
+    normCat.includes('supermercado') ||
+    normCat.includes('feira') ||
+    normCat.includes('acougue') ||
+    normCat.includes('padaria') ||
+    normCat.includes('delivery') ||
+    normCat.includes('hamburgueria') ||
+    normCat.includes('restaurante') ||
+    normCat.includes('guloseima') ||
+    normCat.includes('alimentacao') ||
+    normCat.includes('suplemento') ||
+    normCat.includes('ifood')
   ) {
-    if (
-      normCategoria.includes('exercício') ||
-      normCategoria.includes('exercicio') ||
-      normCategoria.includes('medicamento') ||
-      normCategoria.includes('médico') ||
-      normCategoria.includes('medico') ||
-      normCategoria.includes('psicólogo') ||
-      normCategoria.includes('psicologo') ||
-      normCategoria.includes('plano de saúde') ||
-      normCategoria.includes('saúde')
-    ) {
-      return categoriesMap['despesa:saúde'] || categoriesMap['despesa:saude']
-    }
-    if (normCategoria.includes('lazer')) {
-      return categoriesMap['despesa:lazer']
-    }
-    if (
-      normCategoria.includes('transporte') ||
-      normCategoria.includes('combustível') ||
-      normCategoria.includes('combustivel')
-    ) {
-      return categoriesMap['despesa:transporte']
-    }
-    // Celular, Cuidados Pessoais, Diversos, Doações, Educação, Roupas e Acessórios, Salão, Seguros Individuais, Trabalho, Alimentação -> Pessoal
-    return categoriesMap['despesa:pessoal']
+    return categoriesMap['despesa:alimentacao'] || categoriesMap['despesa:alimentação']
   }
 
-  // Orçamento "Emanuel", "Helena", "Matheus" -> Filhos
-  if (normOrcamento === 'emanuel' || normOrcamento === 'helena' || normOrcamento === 'matheus') {
-    return categoriesMap['despesa:filhos']
+  // "Casa", "Aluguel", "Diarista", "Lavanderia", "Manutenção Casa" → Moradia
+  if (
+    normCat.includes('casa') ||
+    normCat.includes('aluguel') ||
+    normCat.includes('diarista') ||
+    normCat.includes('lavanderia') ||
+    normCat.includes('manutencao') ||
+    normCat.includes('luz') ||
+    normCat.includes('energia') ||
+    normCat.includes('agua') ||
+    normCat.includes('internet') ||
+    normCat.includes('condominio') ||
+    normCat.includes('decoracao') ||
+    normCat.includes('utensilios') ||
+    normCat.includes('moradia')
+  ) {
+    return categoriesMap['despesa:moradia']
   }
 
-  // Orçamento "Animais de Estimação" -> Pets
-  if (normOrcamento.includes('animais') || normOrcamento.includes('pet')) {
+  // "Animais de Estimação" → Pets
+  if (normCat.includes('animal') || normCat.includes('pet') || normCat.includes('animais')) {
     return categoriesMap['despesa:pets']
   }
 
-  // Orçamento "Fast Escova" -> Pessoal
-  if (normOrcamento.includes('fast escova')) {
-    return categoriesMap['despesa:pessoal']
+  // "Médicos / Psicólogos", "Farmácia", "Plano de Saúde", "Exercícios", "Seguro de Vida" → Saúde
+  if (
+    normCat.includes('medico') ||
+    normCat.includes('psicologo') ||
+    normCat.includes('psicologa') ||
+    normCat.includes('dentista') ||
+    normCat.includes('farmacia') ||
+    normCat.includes('medicamento') ||
+    normCat.includes('plano de saude') ||
+    normCat.includes('exercicio') ||
+    normCat.includes('gympass') ||
+    normCat.includes('academia') ||
+    normCat.includes('seguro de vida') ||
+    normCat.includes('saude')
+  ) {
+    return categoriesMap['despesa:saude'] || categoriesMap['despesa:saúde']
   }
 
-  return categoriesMap['despesa:pessoal'] || categoriesMap['despesa:outros']
+  // "Emanuel", "Helena", "Matheus", "Escola / Material", "Psicologo", "Fono", "Pensão" → Filhos
+  if (
+    normCat.includes('emanuel') ||
+    normCat.includes('helena') ||
+    normCat.includes('matheus') ||
+    normCat.includes('escola') ||
+    normCat.includes('material') ||
+    normCat.includes('fono') ||
+    normCat.includes('pensao') ||
+    normCat.includes('filho')
+  ) {
+    return categoriesMap['despesa:filhos']
+  }
+
+  // "Investimento" → Investimentos
+  if (
+    normCat.includes('investimento') ||
+    normCat.includes('cdb') ||
+    normCat.includes('financiamento')
+  ) {
+    return categoriesMap['despesa:investimentos'] || categoriesMap['despesa:investimento']
+  }
+
+  // "Lazer", "Ifood", "Clube", "Spotify", "Netflix", "Cinema" → Lazer
+  if (
+    normCat.includes('lazer') ||
+    normCat.includes('clube') ||
+    normCat.includes('spotify') ||
+    normCat.includes('netflix') ||
+    normCat.includes('cinema') ||
+    normCat.includes('viagem') ||
+    normCat.includes('viagens') ||
+    normCat.includes('show') ||
+    normCat.includes('passeio')
+  ) {
+    return categoriesMap['despesa:lazer']
+  }
+
+  // Fallback: Pessoal
+  return categoriesMap['despesa:pessoal'] || Object.values(categoriesMap)[0] || ''
 }
 
-function parseCurrency(str) {
-  if (typeof str === 'number') return str
-  if (!str) return 0
-  let clean = str
+// 2. Mapeamento de Conta
+function mapAccount(meioPagamentoStr, accountsMap) {
+  if (!meioPagamentoStr) return ''
+  const norm = normalizeText(meioPagamentoStr)
+
+  if (accountsMap[norm]) return accountsMap[norm]
+
+  // Regras de match flexível para as 7 contas:
+  if (norm.includes('neon') && norm.includes('fabricio') && norm.includes('credito')) {
+    return accountsMap['neon fabricio credito'] || accountsMap['neon fabricio credito']
+  }
+  if (norm.includes('neon') && norm.includes('raffaela') && norm.includes('credito')) {
+    return accountsMap['neon raffaela credito']
+  }
+  if (norm.includes('santander') && norm.includes('fabricio') && norm.includes('credito')) {
+    return accountsMap['santander fabricio credito']
+  }
+  if (norm.includes('neon') && norm.includes('fabricio')) {
+    return accountsMap['neon fabricio']
+  }
+  if (norm.includes('neon') && (norm.includes('raffaela') || norm.includes('rafaela'))) {
+    return accountsMap['neon raffaela']
+  }
+  if (norm.includes('santander') && norm.includes('fabricio')) {
+    return accountsMap['santander fabricio']
+  }
+  if (norm.includes('flash')) {
+    return accountsMap['flash']
+  }
+
+  // Match parcial caso alguma conta no banco tenha nome ligeiramente diferente
+  for (const [accNormKey, accId] of Object.entries(accountsMap)) {
+    if (norm.includes(accNormKey) || accNormKey.includes(norm)) {
+      return accId
+    }
+  }
+
+  return ''
+}
+
+// Parser de Moeda / Valor
+function parseCurrency(val) {
+  if (typeof val === 'number') return isNaN(val) ? 0 : Math.abs(val)
+  if (!val) return 0
+  const clean = val
+    .toString()
     .replace(/[R$\s]/g, '')
     .replace(/\./g, '')
     .replace(',', '.')
-  return parseFloat(clean) || 0
+  const num = parseFloat(clean)
+  return isNaN(num) ? 0 : Math.abs(num)
 }
 
-function parseDate(dateStr) {
-  if (!dateStr) return new Date().toISOString()
-  if (dateStr instanceof Date) return dateStr.toISOString()
-  // Formatos: DD/MM/YYYY ou YYYY-MM-DD
-  if (typeof dateStr === 'string' && dateStr.includes('/')) {
-    const parts = dateStr.trim().split('/')
-    if (parts.length === 3) {
-      const day = parts[0].padStart(2, '0')
-      const month = parts[1].padStart(2, '0')
-      const year = parts[2].length === 2 ? '20' + parts[2] : parts[2]
-      return `${year}-${month}-${day} 00:00:00.000Z`
-    }
+// Parser de Data (Excel serial number, Date object ou string DD/MM/YYYY)
+function parseExcelDate(dateVal) {
+  if (!dateVal) return new Date().toISOString().split('T')[0] + ' 00:00:00.000Z'
+  if (dateVal instanceof Date) {
+    return dateVal.toISOString().split('T')[0] + ' 00:00:00.000Z'
   }
-  return new Date(dateStr).toISOString()
-}
-
-// Parser simples para CSV considerando aspas
-function parseCsvRows(csvText) {
-  const rows = []
-  const lines = csvText.split(/\r?\n/)
-  for (const line of lines) {
-    if (!line.trim()) continue
-    const cols = []
-    let insideQuotes = false
-    let current = ''
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i]
-      if (char === '"') {
-        if (insideQuotes && line[i + 1] === '"') {
-          current += '"'
-          i++
-        } else {
-          insideQuotes = !insideQuotes
-        }
-      } else if (char === ',' && !insideQuotes) {
-        cols.push(current)
-        current = ''
-      } else {
-        current += char
+  if (typeof dateVal === 'number') {
+    // Excel date serial number to JS Date
+    const date = new Date(Math.round((dateVal - 25569) * 86400 * 1000))
+    return date.toISOString().split('T')[0] + ' 00:00:00.000Z'
+  }
+  if (typeof dateVal === 'string') {
+    const trimmed = dateVal.trim()
+    if (trimmed.includes('/')) {
+      const parts = trimmed.split('/')
+      if (parts.length === 3) {
+        const day = parts[0].padStart(2, '0')
+        const month = parts[1].padStart(2, '0')
+        const year = parts[2].length === 2 ? '20' + parts[2] : parts[2]
+        return `${year}-${month}-${day} 00:00:00.000Z`
       }
     }
-    cols.push(current)
-    rows.push(cols)
-  }
-  return rows
-}
-
-async function loadRows() {
-  console.log('Downloading spreadsheet data from Google Sheets CSV...')
-  try {
-    const res = await fetch(CSV_URL)
-    if (res.ok) {
-      const csvText = await res.text()
-      const rawRows = parseCsvRows(csvText)
-      console.log(`Parsed ${rawRows.length} rows from CSV`)
-      return rawRows
+    if (trimmed.includes('-')) {
+      return trimmed.split('T')[0] + ' 00:00:00.000Z'
     }
-    console.warn(`CSV fetch returned ${res.status}, trying Supabase XLSX...`)
-  } catch (err) {
-    console.warn('Failed to fetch CSV, trying XLSX...', err.message)
   }
-
-  // Tentar XLSX se CSV falhar
-  const xlsxRes = await fetch(XLSX_URL)
-  if (!xlsxRes.ok) {
-    throw new Error(`Failed to download spreadsheet from both sources. Status: ${xlsxRes.status}`)
-  }
-  const arrayBuffer = await xlsxRes.arrayBuffer()
-  // Se a biblioteca xlsx estiver disponível
-  try {
-    const XLSX = await import('xlsx')
-    const workbook = XLSX.read(Buffer.from(arrayBuffer), { type: 'buffer' })
-    const sheetName =
-      workbook.SheetNames.find((s) => s.toUpperCase() === 'JAN') || workbook.SheetNames[0]
-    const sheet = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 })
-    console.log(`Parsed ${rows.length} rows from XLSX sheet ${sheetName}`)
-    return rows
-  } catch (xlsxErr) {
-    throw new Error('xlsx module error: ' + xlsxErr.message)
-  }
+  return new Date().toISOString().split('T')[0] + ' 00:00:00.000Z'
 }
 
+// Heurística de Recorrência
+function checkRecurring(tipoStr, descStr, catStr, pagStr) {
+  const normTipo = normalizeText(tipoStr)
+  const normDesc = normalizeText(descStr)
+  const normCat = normalizeText(catStr)
+  const normPag = normalizeText(pagStr)
+
+  if (normPag.includes('recorrente') || normTipo.includes('recorrente')) {
+    return true
+  }
+
+  const recurringKeywords = [
+    'mensal',
+    'recorrente',
+    'spotify',
+    'netflix',
+    'plano de saude',
+    'seguro',
+    'aluguel',
+    'condominio',
+    'internet',
+    'luz',
+    'energia',
+    'agua',
+    'gympass',
+    'celular',
+    'pensao',
+  ]
+
+  for (const kw of recurringKeywords) {
+    if (normDesc.includes(kw) || normCat.includes(kw)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+// Download do arquivo XLSX
+async function fetchXlsxBuffer() {
+  console.log(`Downloading XLSX from: ${XLSX_URL}...`)
+  const res = await fetch(XLSX_URL)
+  if (!res.ok) {
+    throw new Error(`Failed to download XLSX file: ${res.status} ${res.statusText}`)
+  }
+  const arrayBuffer = await res.arrayBuffer()
+  return Buffer.from(arrayBuffer)
+}
+
+// Função Principal de Importação
 export async function runImport(clientPb) {
   const pb = clientPb || new PocketBase(PB_URL)
   pb.autoCancellation(false)
 
-  console.log(`\n========================================`)
-  console.log(`Starting January Import for Control: ${CONTROL_ID}`)
-  console.log(`Backend URL: ${PB_URL}`)
-  console.log(`========================================\n`)
+  // Autenticação / Superuser se credenciais estiverem no ambiente
+  const adminEmail =
+    process.env.PB_ADMIN_EMAIL || process.env.ADMIN_EMAIL || 'fabricio.pilla@gmail.com'
+  const adminPassword = process.env.PB_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || 'Skip@Pass'
 
-  // 1. Obter owner do controle
-  let userId = ''
+  try {
+    if (pb.admins && typeof pb.admins.authWithPassword === 'function') {
+      await pb.admins.authWithPassword(adminEmail, adminPassword)
+      console.log('Authenticated as admin')
+    } else if (pb.collection) {
+      await pb.collection('users').authWithPassword(adminEmail, adminPassword)
+      console.log('Authenticated as user:', adminEmail)
+    }
+  } catch (authErr) {
+    console.warn('Auth notice (proceeding with existing session/public):', authErr.message)
+  }
+
+  console.log(`\n==================================================`)
+  console.log(`Starting January XLSX Reimport for control "Casa"`)
+  console.log(`PocketBase URL: ${PB_URL}`)
+  console.log(`==================================================\n`)
+
+  // 1. Buscar o ID do controle "Casa"
+  console.log('Searching for financial control "Casa"...')
+  const controls = await pb.collection('financial_controls').getFullList({
+    filter: 'name ~ "Casa" || name = "Casa"',
+  })
+
+  let control = controls.find((c) => normalizeText(c.name) === 'casa') || controls[0]
+
+  if (!control) {
+    // Tentar buscar todos os controles
+    const allControls = await pb.collection('financial_controls').getFullList()
+    control = allControls.find((c) => normalizeText(c.name) === 'casa') || allControls[0]
+  }
+
+  if (!control) {
+    throw new Error('Financial control "Casa" not found!')
+  }
+
+  const controlId = control.id
+  console.log(`Found Control "Casa" ID: ${controlId} (Name: ${control.name})`)
+
+  // Obter userId do proprietário
+  let userId = control.owner_id || ''
   try {
     const members = await pb.collection('control_members').getFullList({
-      filter: `control_id = "${CONTROL_ID}" && role = "owner"`,
+      filter: `control_id = "${controlId}" && role = "owner"`,
     })
-    if (members.length > 0) {
+    if (members.length > 0 && members[0].user_id) {
       userId = members[0].user_id
-      console.log(`Found owner user_id: ${userId} (${members[0].email})`)
     }
-  } catch (err) {
-    console.warn('Could not fetch owner from control_members:', err.message)
-  }
+  } catch (_) {}
 
-  if (!userId) {
-    try {
-      const control = await pb.collection('financial_controls').getOne(CONTROL_ID)
-      userId = control.owner_id
-      console.log(`Found owner_id from control: ${userId}`)
-    } catch (e) {
-      userId = 'uc5jp6hewxu9yio' // fallback
-      console.log(`Using fallback userId: ${userId}`)
-    }
-  }
-
-  // 2. Buscar contas existentes
+  // 2. Buscar as 7 contas existentes do controle
+  console.log('Fetching accounts for control...')
   const accounts = await pb.collection('accounts').getFullList({
-    filter: `control_id = "${CONTROL_ID}"`,
+    filter: `control_id = "${controlId}"`,
   })
-  console.log(`Found ${accounts.length} existing accounts`)
+  console.log(`Found ${accounts.length} accounts:`, accounts.map((a) => a.name).join(', '))
 
   const accountsMap = {}
   for (const acc of accounts) {
-    const norm = acc.name
-      .trim()
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-    accountsMap[norm] = acc.id
+    accountsMap[normalizeText(acc.name)] = acc.id
   }
 
-  // Mapeador de conta flexível
-  const getAccountId = (accName) => {
-    if (!accName) return ''
-    const norm = accName
-      .trim()
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-    if (accountsMap[norm]) return accountsMap[norm]
-
-    // matches parciais
-    if (norm.includes('neon') && norm.includes('fabricio') && norm.includes('credito'))
-      return accountsMap['neon fabricio credito']
-    if (norm.includes('neon') && norm.includes('raffaela') && norm.includes('credito'))
-      return accountsMap['neon raffaela credito']
-    if (norm.includes('santander') && norm.includes('fabricio') && norm.includes('credito'))
-      return accountsMap['santander fabricio credito']
-    if (norm.includes('neon') && norm.includes('fabricio')) return accountsMap['neon fabricio']
-    if (norm.includes('neon') && norm.includes('raffaela')) return accountsMap['neon raffaela']
-    if (norm.includes('santander') && norm.includes('fabricio'))
-      return accountsMap['santander fabricio']
-    if (norm.includes('flash')) return accountsMap['flash']
-
-    return ''
-  }
-
-  // 3. Buscar categorias existentes
+  // 3. Buscar as categorias existentes do controle
+  console.log('Fetching categories for control...')
   const categories = await pb.collection('categories').getFullList({
-    filter: `control_id = "${CONTROL_ID}"`,
+    filter: `control_id = "${controlId}"`,
   })
-  console.log(`Found ${categories.length} existing categories`)
+  console.log(
+    `Found ${categories.length} categories:`,
+    categories.map((c) => `${c.type}:${c.name}`).join(', '),
+  )
 
   const categoriesMap = {}
   for (const cat of categories) {
-    const key = `${cat.type}:${cat.name.trim().toLowerCase()}`
+    const key = `${normalizeText(cat.type)}:${normalizeText(cat.name)}`
     categoriesMap[key] = cat.id
   }
 
-  // 4. Deletar TODAS as transações do controle
-  console.log(`\nStep 1: Deleting existing transactions for control ${CONTROL_ID}...`)
+  // 4. Deletar TODAS as transações existentes desse controle
+  console.log(`\nDeleting existing transactions for control ID: ${controlId}...`)
   const existingTxs = await pb.collection('transactions').getFullList({
-    filter: `control_id = "${CONTROL_ID}"`,
+    filter: `control_id = "${controlId}"`,
   })
   console.log(`Found ${existingTxs.length} transactions to delete.`)
 
   for (const tx of existingTxs) {
     await pb.collection('transactions').delete(tx.id)
   }
-  console.log(`Successfully deleted ${existingTxs.length} transactions.\n`)
+  console.log(`Deleted all ${existingTxs.length} transactions successfully.\n`)
 
-  // 5. Ler e importar planilha
-  console.log(`Step 2: Parsing rows and importing...`)
-  const rawRows = await loadRows()
+  // 5. Baixar e Ler o arquivo XLSX
+  const buffer = await fetchXlsxBuffer()
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true })
+
+  // Procurar aba "JAN"
+  const targetSheetName =
+    workbook.SheetNames.find((name) => normalizeText(name) === 'jan') || workbook.SheetNames[0]
+  console.log(`Reading sheet "${targetSheetName}"...`)
+
+  const worksheet = workbook.Sheets[targetSheetName]
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'dd/mm/yyyy' })
+
+  console.log(`Total rows in sheet (including header): ${rows.length}`)
 
   let importedCount = 0
   let skippedCount = 0
 
-  for (let i = 0; i < rawRows.length; i++) {
-    const row = rawRows[i]
-    if (!row || row.length < 5) continue
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row || row.length === 0) continue
 
-    const dataCol = (row[0] || '').toString().trim()
-    const meioPagamento = (row[1] || '').toString().trim()
-    const tipo = (row[2] || '').toString().trim()
-    const orcamento = (row[3] || '').toString().trim()
-    const categoria = (row[4] || '').toString().trim()
-    const descricao = (row[5] || '').toString().trim()
-    const parcelas = (row[6] || '').toString().trim()
-    const valorRaw = (row[7] || '').toString().trim()
-    const pagamento = (row[8] || '').toString().trim()
-    const pagoRaw = (row[9] || '').toString().trim()
+    const colA_Data = (row[0] || '').toString().trim()
+    const colB_MeioPagamento = (row[1] || '').toString().trim()
+    const colC_Tipo = (row[2] || '').toString().trim()
+    const colD_Orcamento = (row[3] || '').toString().trim()
+    const colE_Categoria = (row[4] || '').toString().trim()
+    const colF_Descricao = (row[5] || '').toString().trim()
+    const colG_Parcelas = (row[6] || '').toString().trim()
+    const colH_Valor = (row[7] || '').toString().trim()
+    const colI_FormaPagamento = (row[8] || '').toString().trim()
+    const colJ_Pago = (row[9] || '').toString().trim()
 
-    // Pular cabeçalhos ou linhas sem data válida
-    if (dataCol.toLowerCase() === 'data' || !dataCol.match(/\d/)) {
+    // Pular linha de cabeçalho
+    if (
+      normalizeText(colA_Data) === 'data' ||
+      normalizeText(colB_MeioPagamento) === 'meio de pagamento' ||
+      normalizeText(colE_Categoria) === 'categoria' ||
+      normalizeText(colH_Valor) === 'valor'
+    ) {
       continue
     }
 
     // Pular linhas vazias
-    if (!meioPagamento && !orcamento && !categoria && !valorRaw) {
+    if (!colA_Data && !colB_MeioPagamento && !colE_Categoria && !colH_Valor) {
       continue
     }
 
-    const valor = parseCurrency(valorRaw)
+    const valor = parseCurrency(colH_Valor)
     if (valor <= 0) {
       skippedCount++
       continue
     }
 
-    const dateIso = parseDate(dataCol)
-    const accountId = getAccountId(meioPagamento)
-    const isReceita = tipo.toLowerCase() === 'entrada' || tipo.toLowerCase() === 'receita'
-    const txType = isReceita ? 'receita' : 'despesa'
-    const categoryId = mapCategory(tipo, orcamento, categoria, categoriesMap) || ''
-    const isPaid = pagoRaw.toLowerCase() === 'sim' || pagoRaw === '' || pagoRaw === 'true'
+    const dateIso = parseExcelDate(row[0] || colA_Data)
+    const accountId = mapAccount(colB_MeioPagamento, accountsMap)
 
-    // Montar descrição final: se tiver descricao específica, usa "Categoria (Descricao)" ou "Descricao"
-    let finalDescription = categoria
-    if (descricao) {
-      finalDescription = `${categoria} (${descricao})`
+    const isReceita =
+      normalizeText(colC_Tipo) === 'entrada' ||
+      normalizeText(colC_Tipo) === 'receita' ||
+      normalizeText(colE_Categoria) === 'salario'
+
+    const txType = isReceita ? 'receita' : 'despesa'
+    const categoryId = mapCategory(colC_Tipo, colE_Categoria || colD_Orcamento, categoriesMap)
+    const isPaid = normalizeText(colJ_Pago) === 'nao' ? false : true
+
+    // Montar descrição
+    let description = colF_Descricao || colE_Categoria || 'Transação'
+    if (
+      colE_Categoria &&
+      colF_Descricao &&
+      normalizeText(colE_Categoria) !== normalizeText(colF_Descricao)
+    ) {
+      description = `${colE_Categoria} (${colF_Descricao})`
     }
 
-    // Regra de parcelas: G = "23/36"
-    const installmentMatch = parcelas.match(/(\d+)\s*\/\s*(\d+)/)
+    // Verificar parcelamento
+    const parcelasMatch = colG_Parcelas.match(/(\d+)\s*\/\s*(\d+)/)
 
-    // Regra de recorrência
-    const isRecurring = pagamento.toLowerCase().includes('recorrente')
+    // Verificar recorrência
+    const isRecurring = checkRecurring(colC_Tipo, description, colE_Categoria, colI_FormaPagamento)
     const recurrencePeriod = isRecurring ? 'mensal' : ''
     const recurrenceType = isRecurring ? 'mensal' : ''
 
-    if (installmentMatch) {
-      const currentInst = parseInt(installmentMatch[1], 10)
-      const totalInst = parseInt(installmentMatch[2], 10)
+    if (parcelasMatch) {
+      const currentInst = parseInt(parcelasMatch[1], 10)
+      const totalInst = parseInt(parcelasMatch[2], 10)
       const totalAmount = valor * totalInst
 
-      // 1. Criar registro pai
+      // 1. Criar registro pai (Parent transaction)
       const parentRecord = await pb.collection('transactions').create({
-        control_id: CONTROL_ID,
+        control_id: controlId,
         user_id: userId,
         type: txType,
         amount: 0,
-        description: `${finalDescription} (Total: R$ ${totalAmount.toFixed(2)})`,
+        description: `${description} (Total: R$ ${totalAmount.toFixed(2)})`,
         category_id: categoryId,
         account_id: accountId,
         date: dateIso,
@@ -418,16 +524,16 @@ export async function runImport(clientPb) {
         installment_number: 0,
         installment_total: totalInst,
         parent_transaction_id: '',
-        notes: '',
+        notes: `Importado de JAN .xlsx - Pai ${totalInst} parcelas`,
       })
 
-      // 2. Criar registro filho da parcela
+      // 2. Criar parcela atual
       await pb.collection('transactions').create({
-        control_id: CONTROL_ID,
+        control_id: controlId,
         user_id: userId,
         type: txType,
         amount: valor,
-        description: finalDescription,
+        description: description,
         category_id: categoryId,
         account_id: accountId,
         date: dateIso,
@@ -439,21 +545,21 @@ export async function runImport(clientPb) {
         installment_number: currentInst,
         installment_total: totalInst,
         parent_transaction_id: parentRecord.id,
-        notes: '',
+        notes: `Importado de JAN .xlsx - Parcela ${currentInst}/${totalInst}`,
       })
 
       importedCount += 2
       console.log(
-        `[Row ${i + 1}] Created installment parent + parcel: ${finalDescription} (Parc ${currentInst}/${totalInst}) - R$ ${valor}`,
+        `[Row ${i + 1}] Parcelado: ${description} (Parcela ${currentInst}/${totalInst}) - R$ ${valor.toFixed(2)}`,
       )
     } else {
-      // Transação normal
+      // Transação regular
       await pb.collection('transactions').create({
-        control_id: CONTROL_ID,
+        control_id: controlId,
         user_id: userId,
         type: txType,
         amount: valor,
-        description: finalDescription,
+        description: description,
         category_id: categoryId,
         account_id: accountId,
         date: dateIso,
@@ -465,29 +571,34 @@ export async function runImport(clientPb) {
         installment_number: 0,
         installment_total: 0,
         parent_transaction_id: '',
-        notes: '',
+        notes: `Importado de JAN .xlsx`,
       })
 
       importedCount++
       console.log(
-        `[Row ${i + 1}] Created transaction: ${finalDescription} - R$ ${valor} (${txType})`,
+        `[Row ${i + 1}] ${txType.toUpperCase()}: ${description} - R$ ${valor.toFixed(2)} (${colB_MeioPagamento})`,
       )
     }
   }
 
-  console.log(`\n========================================`)
-  console.log(`Import finished successfully!`)
-  console.log(`Imported transactions: ${importedCount}`)
-  console.log(`Skipped rows: ${skippedCount}`)
-  console.log(`========================================\n`)
+  console.log(`\n==================================================`)
+  console.log(`Import completed successfully!`)
+  console.log(`Total transactions created: ${importedCount}`)
+  console.log(`Skipped rows (empty or zero value): ${skippedCount}`)
+  console.log(`==================================================\n`)
 
   return { importedCount, skippedCount }
 }
 
-// Execução direta via node
+// Execução direta via `node scripts/import-january.mjs`
 if (process.argv[1] && process.argv[1].endsWith('import-january.mjs')) {
-  runImport().catch((err) => {
-    console.error('Fatal error during import:', err)
-    process.exit(1)
-  })
+  runImport()
+    .then((res) => {
+      console.log('Result:', res)
+      process.exit(0)
+    })
+    .catch((err) => {
+      console.error('Fatal error during import:', err)
+      process.exit(1)
+    })
 }
