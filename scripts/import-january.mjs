@@ -22,6 +22,96 @@ function normalizeText(text) {
 }
 
 // 1. Mapeamento de Categoria
+function mapCategoryWithOrcamento(tipoStr, orcamentoStr, categoriaStr, categoriesMap) {
+  const normTipo = normalizeText(tipoStr)
+  const normOrc = normalizeText(orcamentoStr)
+  const normCat = normalizeText(categoriaStr)
+
+  if (normTipo === 'entrada' || normTipo === 'receita') {
+    if (normCat.includes('salario')) {
+      return (
+        categoriesMap['receita:salario'] ||
+        categoriesMap['receita:salário'] ||
+        categoriesMap['receita:outros']
+      )
+    }
+    if (normOrc.includes('investimento') || normCat.includes('investimento')) {
+      return (
+        categoriesMap['receita:investimentos'] ||
+        categoriesMap['receita:investimento'] ||
+        categoriesMap['receita:outros']
+      )
+    }
+    return categoriesMap['receita:outros'] || categoriesMap['receita:salario']
+  }
+
+  if (normOrc === 'casa') {
+    return categoriesMap['despesa:moradia']
+  }
+
+  if (normOrc === 'familia') {
+    if (
+      normCat.includes('supermercado') ||
+      normCat.includes('restaurante') ||
+      normCat.includes('suplemento') ||
+      normCat.includes('alimentacao') ||
+      normCat.includes('delivery')
+    ) {
+      return categoriesMap['despesa:alimentacao'] || categoriesMap['despesa:alimentação']
+    }
+    if (
+      normCat.includes('plano de saude') ||
+      normCat.includes('farmacia') ||
+      normCat.includes('medic') ||
+      normCat.includes('saude')
+    ) {
+      return categoriesMap['despesa:saude'] || categoriesMap['despesa:saúde']
+    }
+    if (normCat.includes('lazer') || normCat.includes('viagen') || normCat.includes('comemorac')) {
+      return categoriesMap['despesa:lazer']
+    }
+    return categoriesMap['despesa:pessoal']
+  }
+
+  if (normOrc === 'automovel' || normOrc === 'transporte') {
+    return categoriesMap['despesa:transporte']
+  }
+
+  if (normOrc === 'investimento' || normOrc === 'investimentos') {
+    return categoriesMap['despesa:investimentos'] || categoriesMap['despesa:investimento']
+  }
+
+  if (normOrc === 'fabricio' || normOrc === 'raffaela' || normOrc === 'rafaela') {
+    if (
+      normCat.includes('exercicio') ||
+      normCat.includes('medicamento') ||
+      normCat.includes('medico') ||
+      normCat.includes('psicologo') ||
+      normCat.includes('saude')
+    ) {
+      return categoriesMap['despesa:saude'] || categoriesMap['despesa:saúde']
+    }
+    if (normCat.includes('lazer')) {
+      return categoriesMap['despesa:lazer']
+    }
+    if (normCat.includes('transporte') || normCat.includes('combustivel')) {
+      return categoriesMap['despesa:transporte']
+    }
+    return categoriesMap['despesa:pessoal']
+  }
+
+  if (normOrc === 'emanuel' || normOrc === 'helena' || normOrc === 'matheus') {
+    return categoriesMap['despesa:filhos']
+  }
+
+  if (normOrc.includes('animais') || normOrc.includes('pet')) {
+    return categoriesMap['despesa:pets']
+  }
+
+  return mapCategory(tipoStr, categoriaStr, categoriesMap)
+}
+
+// Mapeamento de Categoria legado
 function mapCategory(tipoStr, categoriaStr, categoriesMap) {
   const normTipo = normalizeText(tipoStr)
   const normCat = normalizeText(categoriaStr)
@@ -480,7 +570,12 @@ export async function runImport(clientPb) {
       normalizeText(colE_Categoria) === 'salario'
 
     const txType = isReceita ? 'receita' : 'despesa'
-    const categoryId = mapCategory(colC_Tipo, colE_Categoria || colD_Orcamento, categoriesMap)
+    const categoryId = mapCategoryWithOrcamento(
+      colC_Tipo,
+      colD_Orcamento,
+      colE_Categoria,
+      categoriesMap,
+    )
     const isPaid = normalizeText(colJ_Pago) === 'nao' ? false : true
 
     // Montar descrição
