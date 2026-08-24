@@ -10,7 +10,6 @@ const PB_URL =
 const XLSX_URL =
   'https://dagtlwojkqyivnjgveda.supabase.co/storage/v1/object/public/message-attachments/87a0dacd-54e6-4142-b13f-981b9d996158/financeiro-2026-89ba7.xlsx'
 
-// Normalizador de texto para comparação (remove acentos, espaços extras e minúsculas)
 function normalizeText(text) {
   if (!text) return ''
   return text
@@ -21,7 +20,6 @@ function normalizeText(text) {
     .replace(/[\u0300-\u036f]/g, '')
 }
 
-// 1. Mapeamento de Categoria
 function mapCategoryWithOrcamento(tipoStr, orcamentoStr, categoriaStr, categoriesMap) {
   const normTipo = normalizeText(tipoStr)
   const normOrc = normalizeText(orcamentoStr)
@@ -111,12 +109,10 @@ function mapCategoryWithOrcamento(tipoStr, orcamentoStr, categoriaStr, categorie
   return mapCategory(tipoStr, categoriaStr, categoriesMap)
 }
 
-// Mapeamento de Categoria legado
 function mapCategory(tipoStr, categoriaStr, categoriesMap) {
   const normTipo = normalizeText(tipoStr)
   const normCat = normalizeText(categoriaStr)
 
-  // Se for Receita / Entrada
   if (normTipo === 'receita' || normTipo === 'entrada' || normCat === 'salario') {
     if (normCat.includes('salario')) {
       return (
@@ -135,8 +131,6 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['receita:outros'] || categoriesMap['receita:salario']
   }
 
-  // Despesas por Categoria específica conforme especificação:
-  // "Celular", "Roupas e Acessórios", "Cabelereiro", "Jogos", "Educação", "Presentes", "Impostos", "IF homem", "Compras diversas", "Outros", "Tarifas Bancárias" → Pessoal
   if (
     normCat.includes('celular') ||
     normCat.includes('roupas') ||
@@ -163,7 +157,6 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:pessoal']
   }
 
-  // "Transporte", "Estacionamento" → Transporte
   if (
     normCat.includes('transporte') ||
     normCat.includes('estacionamento') ||
@@ -177,7 +170,6 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:transporte']
   }
 
-  // "Supermercado", "Feira", "Açougue", "Padaria", "Delivery/Hamburgueria", "Restaurante", "Guloseimas" → Alimentação
   if (
     normCat.includes('supermercado') ||
     normCat.includes('feira') ||
@@ -194,7 +186,6 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:alimentacao'] || categoriesMap['despesa:alimentação']
   }
 
-  // "Casa", "Aluguel", "Diarista", "Lavanderia", "Manutenção Casa" → Moradia
   if (
     normCat.includes('casa') ||
     normCat.includes('aluguel') ||
@@ -213,12 +204,10 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:moradia']
   }
 
-  // "Animais de Estimação" → Pets
   if (normCat.includes('animal') || normCat.includes('pet') || normCat.includes('animais')) {
     return categoriesMap['despesa:pets']
   }
 
-  // "Médicos / Psicólogos", "Farmácia", "Plano de Saúde", "Exercícios", "Seguro de Vida" → Saúde
   if (
     normCat.includes('medico') ||
     normCat.includes('psicologo') ||
@@ -236,7 +225,6 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:saude'] || categoriesMap['despesa:saúde']
   }
 
-  // "Emanuel", "Helena", "Matheus", "Escola / Material", "Psicologo", "Fono", "Pensão" → Filhos
   if (
     normCat.includes('emanuel') ||
     normCat.includes('helena') ||
@@ -250,7 +238,6 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:filhos']
   }
 
-  // "Investimento" → Investimentos
   if (
     normCat.includes('investimento') ||
     normCat.includes('cdb') ||
@@ -259,7 +246,6 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:investimentos'] || categoriesMap['despesa:investimento']
   }
 
-  // "Lazer", "Ifood", "Clube", "Spotify", "Netflix", "Cinema" → Lazer
   if (
     normCat.includes('lazer') ||
     normCat.includes('clube') ||
@@ -274,18 +260,15 @@ function mapCategory(tipoStr, categoriaStr, categoriesMap) {
     return categoriesMap['despesa:lazer']
   }
 
-  // Fallback: Pessoal
   return categoriesMap['despesa:pessoal'] || Object.values(categoriesMap)[0] || ''
 }
 
-// 2. Mapeamento de Conta
 function mapAccount(meioPagamentoStr, accountsMap) {
   if (!meioPagamentoStr) return ''
   const norm = normalizeText(meioPagamentoStr)
 
   if (accountsMap[norm]) return accountsMap[norm]
 
-  // Regras de match flexível para as 7 contas:
   if (norm.includes('neon') && norm.includes('fabricio') && norm.includes('credito')) {
     return accountsMap['neon fabricio credito'] || accountsMap['neon fabricio credito']
   }
@@ -308,7 +291,6 @@ function mapAccount(meioPagamentoStr, accountsMap) {
     return accountsMap['flash']
   }
 
-  // Match parcial caso alguma conta no banco tenha nome ligeiramente diferente
   for (const [accNormKey, accId] of Object.entries(accountsMap)) {
     if (norm.includes(accNormKey) || accNormKey.includes(norm)) {
       return accId
@@ -318,7 +300,6 @@ function mapAccount(meioPagamentoStr, accountsMap) {
   return ''
 }
 
-// Parser de Moeda / Valor
 function parseCurrency(val) {
   if (typeof val === 'number') return isNaN(val) ? 0 : Math.abs(val)
   if (!val) return 0
@@ -331,14 +312,12 @@ function parseCurrency(val) {
   return isNaN(num) ? 0 : Math.abs(num)
 }
 
-// Parser de Data (Excel serial number, Date object ou string DD/MM/YYYY)
 function parseExcelDate(dateVal) {
-  if (!dateVal) return new Date().toISOString().split('T')[0] + ' 00:00:00.000Z'
+  if (!dateVal) return '2026-01-01 00:00:00.000Z'
   if (dateVal instanceof Date) {
     return dateVal.toISOString().split('T')[0] + ' 00:00:00.000Z'
   }
   if (typeof dateVal === 'number') {
-    // Excel date serial number to JS Date
     const date = new Date(Math.round((dateVal - 25569) * 86400 * 1000))
     return date.toISOString().split('T')[0] + ' 00:00:00.000Z'
   }
@@ -357,10 +336,9 @@ function parseExcelDate(dateVal) {
       return trimmed.split('T')[0] + ' 00:00:00.000Z'
     }
   }
-  return new Date().toISOString().split('T')[0] + ' 00:00:00.000Z'
+  return '2026-01-01 00:00:00.000Z'
 }
 
-// Heurística de Recorrência
 function checkRecurring(tipoStr, descStr, catStr, pagStr) {
   const normTipo = normalizeText(tipoStr)
   const normDesc = normalizeText(descStr)
@@ -398,7 +376,6 @@ function checkRecurring(tipoStr, descStr, catStr, pagStr) {
   return false
 }
 
-// Download do arquivo XLSX
 async function fetchXlsxBuffer() {
   console.log(`Downloading XLSX from: ${XLSX_URL}...`)
   const res = await fetch(XLSX_URL)
@@ -409,12 +386,71 @@ async function fetchXlsxBuffer() {
   return Buffer.from(arrayBuffer)
 }
 
-// Função Principal de Importação
+export async function parseXlsxJanRows() {
+  const buffer = await fetchXlsxBuffer()
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true })
+
+  console.log('Available sheets in workbook:', workbook.SheetNames)
+  const targetSheetName =
+    workbook.SheetNames.find((name) => normalizeText(name) === 'jan') || workbook.SheetNames[0]
+  console.log(`Reading sheet "${targetSheetName}"...`)
+
+  const worksheet = workbook.Sheets[targetSheetName]
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'dd/mm/yyyy' })
+
+  const parsedRows = []
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row || row.length === 0) continue
+
+    const colA_Data = (row[0] || '').toString().trim()
+    const colB_MeioPagamento = (row[1] || '').toString().trim()
+    const colC_Tipo = (row[2] || '').toString().trim()
+    const colD_Orcamento = (row[3] || '').toString().trim()
+    const colE_Categoria = (row[4] || '').toString().trim()
+    const colF_Descricao = (row[5] || '').toString().trim()
+    const colG_Parcelas = (row[6] || '').toString().trim()
+    const colH_Valor = (row[7] || '').toString().trim()
+    const colI_FormaPagamento = (row[8] || '').toString().trim()
+    const colJ_Pago = (row[9] || '').toString().trim()
+
+    if (
+      normalizeText(colA_Data) === 'data' ||
+      normalizeText(colB_MeioPagamento) === 'meio de pagamento' ||
+      normalizeText(colE_Categoria) === 'categoria' ||
+      normalizeText(colH_Valor) === 'valor'
+    ) {
+      continue
+    }
+
+    if (!colA_Data && !colB_MeioPagamento && !colE_Categoria && !colH_Valor) {
+      continue
+    }
+
+    const valor = parseCurrency(colH_Valor)
+    if (valor <= 0) continue
+
+    parsedRows.push({
+      d: colA_Data,
+      rawDate: row[0],
+      acc: colB_MeioPagamento,
+      tipo: colC_Tipo,
+      orc: colD_Orcamento,
+      cat: colE_Categoria,
+      desc: colF_Descricao,
+      parc: colG_Parcelas,
+      val: valor,
+      pag: colI_FormaPagamento,
+      pago: colJ_Pago,
+    })
+  }
+  return parsedRows
+}
+
 export async function runImport(clientPb) {
   const pb = clientPb || new PocketBase(PB_URL)
   pb.autoCancellation(false)
 
-  // Autenticação / Superuser se credenciais estiverem no ambiente
   const adminEmail =
     process.env.PB_ADMIN_EMAIL || process.env.ADMIN_EMAIL || 'fabricio.pilla@gmail.com'
   const adminPassword = process.env.PB_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || 'Skip@Pass'
@@ -436,8 +472,6 @@ export async function runImport(clientPb) {
   console.log(`PocketBase URL: ${PB_URL}`)
   console.log(`==================================================\n`)
 
-  // 1. Buscar o ID do controle "Casa"
-  console.log('Searching for financial control "Casa"...')
   const controls = await pb.collection('financial_controls').getFullList({
     filter: 'name ~ "Casa" || name = "Casa"',
   })
@@ -445,7 +479,6 @@ export async function runImport(clientPb) {
   let control = controls.find((c) => normalizeText(c.name) === 'casa') || controls[0]
 
   if (!control) {
-    // Tentar buscar todos os controles
     const allControls = await pb.collection('financial_controls').getFullList()
     control = allControls.find((c) => normalizeText(c.name) === 'casa') || allControls[0]
   }
@@ -457,7 +490,6 @@ export async function runImport(clientPb) {
   const controlId = control.id
   console.log(`Found Control "Casa" ID: ${controlId} (Name: ${control.name})`)
 
-  // Obter userId do proprietário
   let userId = control.owner_id || ''
   try {
     const members = await pb.collection('control_members').getFullList({
@@ -468,8 +500,6 @@ export async function runImport(clientPb) {
     }
   } catch (_) {}
 
-  // 2. Buscar as 7 contas existentes do controle
-  console.log('Fetching accounts for control...')
   const accounts = await pb.collection('accounts').getFullList({
     filter: `control_id = "${controlId}"`,
   })
@@ -480,8 +510,6 @@ export async function runImport(clientPb) {
     accountsMap[normalizeText(acc.name)] = acc.id
   }
 
-  // 3. Buscar as categorias existentes do controle
-  console.log('Fetching categories for control...')
   const categories = await pb.collection('categories').getFullList({
     filter: `control_id = "${controlId}"`,
   })
@@ -496,7 +524,6 @@ export async function runImport(clientPb) {
     categoriesMap[key] = cat.id
   }
 
-  // 4. Deletar TODAS as transações existentes desse controle
   console.log(`\nDeleting existing transactions for control ID: ${controlId}...`)
   const existingTxs = await pb.collection('transactions').getFullList({
     filter: `control_id = "${controlId}"`,
@@ -508,91 +535,34 @@ export async function runImport(clientPb) {
   }
   console.log(`Deleted all ${existingTxs.length} transactions successfully.\n`)
 
-  // 5. Baixar e Ler o arquivo XLSX
-  const buffer = await fetchXlsxBuffer()
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true })
-
-  // Procurar aba "JAN"
-  const targetSheetName =
-    workbook.SheetNames.find((name) => normalizeText(name) === 'jan') || workbook.SheetNames[0]
-  console.log(`Reading sheet "${targetSheetName}"...`)
-
-  const worksheet = workbook.Sheets[targetSheetName]
-  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'dd/mm/yyyy' })
-
-  console.log(`Total rows in sheet (including header): ${rows.length}`)
+  const parsedRows = await parseXlsxJanRows()
+  console.log(`Total valid data rows extracted from JAN sheet: ${parsedRows.length}`)
 
   let importedCount = 0
-  let skippedCount = 0
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]
-    if (!row || row.length === 0) continue
-
-    const colA_Data = (row[0] || '').toString().trim()
-    const colB_MeioPagamento = (row[1] || '').toString().trim()
-    const colC_Tipo = (row[2] || '').toString().trim()
-    const colD_Orcamento = (row[3] || '').toString().trim()
-    const colE_Categoria = (row[4] || '').toString().trim()
-    const colF_Descricao = (row[5] || '').toString().trim()
-    const colG_Parcelas = (row[6] || '').toString().trim()
-    const colH_Valor = (row[7] || '').toString().trim()
-    const colI_FormaPagamento = (row[8] || '').toString().trim()
-    const colJ_Pago = (row[9] || '').toString().trim()
-
-    // Pular linha de cabeçalho
-    if (
-      normalizeText(colA_Data) === 'data' ||
-      normalizeText(colB_MeioPagamento) === 'meio de pagamento' ||
-      normalizeText(colE_Categoria) === 'categoria' ||
-      normalizeText(colH_Valor) === 'valor'
-    ) {
-      continue
-    }
-
-    // Pular linhas vazias
-    if (!colA_Data && !colB_MeioPagamento && !colE_Categoria && !colH_Valor) {
-      continue
-    }
-
-    const valor = parseCurrency(colH_Valor)
-    if (valor <= 0) {
-      skippedCount++
-      continue
-    }
-
-    const dateIso = parseExcelDate(row[0] || colA_Data)
-    const accountId = mapAccount(colB_MeioPagamento, accountsMap)
+  for (let i = 0; i < parsedRows.length; i++) {
+    const item = parsedRows[i]
+    const valor = item.val
+    const dateIso = parseExcelDate(item.rawDate || item.d)
+    const accountId = mapAccount(item.acc, accountsMap)
 
     const isReceita =
-      normalizeText(colC_Tipo) === 'entrada' ||
-      normalizeText(colC_Tipo) === 'receita' ||
-      normalizeText(colE_Categoria) === 'salario'
+      normalizeText(item.tipo) === 'entrada' ||
+      normalizeText(item.tipo) === 'receita' ||
+      normalizeText(item.cat) === 'salario'
 
     const txType = isReceita ? 'receita' : 'despesa'
-    const categoryId = mapCategoryWithOrcamento(
-      colC_Tipo,
-      colD_Orcamento,
-      colE_Categoria,
-      categoriesMap,
-    )
-    const isPaid = normalizeText(colJ_Pago) === 'nao' ? false : true
+    const categoryId = mapCategoryWithOrcamento(item.tipo, item.orc, item.cat, categoriesMap)
+    const isPaid = normalizeText(item.pago) === 'nao' ? false : true
 
-    // Montar descrição
-    let description = colF_Descricao || colE_Categoria || 'Transação'
-    if (
-      colE_Categoria &&
-      colF_Descricao &&
-      normalizeText(colE_Categoria) !== normalizeText(colF_Descricao)
-    ) {
-      description = `${colE_Categoria} (${colF_Descricao})`
+    let description = item.desc || item.cat || 'Transação'
+    if (item.cat && item.desc && normalizeText(item.cat) !== normalizeText(item.desc)) {
+      description = `${item.cat} (${item.desc})`
     }
 
-    // Verificar parcelamento
-    const parcelasMatch = colG_Parcelas.match(/(\d+)\s*\/\s*(\d+)/)
+    const parcelasMatch = (item.parc || '').match(/(\d+)\s*\/\s*(\d+)/)
 
-    // Verificar recorrência
-    const isRecurring = checkRecurring(colC_Tipo, description, colE_Categoria, colI_FormaPagamento)
+    const isRecurring = checkRecurring(item.tipo, description, item.cat, item.pag)
     const recurrencePeriod = isRecurring ? 'mensal' : ''
     const recurrenceType = isRecurring ? 'mensal' : ''
 
@@ -601,7 +571,6 @@ export async function runImport(clientPb) {
       const totalInst = parseInt(parcelasMatch[2], 10)
       const totalAmount = valor * totalInst
 
-      // 1. Criar registro pai (Parent transaction)
       const parentRecord = await pb.collection('transactions').create({
         control_id: controlId,
         user_id: userId,
@@ -622,7 +591,6 @@ export async function runImport(clientPb) {
         notes: `Importado de JAN .xlsx - Pai ${totalInst} parcelas`,
       })
 
-      // 2. Criar parcela atual
       await pb.collection('transactions').create({
         control_id: controlId,
         user_id: userId,
@@ -648,7 +616,6 @@ export async function runImport(clientPb) {
         `[Row ${i + 1}] Parcelado: ${description} (Parcela ${currentInst}/${totalInst}) - R$ ${valor.toFixed(2)}`,
       )
     } else {
-      // Transação regular
       await pb.collection('transactions').create({
         control_id: controlId,
         user_id: userId,
@@ -671,7 +638,7 @@ export async function runImport(clientPb) {
 
       importedCount++
       console.log(
-        `[Row ${i + 1}] ${txType.toUpperCase()}: ${description} - R$ ${valor.toFixed(2)} (${colB_MeioPagamento})`,
+        `[Row ${i + 1}] ${txType.toUpperCase()}: ${description} - R$ ${valor.toFixed(2)} (${item.acc})`,
       )
     }
   }
@@ -679,13 +646,11 @@ export async function runImport(clientPb) {
   console.log(`\n==================================================`)
   console.log(`Import completed successfully!`)
   console.log(`Total transactions created: ${importedCount}`)
-  console.log(`Skipped rows (empty or zero value): ${skippedCount}`)
   console.log(`==================================================\n`)
 
-  return { importedCount, skippedCount }
+  return { importedCount, totalXlsxRows: parsedRows.length }
 }
 
-// Execução direta via `node scripts/import-january.mjs`
 if (process.argv[1] && process.argv[1].endsWith('import-january.mjs')) {
   runImport()
     .then((res) => {
