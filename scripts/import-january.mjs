@@ -456,12 +456,15 @@ export async function runImport(clientPb) {
   const adminPassword = process.env.PB_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || 'Skip@Pass'
 
   try {
-    if (pb.admins && typeof pb.admins.authWithPassword === 'function') {
-      await pb.admins.authWithPassword(adminEmail, adminPassword)
-      console.log('Authenticated as admin')
-    } else if (pb.collection) {
-      await pb.collection('users').authWithPassword(adminEmail, adminPassword)
-      console.log('Authenticated as user:', adminEmail)
+    try {
+      await pb.collection('users').authWithPassword('fabricio.pilla@gmail.com', '12345678')
+      console.log('Authenticated as user: fabricio.pilla@gmail.com')
+    } catch (userAuthErr) {
+      console.warn('User auth failed, trying admins if available:', userAuthErr.message)
+      if (pb.admins && typeof pb.admins.authWithPassword === 'function') {
+        await pb.admins.authWithPassword(adminEmail, adminPassword)
+        console.log('Authenticated as admin')
+      }
     }
   } catch (authErr) {
     console.warn('Auth notice (proceeding with existing session/public):', authErr.message)
