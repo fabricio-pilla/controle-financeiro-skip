@@ -9,6 +9,7 @@ import Index from './pages/Index'
 import ControlsSelection from './pages/CompaniesSelection'
 import Dashboard from './pages/Dashboard'
 import TransactionsPage from './pages/TransactionsPage'
+import Importar from './pages/Importar'
 import AccountsPage from './pages/AccountsPage'
 import CategoriesPage from './pages/CategoriesPage'
 import TeamPage from './pages/TeamPage'
@@ -36,6 +37,7 @@ const App = () => (
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="lancamentos" element={<TransactionsPage />} />
+              <Route path="importar" element={<Importar />} />
               <Route path="contas" element={<AccountsPage />} />
               <Route path="categorias" element={<CategoriesPage />} />
               <Route path="equipe" element={<TeamPage />} />

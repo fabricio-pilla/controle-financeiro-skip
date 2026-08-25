@@ -5,6 +5,7 @@ import { useCompany } from '@/contexts/CompanyContext'
 import {
   LayoutDashboard,
   ReceiptText,
+  Upload,
   CreditCard,
   FolderTree,
   Users2,
@@ -60,6 +61,11 @@ export function AppLayout({ children }: AppLayoutProps) {
       label: 'Lançamentos',
       icon: ReceiptText,
       path: `/controle/${activeControlId}/lancamentos`,
+    },
+    {
+      label: 'Importar',
+      icon: Upload,
+      path: `/controle/${activeControlId}/importar`,
     },
     {
       label: 'Contas',
