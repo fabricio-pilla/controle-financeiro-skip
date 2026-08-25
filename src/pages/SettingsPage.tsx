@@ -13,7 +13,10 @@ import {
   Building,
   CheckCircle2,
   ExternalLink,
+  Trash2,
+  Calendar,
 } from 'lucide-react'
+import pb from '@/lib/pocketbase/client'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,10 +32,32 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
+const MONTHS = [
+  { value: 1, label: 'Janeiro' },
+  { value: 2, label: 'Fevereiro' },
+  { value: 3, label: 'Março' },
+  { value: 4, label: 'Abril' },
+  { value: 5, label: 'Maio' },
+  { value: 6, label: 'Junho' },
+  { value: 7, label: 'Julho' },
+  { value: 8, label: 'Agosto' },
+  { value: 9, label: 'Setembro' },
+  { value: 10, label: 'Outubro' },
+  { value: 11, label: 'Novembro' },
+  { value: 12, label: 'Dezembro' },
+]
+
 export default function SettingsPage() {
   const { user, logout } = useAuth()
-  const { currentCompany, userCompanies, isOwner, updateCompany, deleteCompany, selectCompany } =
-    useCompany()
+  const {
+    currentCompany,
+    userCompanies,
+    isOwner,
+    updateCompany,
+    deleteCompany,
+    selectCompany,
+    reloadCompanyData,
+  } = useCompany()
   const navigate = useNavigate()
 
   // Tab 1: Controle details
@@ -50,6 +75,16 @@ export default function SettingsPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [deleteConfirmationText, setDeleteConfirmationText] = useState('')
   const [isDeletingCompany, setIsDeletingCompany] = useState(false)
+
+  // Tab 4: Limpeza de Dados
+  const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false)
+  const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('')
+  const [isDeletingAll, setIsDeletingAll] = useState(false)
+
+  const [deleteMonthModalOpen, setDeleteMonthModalOpen] = useState(false)
+  const [selectedMonth, setSelectedMonth] = useState<number>(1)
+  const [selectedYear, setSelectedYear] = useState<number>(2026)
+  const [isDeletingMonth, setIsDeletingMonth] = useState(false)
 
   React.useEffect(() => {
     if (currentCompany) {
@@ -112,6 +147,73 @@ export default function SettingsPage() {
     navigate('/')
   }
 
+  const handleDeleteAllTransactions = async () => {
+    if (deleteAllConfirmText.trim() !== 'EXCLUIR TUDO') {
+      toast.error('Digite "EXCLUIR TUDO" para confirmar.')
+      return
+    }
+    if (!currentCompany?.id) {
+      toast.error('Nenhum controle selecionado.')
+      return
+    }
+
+    setIsDeletingAll(true)
+    try {
+      const records = await pb.collection('transactions').getFullList({
+        filter: `control_id="${currentCompany.id}"`,
+        fields: 'id',
+      })
+
+      for (const rec of records) {
+        await pb.collection('transactions').delete(rec.id)
+      }
+
+      await reloadCompanyData()
+      toast.success('Todos os lançamentos foram removidos.')
+      setDeleteAllModalOpen(false)
+      setDeleteAllConfirmText('')
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao remover lançamentos.')
+    } finally {
+      setIsDeletingAll(false)
+    }
+  }
+
+  const handleDeleteMonthTransactions = async () => {
+    if (!currentCompany?.id) {
+      toast.error('Nenhum controle selecionado.')
+      return
+    }
+
+    setIsDeletingMonth(true)
+    try {
+      const padMonth = String(selectedMonth).padStart(2, '0')
+      const lastDay = new Date(selectedYear, selectedMonth, 0).getDate()
+      const padLastDay = String(lastDay).padStart(2, '0')
+      const startDate = `${selectedYear}-${padMonth}-01`
+      const endDate = `${selectedYear}-${padMonth}-${padLastDay}`
+
+      const records = await pb.collection('transactions').getFullList({
+        filter: `control_id="${currentCompany.id}" && date>="${startDate}" && date<="${endDate}"`,
+        fields: 'id',
+      })
+
+      for (const rec of records) {
+        await pb.collection('transactions').delete(rec.id)
+      }
+
+      await reloadCompanyData()
+      const monthObj = MONTHS.find((m) => m.value === selectedMonth)
+      const monthLabel = monthObj ? monthObj.label : `${selectedMonth}`
+      toast.success(`Lançamentos de ${monthLabel}/${selectedYear} foram removidos com sucesso.`)
+      setDeleteMonthModalOpen(false)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao remover lançamentos do mês.')
+    } finally {
+      setIsDeletingMonth(false)
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Top Header */}
@@ -125,7 +227,7 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="controle" className="space-y-6">
-        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-3 max-w-md">
+        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-4 max-w-xl">
           <TabsTrigger
             value="controle"
             className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
@@ -146,6 +248,13 @@ export default function SettingsPage() {
           >
             <LogOut className="w-4 h-4" />
             <span>Sessão</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="limpeza"
+            className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Limpeza</span>
           </TabsTrigger>
         </TabsList>
 
@@ -371,7 +480,226 @@ export default function SettingsPage() {
             </div>
           </div>
         </TabsContent>
+
+        {/* TAB 4: LIMPEZA DE DADOS */}
+        <TabsContent value="limpeza" className="space-y-6 focus-visible:outline-none">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-8">
+            {/* Seção 1: Limpeza Total */}
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Limpeza Total de Lançamentos</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Remove permanentemente TODOS os lançamentos (receitas e despesas) deste controle
+                  financeiro. Esta ação não pode ser desfeita.
+                </p>
+              </div>
+
+              <div className="pt-1">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => {
+                    setDeleteAllConfirmText('')
+                    setDeleteAllModalOpen(true)
+                  }}
+                  className="rounded-xl h-11 bg-rose-600 hover:bg-rose-700 text-white font-semibold"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Excluir Todos os Lançamentos
+                </Button>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-100" />
+
+            {/* Seção 2: Limpeza por Mês */}
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Limpeza por Mês</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Remove todos os lançamentos de um mês específico.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
+                <div className="space-y-1.5">
+                  <Label htmlFor="cleanup-month" className="text-sm font-medium text-slate-700">
+                    Mês
+                  </Label>
+                  <select
+                    id="cleanup-month"
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                    className="flex h-11 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    {MONTHS.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="cleanup-year" className="text-sm font-medium text-slate-700">
+                    Ano
+                  </Label>
+                  <Input
+                    id="cleanup-year"
+                    type="number"
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(Number(e.target.value) || 2026)}
+                    className="rounded-xl h-11"
+                    min={2000}
+                    max={2100}
+                  />
+                </div>
+              </div>
+
+              <div className="pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDeleteMonthModalOpen(true)}
+                  className="rounded-xl h-11 border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700 font-semibold"
+                >
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Excluir Lançamentos do Mês
+                </Button>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
       </Tabs>
+
+      {/* Modal Confirm Delete All Transactions with "EXCLUIR TUDO" text */}
+      <Dialog open={deleteAllModalOpen} onOpenChange={setDeleteAllModalOpen}>
+        <DialogContent className="sm:max-w-[480px] rounded-2xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl font-bold text-slate-900">
+                  Limpeza Total de Lançamentos
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500 mt-1">
+                  Esta ação excluirá permanentemente todos os lançamentos deste controle financeiro.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            <p className="text-xs text-slate-600">
+              Para confirmar a exclusão de todos os lançamentos do controle{' '}
+              <strong>{currentCompany?.name}</strong>, digite exatamente{' '}
+              <strong className="text-rose-600">EXCLUIR TUDO</strong> no campo abaixo:
+            </p>
+
+            <Input
+              placeholder="EXCLUIR TUDO"
+              value={deleteAllConfirmText}
+              onChange={(e) => setDeleteAllConfirmText(e.target.value)}
+              className="rounded-xl h-11 border-rose-300 focus-visible:ring-rose-500 font-medium"
+            />
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setDeleteAllModalOpen(false)
+                setDeleteAllConfirmText('')
+              }}
+              className="rounded-xl h-11"
+              disabled={isDeletingAll}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteAllConfirmText.trim() !== 'EXCLUIR TUDO' || isDeletingAll}
+              onClick={handleDeleteAllTransactions}
+              className="rounded-xl h-11 bg-rose-600 hover:bg-rose-700 text-white font-semibold"
+            >
+              {isDeletingAll ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Excluindo todos...
+                </>
+              ) : (
+                'Confirmar Exclusão Total'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Confirm Delete Month Transactions */}
+      <Dialog open={deleteMonthModalOpen} onOpenChange={setDeleteMonthModalOpen}>
+        <DialogContent className="sm:max-w-[480px] rounded-2xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl font-bold text-slate-900">
+                  Excluir Lançamentos do Mês
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500 mt-1">
+                  Confirmação de exclusão por período.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            <p className="text-sm text-slate-700">
+              Tem certeza que deseja excluir todos os lançamentos de{' '}
+              <strong className="text-rose-600">
+                {MONTHS.find((m) => m.value === selectedMonth)?.label} de {selectedYear}
+              </strong>{' '}
+              do controle <strong>{currentCompany?.name}</strong>?
+            </p>
+            <p className="text-xs text-slate-500">
+              Esta ação removerá apenas os lançamentos cadastrados dentro deste mês e ano.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteMonthModalOpen(false)}
+              className="rounded-xl h-11"
+              disabled={isDeletingMonth}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeleteMonthTransactions}
+              disabled={isDeletingMonth}
+              className="rounded-xl h-11 bg-rose-600 hover:bg-rose-700 text-white font-semibold"
+            >
+              {isDeletingMonth ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                'Excluir Lançamentos'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal Confirm Delete Company with Type-Name Security */}
       <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
