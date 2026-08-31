@@ -159,6 +159,7 @@ export default function SettingsPage() {
 
     setIsDeletingAll(true)
     try {
+      // 1. Excluir todas as transações do controle ativo
       const records = await pb.collection('transactions').getFullList({
         filter: `control_id="${currentCompany.id}"`,
         fields: 'id',
@@ -168,12 +169,23 @@ export default function SettingsPage() {
         await pb.collection('transactions').delete(rec.id)
       }
 
+      // 2. Zerar o saldo de todas as contas do controle ativo
+      const accountsList = await pb.collection('accounts').getFullList({
+        filter: `control_id="${currentCompany.id}"`,
+        fields: 'id',
+      })
+
+      for (const acc of accountsList) {
+        await pb.collection('accounts').update(acc.id, { balance: 0 })
+      }
+
+      // 3. Recarregar dados do controle para atualizar dashboard e contas imediatamente
       await reloadCompanyData()
-      toast.success('Todos os lançamentos foram removidos.')
+      toast.success('Todos os lançamentos foram removidos e os saldos das contas foram zerados.')
       setDeleteAllModalOpen(false)
       setDeleteAllConfirmText('')
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao remover lançamentos.')
+      toast.error(err?.message || 'Erro ao remover lançamentos e zerar contas.')
     } finally {
       setIsDeletingAll(false)
     }
@@ -193,6 +205,7 @@ export default function SettingsPage() {
       const startDate = `${selectedYear}-${padMonth}-01`
       const endDate = `${selectedYear}-${padMonth}-${padLastDay}`
 
+      // 1. Excluir lançamentos do mês selecionado
       const records = await pb.collection('transactions').getFullList({
         filter: `control_id="${currentCompany.id}" && date>="${startDate}" && date<="${endDate}"`,
         fields: 'id',
@@ -202,13 +215,26 @@ export default function SettingsPage() {
         await pb.collection('transactions').delete(rec.id)
       }
 
+      // 2. Zerar o saldo de todas as contas do controle ativo
+      const accountsList = await pb.collection('accounts').getFullList({
+        filter: `control_id="${currentCompany.id}"`,
+        fields: 'id',
+      })
+
+      for (const acc of accountsList) {
+        await pb.collection('accounts').update(acc.id, { balance: 0 })
+      }
+
+      // 3. Recarregar dados do controle para atualizar dashboard e contas imediatamente
       await reloadCompanyData()
       const monthObj = MONTHS.find((m) => m.value === selectedMonth)
       const monthLabel = monthObj ? monthObj.label : `${selectedMonth}`
-      toast.success(`Lançamentos de ${monthLabel}/${selectedYear} foram removidos com sucesso.`)
+      toast.success(
+        `Lançamentos de ${monthLabel}/${selectedYear} foram removidos e os saldos das contas foram zerados.`,
+      )
       setDeleteMonthModalOpen(false)
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao remover lançamentos do mês.')
+      toast.error(err?.message || 'Erro ao remover lançamentos do mês e zerar contas.')
     } finally {
       setIsDeletingMonth(false)
     }
@@ -487,10 +513,12 @@ export default function SettingsPage() {
             {/* Seção 1: Limpeza Total */}
             <div className="space-y-3">
               <div>
-                <h2 className="text-base font-bold text-slate-900">Limpeza Total de Lançamentos</h2>
+                <h2 className="text-base font-bold text-slate-900">
+                  Limpeza Total de Lançamentos e Saldos
+                </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Remove permanentemente TODOS os lançamentos (receitas e despesas) deste controle
-                  financeiro. Esta ação não pode ser desfeita.
+                  Remove permanentemente TODOS os lançamentos (receitas e despesas) e zera o saldo
+                  de todas as contas deste controle financeiro. Esta ação não pode ser desfeita.
                 </p>
               </div>
 
@@ -505,7 +533,7 @@ export default function SettingsPage() {
                   className="rounded-xl h-11 bg-rose-600 hover:bg-rose-700 text-white font-semibold"
                 >
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Excluir Todos os Lançamentos
+                  Excluir Todos os Lançamentos e Zerar Contas
                 </Button>
               </div>
             </div>
@@ -515,9 +543,10 @@ export default function SettingsPage() {
             {/* Seção 2: Limpeza por Mês */}
             <div className="space-y-4">
               <div>
-                <h2 className="text-base font-bold text-slate-900">Limpeza por Mês</h2>
+                <h2 className="text-base font-bold text-slate-900">Limpeza por Mês e Saldos</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Remove todos os lançamentos de um mês específico.
+                  Remove todos os lançamentos de um mês específico e zera o saldo de todas as contas
+                  deste controle financeiro.
                 </p>
               </div>
 
@@ -564,7 +593,7 @@ export default function SettingsPage() {
                   className="rounded-xl h-11 border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700 font-semibold"
                 >
                   <Calendar className="w-4 h-4 mr-2" />
-                  Excluir Lançamentos do Mês
+                  Excluir Lançamentos do Mês e Zerar Contas
                 </Button>
               </div>
             </div>
@@ -582,10 +611,11 @@ export default function SettingsPage() {
               </div>
               <div>
                 <DialogTitle className="text-xl font-bold text-slate-900">
-                  Limpeza Total de Lançamentos
+                  Limpeza Total de Lançamentos e Contas
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-500 mt-1">
-                  Esta ação excluirá permanentemente todos os lançamentos deste controle financeiro.
+                  Esta ação excluirá permanentemente todos os lançamentos e zerará os saldos das
+                  contas deste controle.
                 </DialogDescription>
               </div>
             </div>
@@ -593,8 +623,8 @@ export default function SettingsPage() {
 
           <div className="space-y-4 py-3">
             <p className="text-xs text-slate-600">
-              Para confirmar a exclusão de todos os lançamentos do controle{' '}
-              <strong>{currentCompany?.name}</strong>, digite exatamente{' '}
+              Para confirmar a exclusão de todos os lançamentos e zerar o saldo de todas as contas
+              do controle <strong>{currentCompany?.name}</strong>, digite exatamente{' '}
               <strong className="text-rose-600">EXCLUIR TUDO</strong> no campo abaixo:
             </p>
 
@@ -629,7 +659,7 @@ export default function SettingsPage() {
               {isDeletingAll ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Excluindo todos...
+                  Excluindo e zerando contas...
                 </>
               ) : (
                 'Confirmar Exclusão Total'
@@ -649,10 +679,10 @@ export default function SettingsPage() {
               </div>
               <div>
                 <DialogTitle className="text-xl font-bold text-slate-900">
-                  Excluir Lançamentos do Mês
+                  Excluir Lançamentos do Mês e Zerar Contas
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-500 mt-1">
-                  Confirmação de exclusão por período.
+                  Confirmação de exclusão por período e zeramento de saldos.
                 </DialogDescription>
               </div>
             </div>
@@ -664,10 +694,12 @@ export default function SettingsPage() {
               <strong className="text-rose-600">
                 {MONTHS.find((m) => m.value === selectedMonth)?.label} de {selectedYear}
               </strong>{' '}
-              do controle <strong>{currentCompany?.name}</strong>?
+              e zerar o saldo de todas as contas do controle <strong>{currentCompany?.name}</strong>
+              ?
             </p>
             <p className="text-xs text-slate-500">
-              Esta ação removerá apenas os lançamentos cadastrados dentro deste mês e ano.
+              Esta ação removerá os lançamentos deste mês e ano e definirá o saldo de todas as
+              contas como R$ 0,00.
             </p>
           </div>
 
@@ -691,10 +723,10 @@ export default function SettingsPage() {
               {isDeletingMonth ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Excluindo...
+                  Excluindo e zerando contas...
                 </>
               ) : (
-                'Excluir Lançamentos'
+                'Excluir Lançamentos e Zerar Contas'
               )}
             </Button>
           </DialogFooter>
