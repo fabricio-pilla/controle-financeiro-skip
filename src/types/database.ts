@@ -4,6 +4,17 @@ export type AccountType = 'carteira' | 'banco' | 'pix' | 'credito' | 'investimen
 export type TransactionType = 'receita' | 'despesa'
 export type RecurrenceType = 'mensal' | 'semanal' | 'anual'
 
+export const RESPONSIBLE_PERSONS = [
+  'Família',
+  'Fabrício',
+  'Raffaela',
+  'Emanuel',
+  'Helena',
+  'Matheus',
+] as const
+
+export type ResponsiblePerson = (typeof RESPONSIBLE_PERSONS)[number]
+
 export interface User {
   id: string
   name: string
@@ -76,6 +87,7 @@ export interface Transaction {
   installment_number?: number
   parent_transaction_id?: string
   notes?: string
+  responsible?: string
   created_at: string
   // Populated for UI display
   account?: Account

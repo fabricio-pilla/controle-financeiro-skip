@@ -5,7 +5,7 @@ import { AiTransactionModal } from '@/components/transactions/AiTransactionModal
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
-import { Transaction, TransactionType } from '@/types/database'
+import { Transaction, TransactionType, RESPONSIBLE_PERSONS } from '@/types/database'
 import { toast } from 'sonner'
 import {
   Plus,
@@ -22,6 +22,7 @@ import {
   Repeat,
   Package,
   Sparkles,
+  User,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,6 +43,7 @@ export default function TransactionsPage() {
   const [typeFilter, setTypeFilter] = useState<'all' | TransactionType>('all')
   const [accountFilter, setAccountFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [responsibleFilter, setResponsibleFilter] = useState<string>('all')
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 10
 
@@ -65,7 +67,8 @@ export default function TransactionsPage() {
       if (searchTerm.trim()) {
         const matchesDesc = tx.description.toLowerCase().includes(searchTerm.toLowerCase().trim())
         const matchesNotes = tx.notes?.toLowerCase().includes(searchTerm.toLowerCase().trim())
-        if (!matchesDesc && !matchesNotes) return false
+        const matchesResp = tx.responsible?.toLowerCase().includes(searchTerm.toLowerCase().trim())
+        if (!matchesDesc && !matchesNotes && !matchesResp) return false
       }
       // Type
       if (typeFilter !== 'all' && tx.type !== typeFilter) return false
@@ -73,10 +76,18 @@ export default function TransactionsPage() {
       if (accountFilter !== 'all' && tx.account_id !== accountFilter) return false
       // Category
       if (categoryFilter !== 'all' && tx.category_id !== categoryFilter) return false
+      // Responsible
+      if (responsibleFilter !== 'all') {
+        if (responsibleFilter === '__none__') {
+          if (tx.responsible && tx.responsible.trim() !== '') return false
+        } else if (tx.responsible !== responsibleFilter) {
+          return false
+        }
+      }
 
       return true
     })
-  }, [transactions, searchTerm, typeFilter, accountFilter, categoryFilter])
+  }, [transactions, searchTerm, typeFilter, accountFilter, categoryFilter, responsibleFilter])
 
   // Summary of filtered items
   const summaryTotals = useMemo(() => {
@@ -163,12 +174,12 @@ export default function TransactionsPage() {
 
       {/* Filter Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {/* Search */}
-          <div className="relative">
+          <div className="relative sm:col-span-2 lg:col-span-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
-              placeholder="Buscar por descrição..."
+              placeholder="Buscar descrição ou responsável..."
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value)
@@ -235,6 +246,28 @@ export default function TransactionsPage() {
                   {cat.name} ({cat.type})
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+
+          {/* Responsible Filter */}
+          <Select
+            value={responsibleFilter}
+            onValueChange={(v) => {
+              setResponsibleFilter(v)
+              setCurrentPage(1)
+            }}
+          >
+            <SelectTrigger className="rounded-xl h-10 text-sm">
+              <SelectValue placeholder="Filtrar por responsável" />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl">
+              <SelectItem value="all">Todos Responsáveis</SelectItem>
+              {RESPONSIBLE_PERSONS.map((person) => (
+                <SelectItem key={person} value={person}>
+                  {person}
+                </SelectItem>
+              ))}
+              <SelectItem value="__none__">Sem responsável definido</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -332,16 +365,27 @@ export default function TransactionsPage() {
                     )}
                   </td>
                   <td className="py-3.5 px-4">
-                    <span
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
-                      style={{
-                        backgroundColor: `${tx.category?.color || '#6366F1'}15`,
-                        color: tx.category?.color || '#6366F1',
-                      }}
-                    >
-                      <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-3 h-3" />
-                      {tx.category?.name || 'Geral'}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+                        style={{
+                          backgroundColor: `${tx.category?.color || '#6366F1'}15`,
+                          color: tx.category?.color || '#6366F1',
+                        }}
+                      >
+                        <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-3 h-3" />
+                        {tx.category?.name || 'Geral'}
+                      </span>
+                      {tx.responsible && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-violet-50 text-violet-700 border border-violet-200"
+                          title={`Responsável: ${tx.responsible}`}
+                        >
+                          <User className="w-3 h-3 text-violet-500" />
+                          <span>{tx.responsible}</span>
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3.5 px-4 text-xs font-medium text-slate-600">
                     <span className="flex items-center gap-1.5">
@@ -463,10 +507,19 @@ export default function TransactionsPage() {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+                  <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
                     <span>{formatDateBR(tx.date)}</span>
                     <span>•</span>
                     <span className="truncate">{tx.account?.name}</span>
+                    {tx.responsible && (
+                      <>
+                        <span>•</span>
+                        <span className="inline-flex items-center gap-1 font-semibold text-violet-700 bg-violet-50 px-1.5 py-0.2 rounded border border-violet-200 text-[10px]">
+                          <User className="w-2.5 h-2.5 text-violet-500" />
+                          {tx.responsible}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

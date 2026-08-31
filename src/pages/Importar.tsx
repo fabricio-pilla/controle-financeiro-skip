@@ -18,6 +18,8 @@ import {
   Tag,
   Loader2,
   Sparkles,
+  User,
+  Users,
 } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -25,7 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/formatters'
-import { Account, Category } from '@/types/database'
+import { Account, Category, RESPONSIBLE_PERSONS, ResponsiblePerson } from '@/types/database'
 
 // 9 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
@@ -56,6 +58,8 @@ interface ParsedRow {
   matchedCategoryName: SystemCategoryName | 'Outros'
   matchedCategoryId: string | null
   matchedCategoryType: 'despesa' | 'receita'
+  responsibleRaw: string
+  matchedResponsible: ResponsiblePerson | ''
   paymentMethodRaw: string
   recurrenceRaw: string
   isRecurring: boolean
@@ -166,6 +170,29 @@ function parseExcelAmount(value: any): number {
 
   const num = parseFloat(str)
   return isNaN(num) ? 0 : Math.abs(num)
+}
+
+// Normalize responsible person from "Orçamento" column or raw text
+function normalizeResponsible(value: any): ResponsiblePerson | '' {
+  if (!value) return ''
+  const str = String(value).trim()
+  if (!str) return ''
+  const norm = normalizeText(str)
+
+  for (const person of RESPONSIBLE_PERSONS) {
+    if (normalizeText(person) === norm) {
+      return person
+    }
+  }
+
+  // Loose check (e.g. contains name)
+  for (const person of RESPONSIBLE_PERSONS) {
+    if (norm.includes(normalizeText(person))) {
+      return person
+    }
+  }
+
+  return ''
 }
 
 // Intelligent Category Mapper based on task instructions
@@ -679,6 +706,15 @@ export default function Importar() {
         'Origem',
         'Payment Method',
       )
+      const orcamentoVal = getVal(
+        'Orçamento',
+        'Orcamento',
+        'Responsável',
+        'Responsavel',
+        'Quem',
+        'Pessoa',
+        'Membro',
+      )
       const catVal = getVal(
         'Categoria',
         'Tipo',
@@ -686,6 +722,7 @@ export default function Importar() {
         'Classificação',
         'Classificacao',
         'Grupo',
+        'Subcategoria',
       )
       const typeVal = getVal('Tipo Lançamento', 'Tipo Transação', 'Natureza', 'D/C', 'Operação')
       const parcelasVal = getVal(
@@ -710,6 +747,8 @@ export default function Importar() {
       const dateFormatted = parseExcelDate(dateVal)
       const paymentMethodRaw = String(accountVal || '').trim()
       const categoryRaw = String(catVal || '').trim()
+      const responsibleRaw = String(orcamentoVal || '').trim()
+      const matchedResponsible = normalizeResponsible(responsibleRaw)
 
       // Account match
       const matchedAccount = matchAccount(paymentMethodRaw, accountsList)
@@ -762,6 +801,8 @@ export default function Importar() {
         matchedCategoryName: mappedCat.name,
         matchedCategoryId: matchedCatRecord?.id || null,
         matchedCategoryType: mappedCat.type,
+        responsibleRaw,
+        matchedResponsible,
         paymentMethodRaw,
         recurrenceRaw: String(recurrenceVal),
         isRecurring: recurrenceInfo.isRecurring,
@@ -895,6 +936,7 @@ export default function Importar() {
             date: row.dateFormatted,
             paid: true,
             is_recurring: false,
+            responsible: row.matchedResponsible || undefined,
             installments_total: totalInst,
             installment_number: 0,
             notes: `Importado de planilha: registro pai consolidado (${totalInst}x)`,
@@ -915,6 +957,7 @@ export default function Importar() {
             date: row.dateFormatted,
             paid: true,
             is_recurring: false,
+            responsible: row.matchedResponsible || undefined,
             installments_total: totalInst,
             installment_number: currentInst,
             parent_transaction_id: parentRecord.id,
@@ -972,6 +1015,7 @@ export default function Importar() {
               date: instDate,
               paid: true,
               is_recurring: false,
+              responsible: row.matchedResponsible || undefined,
               installments_total: totalInst,
               installment_number: inst,
               notes: 'Importado de planilha via parcelamento automático',
@@ -1026,6 +1070,7 @@ export default function Importar() {
             recurring: row.isRecurring,
             recurrence_type: row.recurrenceType || '',
             recurrence_period: row.recurrenceType || '',
+            responsible: row.matchedResponsible || undefined,
             installments_total: 1,
             installment_number: 1,
             notes: row.isRecurring
@@ -1266,6 +1311,7 @@ export default function Importar() {
                   <th className="py-3 px-4">Descrição</th>
                   <th className="py-3 px-4">Valor</th>
                   <th className="py-3 px-4">Meio / Conta</th>
+                  <th className="py-3 px-4">Responsável (Orçamento)</th>
                   <th className="py-3 px-4">Categoria</th>
                   <th className="py-3 px-4">Recorrência / Parcelas</th>
                   <th className="py-3 px-4 text-center">Status</th>
@@ -1309,6 +1355,20 @@ export default function Importar() {
                           <AlertTriangle className="w-3 h-3" />
                           {row.accountRaw || 'Não mapeada'}
                         </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {row.matchedResponsible ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+                          <User className="w-3 h-3 text-violet-500" />
+                          {row.matchedResponsible}
+                        </span>
+                      ) : row.responsibleRaw ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-slate-500 bg-slate-100">
+                          {row.responsibleRaw}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-[11px] italic">Não definido</span>
                       )}
                     </td>
                     <td className="py-3 px-4">
@@ -1520,14 +1580,34 @@ export default function Importar() {
       )}
 
       {/* 6. Guidance and reference information */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 text-xs text-slate-600">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 text-xs text-slate-600">
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
+          <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
+            <Users className="w-4 h-4 text-violet-600" />
+            <span>Responsáveis (Orçamento)</span>
+          </div>
+          <p className="text-slate-500 leading-relaxed">
+            Mapeados da coluna "Orçamento" da planilha para identificar "de quem" é cada gasto:
+          </p>
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {RESPONSIBLE_PERSONS.map((person) => (
+              <span
+                key={person}
+                className="px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 font-medium border border-violet-100"
+              >
+                {person}
+              </span>
+            ))}
+          </div>
+        </div>
+
         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
           <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
             <Building2 className="w-4 h-4 text-indigo-600" />
-            <span>Contas Reconhecidas Automaticamente</span>
+            <span>Contas Reconhecidas</span>
           </div>
           <p className="text-slate-500 leading-relaxed">
-            O importador busca contas cadastradas pelo nome exato ou aproximado. Contas mapeadas:
+            O importador busca contas cadastradas pelo nome exato ou aproximado:
           </p>
           <div className="flex flex-wrap gap-1.5 pt-1">
             {dbAccounts.map((acc) => (
@@ -1545,7 +1625,7 @@ export default function Importar() {
         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
           <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
             <Tag className="w-4 h-4 text-emerald-600" />
-            <span>9 Categorias Padrão do Sistema</span>
+            <span>Categorias Padrão</span>
           </div>
           <p className="text-slate-500 leading-relaxed">
             Mapeamento inteligente baseado em palavras-chave da coluna Categoria e Descrição:

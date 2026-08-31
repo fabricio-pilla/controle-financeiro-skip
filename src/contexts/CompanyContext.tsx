@@ -99,6 +99,7 @@ interface CompanyContextType {
     is_recurring?: boolean
     recurrence_type?: any
     notes?: string
+    responsible?: string
     installments_total?: number
   }) => Promise<Transaction>
   updateTransaction: (
@@ -335,6 +336,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       is_recurring?: boolean
       recurrence_type?: any
       notes?: string
+      responsible?: string
       installments_total?: number
     }) => {
       if (!currentCompany) throw new Error('Nenhum controle selecionado.')

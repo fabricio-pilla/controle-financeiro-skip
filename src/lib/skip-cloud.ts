@@ -173,6 +173,7 @@ function mapTransaction(
         : undefined,
     parent_transaction_id: r.parent_transaction_id || undefined,
     notes: r.notes || undefined,
+    responsible: r.responsible || undefined,
     created_at: r.created || new Date().toISOString(),
     account: acc,
     category: cat,
@@ -772,6 +773,7 @@ class SkipCloudService {
       is_recurring?: boolean
       recurrence_type?: any
       notes?: string
+      responsible?: string
       installments_total?: number
     },
   ): Promise<Transaction> {
@@ -815,6 +817,7 @@ class SkipCloudService {
             installments_total: installmentsTotal,
             installment_number: i,
             notes: data.notes?.trim() || '',
+            responsible: data.responsible?.trim() || '',
           }
           if (i !== 1) payload.parent_transaction_id = parentId
           const r = await pb.collection('transactions').create(payload)
@@ -847,6 +850,7 @@ class SkipCloudService {
         installments_total: 1,
         installment_number: 1,
         notes: data.notes?.trim() || '',
+        responsible: data.responsible?.trim() || '',
       }
       const r = await pb.collection('transactions').create(payload)
       const tx = mapTransaction(r)
@@ -894,6 +898,7 @@ class SkipCloudService {
       if (data.type !== undefined) payload.type = data.type
       if (data.date !== undefined) payload.date = data.date
       if (data.notes !== undefined) payload.notes = data.notes || ''
+      if (data.responsible !== undefined) payload.responsible = data.responsible || ''
       if (data.is_recurring !== undefined) payload.is_recurring = data.is_recurring
       if (data.recurrence_type !== undefined) payload.recurrence_type = data.recurrence_type || ''
       const r = await pb.collection('transactions').update(transactionId, payload)
