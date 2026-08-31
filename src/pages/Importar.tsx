@@ -20,12 +20,21 @@ import {
   Sparkles,
   User,
   Users,
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Filter,
+  Search,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
 import { useCompany } from '@/contexts/CompanyContext'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { formatCurrency } from '@/lib/formatters'
 import { Account, Category, RESPONSIBLE_PERSONS, ResponsiblePerson } from '@/types/database'
 
@@ -72,6 +81,19 @@ interface ParsedRow {
   skipReason?: string
 }
 
+interface UnimportedRowItem {
+  rowIndex: number
+  dateFormatted: string
+  description: string
+  amount: number
+  accountRaw: string
+  categoryRaw: string
+  responsibleRaw?: string
+  reason: string
+  type: 'skipped' | 'error'
+  rawDetails?: Record<string, any>
+}
+
 interface ImportSummary {
   totalRows: number
   importedCount: number
@@ -84,6 +106,7 @@ interface ImportSummary {
     status: 'imported' | 'skipped' | 'error'
     message: string
   }[]
+  unimportedRows: UnimportedRowItem[]
 }
 
 // Map helper to normalize text
@@ -563,6 +586,12 @@ export default function Importar() {
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null)
   const [errorBanner, setErrorBanner] = useState<string | null>(null)
 
+  // Non-imported rows filter and copy states
+  const [unimportedSearch, setUnimportedSearch] = useState('')
+  const [unimportedFilter, setUnimportedFilter] = useState<'all' | 'skipped' | 'error'>('all')
+  const [isCopied, setIsCopied] = useState(false)
+  const [showPreImportSkipped, setShowPreImportSkipped] = useState(false)
+
   // Fetch accounts and categories directly for the active control
   const fetchControlMetadata = async (companyId: string) => {
     setIsLoadingMetadata(true)
@@ -777,17 +806,19 @@ export default function Importar() {
       let isValid = true
       let skipReason: string | undefined
 
-      if (!paymentMethodRaw) {
+      if (!dateVal || dateFormatted === 'Invalid Date') {
+        isValid = false
+        skipReason = 'Data não informada ou formato inválido'
+      } else if (!paymentMethodRaw) {
         isValid = false
         skipReason = 'Meio de pagamento não informado'
       } else if (!matchedAccount) {
         isValid = false
-        skipReason = `Conta "${paymentMethodRaw}" não encontrada no sistema`
+        skipReason = `Conta "${paymentMethodRaw}" não cadastrada no controle`
       } else if (amount <= 0) {
         isValid = false
         skipReason = 'Valor zerado ou inválido'
       }
-
       rows.push({
         rowIndex: index + 2, // Excel 1-based index (header is 1)
         raw: row,
@@ -875,6 +906,7 @@ export default function Importar() {
       errorsCount: 0,
       createdTransactions: 0,
       details: [],
+      unimportedRows: [],
     }
 
     const currentUserId = pb.authStore.model?.id || ''
@@ -899,11 +931,24 @@ export default function Importar() {
       // Check if row is skippable due to missing account or invalid data
       if (!row.isValid || !row.matchedAccount) {
         summary.skippedCount++
+        const reason = row.skipReason || 'Conta não encontrada ou dados insuficientes.'
         summary.details.push({
           row: row.rowIndex,
           description: row.description || 'Linha inválida',
           status: 'skipped',
-          message: row.skipReason || 'Conta não encontrada ou dados insuficientes.',
+          message: reason,
+        })
+        summary.unimportedRows.push({
+          rowIndex: row.rowIndex,
+          dateFormatted: row.dateFormatted,
+          description: row.description || 'Sem descrição',
+          amount: row.amount,
+          accountRaw: row.accountRaw,
+          categoryRaw: row.categoryRaw,
+          responsibleRaw: row.responsibleRaw,
+          reason,
+          type: 'skipped',
+          rawDetails: row.raw,
         })
         continue
       }
@@ -1106,11 +1151,24 @@ export default function Importar() {
       } catch (err: any) {
         console.error(`Erro ao importar linha ${row.rowIndex}:`, err)
         summary.errorsCount++
+        const errorMessage = err?.message || 'Falha ao gravar no banco de dados.'
         summary.details.push({
           row: row.rowIndex,
           description: row.description,
           status: 'error',
-          message: err?.message || 'Falha ao gravar no banco de dados.',
+          message: errorMessage,
+        })
+        summary.unimportedRows.push({
+          rowIndex: row.rowIndex,
+          dateFormatted: row.dateFormatted,
+          description: row.description || 'Sem descrição',
+          amount: row.amount,
+          accountRaw: row.accountRaw,
+          categoryRaw: row.categoryRaw,
+          responsibleRaw: row.responsibleRaw,
+          reason: `Erro da API PocketBase: ${errorMessage}`,
+          type: 'error',
+          rawDetails: row.raw,
         })
       }
     }
@@ -1123,7 +1181,99 @@ export default function Importar() {
 
   const validRowsCount = parsedRows.filter((r) => r.isValid).length
   const invalidRowsCount = parsedRows.filter((r) => !r.isValid).length
+  const preImportSkippedRows = parsedRows.filter((r) => !r.isValid)
   const previewRows = parsedRows.slice(0, 5)
+
+  // Filter unimported rows based on user input
+  const filteredUnimportedRows = useMemo(() => {
+    if (!importSummary) return []
+    return importSummary.unimportedRows.filter((item) => {
+      // Status filter
+      if (unimportedFilter === 'skipped' && item.type !== 'skipped') return false
+      if (unimportedFilter === 'error' && item.type !== 'error') return false
+
+      // Text search
+      if (!unimportedSearch.trim()) return true
+      const q = normalizeText(unimportedSearch)
+      return (
+        String(item.rowIndex).includes(q) ||
+        normalizeText(item.description).includes(q) ||
+        normalizeText(item.accountRaw).includes(q) ||
+        normalizeText(item.categoryRaw).includes(q) ||
+        normalizeText(item.reason).includes(q) ||
+        (item.responsibleRaw && normalizeText(item.responsibleRaw).includes(q))
+      )
+    })
+  }, [importSummary, unimportedFilter, unimportedSearch])
+
+  // Copy unimported lines to clipboard as structured text/CSV
+  const handleCopyUnimported = (format: 'text' | 'csv' = 'text') => {
+    if (!importSummary || importSummary.unimportedRows.length === 0) return
+
+    let content = ''
+    if (format === 'csv') {
+      content = [
+        'Linha;Data;Descrição;Valor;Conta/Meio;Categoria;Responsável;Motivo;Tipo Falha',
+        ...importSummary.unimportedRows.map(
+          (r) =>
+            `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${(r.responsibleRaw || '').replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada (Dados/Conta)' : 'Erro API'}`,
+        ),
+      ].join('\n')
+    } else {
+      content = [
+        `RELATÓRIO DE LINHAS NÃO IMPORTADAS - PLANILHA: ${fileName || 'Excel'} (Aba: ${selectedSheet})`,
+        `Total Não Importadas: ${importSummary.unimportedRows.length} de ${importSummary.totalRows}`,
+        `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
+        '--------------------------------------------------------------------------------',
+        ...importSummary.unimportedRows.map(
+          (r) =>
+            `• Linha ${r.rowIndex} | Data: ${r.dateFormatted} | Descrição: ${r.description} | Valor: ${formatCurrency(r.amount)} | Conta: ${r.accountRaw || 'N/A'} | Motivo: ${r.reason}`,
+        ),
+      ].join('\n')
+    }
+
+    navigator.clipboard.writeText(content).then(
+      () => {
+        setIsCopied(true)
+        toast.success(
+          format === 'csv'
+            ? 'Linhas não importadas copiadas em formato CSV!'
+            : 'Linhas não importadas copiadas para a área de transferência!',
+        )
+        setTimeout(() => setIsCopied(false), 2500)
+      },
+      (err) => {
+        console.error('Falha ao copiar:', err)
+        toast.error('Não foi possível copiar para a área de transferência.')
+      },
+    )
+  }
+
+  // Export unimported lines directly as CSV file
+  const handleDownloadUnimportedCsv = () => {
+    if (!importSummary || importSummary.unimportedRows.length === 0) return
+
+    const headers =
+      'Linha;Data;Descrição;Valor;Conta / Meio;Categoria;Responsável;Motivo;Tipo Falha\n'
+    const rows = importSummary.unimportedRows
+      .map(
+        (r) =>
+          `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${(r.responsibleRaw || '').replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada' : 'Erro API'}`,
+      )
+      .join('\n')
+
+    // Add BOM for Excel UTF-8 recognition
+    const blob = new Blob(['\uFEFF' + headers + rows], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `linhas-nao-importadas-${selectedSheet || 'planilha'}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    toast.success('Download do arquivo CSV de falhas iniciado!')
+  }
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -1446,9 +1596,80 @@ export default function Importar() {
               )}
             </Button>
           </div>
+
+          {/* Pre-import skipped alert & accordion if there are invalid rows */}
+          {invalidRowsCount > 0 && (
+            <div className="border-t border-amber-200 bg-amber-50/70 p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                  <span className="text-xs font-semibold text-amber-900">
+                    {invalidRowsCount} linha{invalidRowsCount > 1 ? 's' : ''} com pendências não{' '}
+                    {invalidRowsCount > 1 ? 'serão importadas' : 'será importada'} (contas não
+                    cadastradas ou valores zerados).
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowPreImportSkipped(!showPreImportSkipped)}
+                  className="h-8 text-xs bg-white border-amber-300 text-amber-900 hover:bg-amber-100 rounded-lg gap-1.5 self-start sm:self-auto"
+                >
+                  {showPreImportSkipped ? (
+                    <>
+                      <span>Ocultar lista prévia</span>
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    </>
+                  ) : (
+                    <>
+                      <span>Ver {invalidRowsCount} linha(s) que serão puladas</span>
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {showPreImportSkipped && (
+                <div className="mt-3 bg-white rounded-xl border border-amber-200 overflow-hidden shadow-inner max-h-60 overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-amber-100/60 text-amber-900 text-[10px] uppercase font-bold">
+                      <tr>
+                        <th className="py-2 px-3">Linha</th>
+                        <th className="py-2 px-3">Descrição</th>
+                        <th className="py-2 px-3">Valor</th>
+                        <th className="py-2 px-3">Meio / Conta na Planilha</th>
+                        <th className="py-2 px-3">Motivo da Não Importação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100">
+                      {preImportSkippedRows.map((row) => (
+                        <tr key={row.rowIndex} className="hover:bg-amber-50/50">
+                          <td className="py-2 px-3 font-mono font-bold text-amber-800">
+                            #{row.rowIndex}
+                          </td>
+                          <td className="py-2 px-3 text-slate-800 font-medium truncate max-w-[200px]">
+                            {row.description}
+                          </td>
+                          <td className="py-2 px-3 tabular-nums font-semibold text-slate-700">
+                            {formatCurrency(row.amount)}
+                          </td>
+                          <td className="py-2 px-3 text-amber-900 font-medium">
+                            {row.accountRaw || '(Vazio)'}
+                          </td>
+                          <td className="py-2 px-3 text-amber-700 font-semibold">
+                            {row.skipReason}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
-
       {/* 4. Import In Progress Bar */}
       {isImporting && (
         <div className="bg-white rounded-2xl border border-indigo-200 p-6 shadow-md space-y-4 animate-fade-in">
@@ -1521,23 +1742,244 @@ export default function Importar() {
             </div>
           </div>
 
-          {/* Details list */}
+          {/* Main non-imported lines inspection section */}
+          {importSummary.unimportedRows.length > 0 ? (
+            <div className="p-6 border-b border-slate-200 bg-amber-50/40 space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xs">
+                      {importSummary.unimportedRows.length}
+                    </div>
+                    <h4 className="text-base font-bold text-slate-900">
+                      Linhas NÃO Importadas ({importSummary.unimportedRows.length})
+                    </h4>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Confira abaixo cada linha da planilha que não pôde ser gravada e o respectivo
+                    motivo para que você possa corrigir.
+                  </p>
+                </div>
+
+                {/* Actions: Copy & CSV Download */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCopyUnimported('text')}
+                    className="h-9 px-3 rounded-xl bg-white border-slate-300 text-slate-700 hover:bg-slate-50 font-medium text-xs gap-1.5 shadow-sm"
+                  >
+                    {isCopied ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-600" />
+                        <span className="text-emerald-700 font-semibold">Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-slate-500" />
+                        <span>Copiar Lista</span>
+                      </>
+                    )}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadUnimportedCsv}
+                    className="h-9 px-3 rounded-xl bg-white border-slate-300 text-slate-700 hover:bg-slate-50 font-medium text-xs gap-1.5 shadow-sm"
+                  >
+                    <Download className="w-4 h-4 text-indigo-600" />
+                    <span>Baixar CSV de Falhas</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Filters toolbar for non-imported table */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                  <Input
+                    type="text"
+                    placeholder="Filtrar por linha, descrição, motivo ou conta..."
+                    value={unimportedSearch}
+                    onChange={(e) => setUnimportedSearch(e.target.value)}
+                    className="h-9 pl-9 pr-3 text-xs bg-white rounded-xl border-slate-200"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setUnimportedFilter('all')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
+                      unimportedFilter === 'all'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Todas ({importSummary.unimportedRows.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUnimportedFilter('skipped')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
+                      unimportedFilter === 'skipped'
+                        ? 'bg-amber-500 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Puladas ({importSummary.skippedCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUnimportedFilter('error')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
+                      unimportedFilter === 'error'
+                        ? 'bg-rose-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Erros API ({importSummary.errorsCount})
+                  </button>
+                </div>
+              </div>
+
+              {/* Dedicated Non-Imported Rows Table */}
+              <div className="bg-white rounded-xl border border-amber-200 overflow-hidden shadow-sm">
+                <div className="max-h-96 overflow-y-auto overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-amber-100/80 text-amber-950 font-bold text-[11px] uppercase tracking-wider sticky top-0 z-10 border-b border-amber-200">
+                      <tr>
+                        <th className="py-3 px-3.5 whitespace-nowrap">Linha Planilha</th>
+                        <th className="py-3 px-3.5 whitespace-nowrap">Data</th>
+                        <th className="py-3 px-3.5">Descrição</th>
+                        <th className="py-3 px-3.5 whitespace-nowrap">Valor</th>
+                        <th className="py-3 px-3.5">Conta / Meio na Planilha</th>
+                        <th className="py-3 px-3.5">Categoria / Orçamento</th>
+                        <th className="py-3 px-3.5 min-w-[220px]">Motivo da Não Importação</th>
+                        <th className="py-3 px-3.5 text-center whitespace-nowrap">Tipo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredUnimportedRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center text-slate-500 text-xs">
+                            Nenhuma linha encontrada com o filtro aplicado.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredUnimportedRows.map((item) => (
+                          <tr
+                            key={item.rowIndex}
+                            className="hover:bg-amber-50/60 transition-colors"
+                          >
+                            <td className="py-3 px-3.5 font-mono font-bold text-slate-800 whitespace-nowrap">
+                              <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200">
+                                #{item.rowIndex}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3.5 font-medium text-slate-700 whitespace-nowrap">
+                              {item.dateFormatted}
+                            </td>
+                            <td className="py-3 px-3.5 font-semibold text-slate-900 max-w-[200px] truncate">
+                              {item.description}
+                            </td>
+                            <td className="py-3 px-3.5 font-bold text-slate-800 tabular-nums whitespace-nowrap">
+                              {formatCurrency(item.amount)}
+                            </td>
+                            <td className="py-3 px-3.5">
+                              <span className="inline-flex items-center gap-1 font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                {item.accountRaw || '(Não preenchido)'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3.5 text-slate-600">
+                              <div className="flex flex-col gap-0.5">
+                                <span>{item.categoryRaw || 'Sem categoria'}</span>
+                                {item.responsibleRaw && (
+                                  <span className="text-[10px] text-violet-700 font-medium">
+                                    Resp: {item.responsibleRaw}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3.5">
+                              <div className="flex items-start gap-1.5 text-rose-700 font-medium leading-tight">
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                <span>{item.reason}</span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                              {item.type === 'error' ? (
+                                <Badge
+                                  variant="destructive"
+                                  className="text-[10px] font-bold uppercase tracking-wider"
+                                >
+                                  Erro API
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-200 uppercase tracking-wider"
+                                >
+                                  Pulada
+                                </Badge>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-6 bg-emerald-50/60 border-b border-emerald-200 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-emerald-950">
+                  100% dos lançamentos foram importados com sucesso!
+                </p>
+                <p className="text-xs text-emerald-800 mt-0.5">
+                  Nenhuma linha da planilha foi ignorada ou encontrou erros durante o processamento.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Details list / Full execution logs */}
           <div className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-slate-800">Detalhamento das Linhas</h4>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800">Histórico Completo de Execução</h4>
+                <p className="text-xs text-slate-500">
+                  Registro passo a passo de todas as {importSummary.totalRows} linhas da planilha.
+                </p>
+              </div>
+
               <Link to={`/controle/${currentCompany?.id}/lancamentos`}>
-                <Button className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-10 gap-2">
+                <Button className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-10 gap-2 w-full sm:w-auto">
                   <span>Abrir Extrato de Lançamentos</span>
                   <ArrowRight className="w-4 h-4" />
                 </Button>
               </Link>
             </div>
 
-            <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 text-xs">
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 text-xs">
               {importSummary.details.map((item, idx) => (
                 <div
                   key={idx}
-                  className="p-3 flex items-start justify-between gap-3 hover:bg-slate-50"
+                  className={`p-3 flex items-start justify-between gap-3 ${
+                    item.status === 'imported'
+                      ? 'hover:bg-slate-50'
+                      : item.status === 'skipped'
+                        ? 'bg-amber-50/30 hover:bg-amber-50/60'
+                        : 'bg-rose-50/30 hover:bg-rose-50/60'
+                  }`}
                 >
                   <div className="flex items-start gap-2.5">
                     {item.status === 'imported' && (
