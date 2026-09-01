@@ -20,7 +20,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { useCompany } from '@/contexts/CompanyContext'
-import { Transaction, TransactionType, RecurrenceType, RESPONSIBLE_PERSONS } from '@/types/database'
+import { Transaction, TransactionType, RecurrenceType } from '@/types/database'
 import { toast } from 'sonner'
 import {
   Loader2,
@@ -31,7 +31,6 @@ import {
   CreditCard,
   Package,
   Repeat,
-  UserCheck,
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/formatters'
 
@@ -78,7 +77,6 @@ export function TransactionModal({
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(
     transaction?.recurrence_type || 'mensal',
   )
-  const [responsible, setResponsible] = useState<string>(transaction?.responsible || '')
   const [notes, setNotes] = useState(transaction?.notes || '')
   const [installmentsTotal, setInstallmentsTotal] = useState(
     transaction?.installments_total && transaction.installments_total > 1
@@ -99,7 +97,6 @@ export function TransactionModal({
       setDate(transaction.date)
       setIsRecurring(Boolean(transaction.is_recurring))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
-      setResponsible(transaction.responsible || '')
       setNotes(transaction.notes || '')
       setInstallmentsTotal(
         transaction.installments_total && transaction.installments_total > 1
@@ -114,7 +111,6 @@ export function TransactionModal({
       setSubcategoryId('')
       setDate(new Date().toISOString().split('T')[0])
       setIsRecurring(false)
-      setResponsible('')
       setNotes('')
       setInstallmentsTotal(1)
     }
@@ -174,7 +170,6 @@ export function TransactionModal({
           is_recurring: isRecurring,
           recurrence_type: isRecurring ? recurrenceType : undefined,
           notes,
-          responsible: responsible || undefined,
         })
         toast.success('Lançamento atualizado com sucesso!')
       } else {
@@ -189,7 +184,6 @@ export function TransactionModal({
           is_recurring: isRecurring,
           recurrence_type: isRecurring ? recurrenceType : undefined,
           notes,
-          responsible: responsible || undefined,
           installments_total: installmentsTotal,
         })
         toast.success(
@@ -455,35 +449,6 @@ export function TransactionModal({
                       />
                       <span>{sub.name}</span>
                     </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Responsible Person */}
-          <div className="space-y-1.5">
-            <Label
-              htmlFor="tx-responsible"
-              className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
-            >
-              <UserCheck className="w-3.5 h-3.5 text-slate-500" />
-              Responsável (opcional)
-            </Label>
-            <Select
-              value={responsible || '__none__'}
-              onValueChange={(v) => setResponsible(v === '__none__' ? '' : v)}
-            >
-              <SelectTrigger id="tx-responsible" className="rounded-xl h-11">
-                <SelectValue placeholder="Selecione quem é o responsável (ex: Família, Fabrício...)" />
-              </SelectTrigger>
-              <SelectContent className="rounded-xl">
-                <SelectItem value="__none__">
-                  <span className="text-slate-400">Não definido / Vazio</span>
-                </SelectItem>
-                {RESPONSIBLE_PERSONS.map((person) => (
-                  <SelectItem key={person} value={person}>
-                    {person}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useCompany } from '@/contexts/CompanyContext'
-import { TransactionType, RESPONSIBLE_PERSONS } from '@/types/database'
+import { TransactionType } from '@/types/database'
 import { parseNaturalLanguageTransaction } from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
 import { toast } from 'sonner'
@@ -35,7 +35,6 @@ import {
   Wallet,
   Calendar,
   CreditCard,
-  UserCheck,
   CheckCircle2,
   AlertCircle,
 } from 'lucide-react'
@@ -72,7 +71,6 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const [accountId, setAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [subcategoryId, setSubcategoryId] = useState('')
-  const [responsible, setResponsible] = useState<string>('')
   const [installmentsTotal, setInstallmentsTotal] = useState(1)
 
   // Reset when modal opens/closes
@@ -88,7 +86,6 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setAccountId(accounts[0]?.id || '')
       setCategoryId('')
       setSubcategoryId('')
-      setResponsible('')
       setInstallmentsTotal(1)
     }
   }, [open, accounts])
@@ -135,14 +132,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         setDate(result.date)
         setAccountId(result.account_id || accounts[0]?.id || '')
         setInstallmentsTotal(result.installments_total)
-        // Check if description matches any known responsible person
         const lowerText = text.toLowerCase()
-        const matchedResp = RESPONSIBLE_PERSONS.find((p) => lowerText.includes(p.toLowerCase()))
-        if (matchedResp) {
-          setResponsible(matchedResp)
-        } else {
-          setResponsible('')
-        }
 
         // Category & Subcategory matching
         let finalCatId = ''
@@ -210,7 +200,6 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         category_id: categoryId,
         subcategory_id: subcategoryId || undefined,
         date,
-        responsible: responsible || undefined,
         installments_total: installmentsTotal,
       })
       toast.success(
@@ -509,35 +498,6 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                           />
                           <span>{sub.name}</span>
                         </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Responsible Person */}
-              <div className="space-y-1.5">
-                <Label
-                  htmlFor="ai-responsible"
-                  className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
-                >
-                  <UserCheck className="w-3.5 h-3.5 text-slate-500" />
-                  Responsável (opcional)
-                </Label>
-                <Select
-                  value={responsible || '__none__'}
-                  onValueChange={(v) => setResponsible(v === '__none__' ? '' : v)}
-                >
-                  <SelectTrigger id="ai-responsible" className="rounded-xl h-11">
-                    <SelectValue placeholder="Selecione o responsável..." />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    <SelectItem value="__none__">
-                      <span className="text-slate-400">Não definido / Vazio</span>
-                    </SelectItem>
-                    {RESPONSIBLE_PERSONS.map((person) => (
-                      <SelectItem key={person} value={person}>
-                        {person}
                       </SelectItem>
                     ))}
                   </SelectContent>

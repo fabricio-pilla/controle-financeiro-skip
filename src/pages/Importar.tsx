@@ -36,13 +36,7 @@ import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { formatCurrency } from '@/lib/formatters'
-import {
-  Account,
-  Category,
-  Subcategory,
-  RESPONSIBLE_PERSONS,
-  ResponsiblePerson,
-} from '@/types/database'
+import { Account, Category, Subcategory } from '@/types/database'
 
 // 10 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
@@ -76,8 +70,6 @@ interface ParsedRow {
   matchedCategoryType: 'despesa' | 'receita'
   matchedSubcategoryName: string
   matchedSubcategoryId: string | null
-  responsibleRaw: string
-  matchedResponsible: ResponsiblePerson | ''
   paymentMethodRaw: string
   recurrenceRaw: string
   isRecurring: boolean
@@ -97,7 +89,6 @@ interface UnimportedRowItem {
   amount: number
   accountRaw: string
   categoryRaw: string
-  responsibleRaw?: string
   reason: string
   type: 'skipped' | 'error'
   rawDetails?: Record<string, any>
@@ -204,66 +195,11 @@ function parseExcelAmount(value: any): number {
   return isNaN(num) ? 0 : Math.abs(num)
 }
 
-// Normalize responsible person from "Orçamento" column or raw text
-function normalizeResponsible(value: any): ResponsiblePerson | '' {
-  if (!value) return ''
-  const str = String(value).trim()
-  if (!str) return ''
-  const norm = normalizeText(str)
-
-  // Specialized aliases / variations mapping before generic matching
-  if (norm.includes('fast escova') || norm.includes('fastescova') || norm === 'fast') {
-    return 'Fast Escova'
-  }
-  if (
-    norm === 'investimento' ||
-    norm === 'investimentos' ||
-    norm.includes('investimento') ||
-    norm.includes('investimentos')
-  ) {
-    return 'Investimento'
-  }
-  if (norm.includes('familia')) {
-    return 'Família'
-  }
-  if (norm.includes('fabricio')) {
-    return 'Fabrício'
-  }
-  if (norm.includes('raffaela') || norm.includes('rafaela')) {
-    return 'Raffaela'
-  }
-  if (norm.includes('emanuel')) {
-    return 'Emanuel'
-  }
-  if (norm.includes('helena')) {
-    return 'Helena'
-  }
-  if (norm.includes('matheus') || norm.includes('mateus')) {
-    return 'Matheus'
-  }
-
-  for (const person of RESPONSIBLE_PERSONS) {
-    if (normalizeText(person) === norm) {
-      return person
-    }
-  }
-
-  // Loose check (e.g. contains name)
-  for (const person of RESPONSIBLE_PERSONS) {
-    if (norm.includes(normalizeText(person))) {
-      return person
-    }
-  }
-
-  return ''
-}
-
 // Intelligent Category & Subcategory Mapper based on user's spreadsheet structure
 function mapCategoryAndSubcategory(
   rawCategoryCol: string, // Column "Categoria" in Excel is actually the Subcategory!
   rawDescription: string,
   rawType?: string,
-  rawResponsible?: string,
 ): {
   categoryName: SystemCategoryName | 'Outros'
   subcategoryName: string
@@ -271,7 +207,6 @@ function mapCategoryAndSubcategory(
 } {
   const normSub = normalizeText(rawCategoryCol)
   const normDesc = normalizeText(rawDescription)
-  const normResp = normalizeText(rawResponsible || '')
   const normType = normalizeText(rawType || '')
   const cleanSubName = rawCategoryCol.trim()
 
@@ -288,7 +223,6 @@ function mapCategoryAndSubcategory(
   // --- RECEITAS (Entradas) ---
   if (isIncome) {
     if (
-      normResp.includes('investimento') ||
       normSub.includes('rendimento') ||
       normSub.includes('dividendo') ||
       normSub.includes('aplicacao')
@@ -308,12 +242,8 @@ function mapCategoryAndSubcategory(
 
   // --- DESPESAS (Saídas) ---
 
-  // 1. Fast Escova (se responsável ou subcategoria for específico)
-  if (
-    normResp.includes('fast escova') ||
-    normDesc.includes('fast escova') ||
-    normSub.includes('implantacao')
-  ) {
+  // 1. Fast Escova (se descrição ou subcategoria for específico)
+  if (normDesc.includes('fast escova') || normSub.includes('implantacao')) {
     return {
       categoryName: 'Fast Escova',
       subcategoryName: cleanSubName || 'Diversos',
@@ -452,15 +382,12 @@ function mapCategoryAndSubcategory(
     }
   }
 
-  // 8. Filhos (Brinquedos / Livros, Educação, Pensão)
+  // 8. Filhos (Brinquedos / Livros, Educação, Pensão, Escola)
   if (
     normSub.includes('brinquedo') ||
     normSub.includes('livro') ||
     normSub.includes('pensao') ||
-    (normSub.includes('educacao') &&
-      (normResp.includes('emanuel') ||
-        normResp.includes('helena') ||
-        normResp.includes('matheus'))) ||
+    normSub.includes('filho') ||
     normDesc.includes('escola') ||
     normDesc.includes('colegio') ||
     normDesc.includes('pediatra')
@@ -824,15 +751,6 @@ export default function Importar() {
         'Origem',
         'Payment Method',
       )
-      const orcamentoVal = getVal(
-        'Orçamento',
-        'Orcamento',
-        'Responsável',
-        'Responsavel',
-        'Quem',
-        'Pessoa',
-        'Membro',
-      )
       const catVal = getVal(
         'Categoria',
         'Tipo',
@@ -865,19 +783,12 @@ export default function Importar() {
       const dateFormatted = parseExcelDate(dateVal)
       const paymentMethodRaw = String(accountVal || '').trim()
       const categoryRaw = String(catVal || '').trim()
-      const responsibleRaw = String(orcamentoVal || '').trim()
-      const matchedResponsible = normalizeResponsible(responsibleRaw)
 
       // Account match
       const matchedAccount = matchAccount(paymentMethodRaw, accountsList)
 
       // Category & Subcategory match
-      const mapped = mapCategoryAndSubcategory(
-        categoryRaw,
-        description,
-        String(typeVal),
-        responsibleRaw,
-      )
+      const mapped = mapCategoryAndSubcategory(categoryRaw, description, String(typeVal))
       const matchedCatRecord =
         categoriesList.find(
           (c) =>
@@ -939,8 +850,6 @@ export default function Importar() {
         matchedCategoryType: mapped.type,
         matchedSubcategoryName: mapped.subcategoryName,
         matchedSubcategoryId: matchedSubRecord?.id || null,
-        responsibleRaw,
-        matchedResponsible,
         paymentMethodRaw,
         recurrenceRaw: String(recurrenceVal),
         isRecurring: recurrenceInfo.isRecurring,
@@ -1084,7 +993,6 @@ export default function Importar() {
           amount: row.amount,
           accountRaw: row.accountRaw,
           categoryRaw: row.categoryRaw,
-          responsibleRaw: row.responsibleRaw,
           reason,
           type: 'skipped',
           rawDetails: row.raw,
@@ -1126,7 +1034,6 @@ export default function Importar() {
             date: row.dateFormatted,
             paid: true,
             is_recurring: false,
-            responsible: row.matchedResponsible || undefined,
             installments_total: totalInst,
             installment_number: 0,
             notes: `Importado de planilha: registro pai consolidado (${totalInst}x)`,
@@ -1148,7 +1055,6 @@ export default function Importar() {
             date: row.dateFormatted,
             paid: true,
             is_recurring: false,
-            responsible: row.matchedResponsible || undefined,
             installments_total: totalInst,
             installment_number: currentInst,
             parent_transaction_id: parentRecord.id,
@@ -1207,7 +1113,6 @@ export default function Importar() {
               date: instDate,
               paid: true,
               is_recurring: false,
-              responsible: row.matchedResponsible || undefined,
               installments_total: totalInst,
               installment_number: inst,
               notes: 'Importado de planilha via parcelamento automático',
@@ -1263,7 +1168,6 @@ export default function Importar() {
             recurring: row.isRecurring,
             recurrence_type: row.recurrenceType || '',
             recurrence_period: row.recurrenceType || '',
-            responsible: row.matchedResponsible || undefined,
             installments_total: 1,
             installment_number: 1,
             notes: row.isRecurring
@@ -1313,7 +1217,6 @@ export default function Importar() {
           amount: row.amount,
           accountRaw: row.accountRaw,
           categoryRaw: row.categoryRaw,
-          responsibleRaw: row.responsibleRaw,
           reason: `Erro da API PocketBase: ${errorMessage}`,
           type: 'error',
           rawDetails: row.raw,
@@ -1348,8 +1251,7 @@ export default function Importar() {
         normalizeText(item.description).includes(q) ||
         normalizeText(item.accountRaw).includes(q) ||
         normalizeText(item.categoryRaw).includes(q) ||
-        normalizeText(item.reason).includes(q) ||
-        (item.responsibleRaw && normalizeText(item.responsibleRaw).includes(q))
+        normalizeText(item.reason).includes(q)
       )
     })
   }, [importSummary, unimportedFilter, unimportedSearch])
@@ -1361,10 +1263,10 @@ export default function Importar() {
     let content = ''
     if (format === 'csv') {
       content = [
-        'Linha;Data;Descrição;Valor;Conta/Meio;Categoria;Responsável;Motivo;Tipo Falha',
+        'Linha;Data;Descrição;Valor;Conta/Meio;Categoria;Motivo;Tipo Falha',
         ...importSummary.unimportedRows.map(
           (r) =>
-            `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${(r.responsibleRaw || '').replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada (Dados/Conta)' : 'Erro API'}`,
+            `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada (Dados/Conta)' : 'Erro API'}`,
         ),
       ].join('\n')
     } else {
@@ -1401,12 +1303,11 @@ export default function Importar() {
   const handleDownloadUnimportedCsv = () => {
     if (!importSummary || importSummary.unimportedRows.length === 0) return
 
-    const headers =
-      'Linha;Data;Descrição;Valor;Conta / Meio;Categoria;Responsável;Motivo;Tipo Falha\n'
+    const headers = 'Linha;Data;Descrição;Valor;Conta / Meio;Categoria;Motivo;Tipo Falha\n'
     const rows = importSummary.unimportedRows
       .map(
         (r) =>
-          `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${(r.responsibleRaw || '').replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada' : 'Erro API'}`,
+          `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada' : 'Erro API'}`,
       )
       .join('\n')
 
@@ -1609,8 +1510,7 @@ export default function Importar() {
                   <th className="py-3 px-4">Descrição</th>
                   <th className="py-3 px-4">Valor</th>
                   <th className="py-3 px-4">Meio / Conta</th>
-                  <th className="py-3 px-4">Responsável (Orçamento)</th>
-                  <th className="py-3 px-4">Categoria</th>
+                  <th className="py-3 px-4">Categoria / Subcategoria</th>
                   <th className="py-3 px-4">Recorrência / Parcelas</th>
                   <th className="py-3 px-4 text-center">Status</th>
                 </tr>
@@ -1653,20 +1553,6 @@ export default function Importar() {
                           <AlertTriangle className="w-3 h-3" />
                           {row.accountRaw || 'Não mapeada'}
                         </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      {row.matchedResponsible ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200">
-                          <User className="w-3 h-3 text-violet-500" />
-                          {row.matchedResponsible}
-                        </span>
-                      ) : row.responsibleRaw ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-slate-500 bg-slate-100">
-                          {row.responsibleRaw}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-[11px] italic">Não definido</span>
                       )}
                     </td>
                     <td className="py-3 px-4">
@@ -2012,7 +1898,7 @@ export default function Importar() {
                         <th className="py-3 px-3.5">Descrição</th>
                         <th className="py-3 px-3.5 whitespace-nowrap">Valor</th>
                         <th className="py-3 px-3.5">Conta / Meio na Planilha</th>
-                        <th className="py-3 px-3.5">Categoria / Orçamento</th>
+                        <th className="py-3 px-3.5">Categoria</th>
                         <th className="py-3 px-3.5 min-w-[220px]">Motivo da Não Importação</th>
                         <th className="py-3 px-3.5 text-center whitespace-nowrap">Tipo</th>
                       </tr>
@@ -2052,11 +1938,6 @@ export default function Importar() {
                             <td className="py-3 px-3.5 text-slate-600">
                               <div className="flex flex-col gap-0.5">
                                 <span>{item.categoryRaw || 'Sem categoria'}</span>
-                                {item.responsibleRaw && (
-                                  <span className="text-[10px] text-violet-700 font-medium">
-                                    Resp: {item.responsibleRaw}
-                                  </span>
-                                )}
                               </div>
                             </td>
                             <td className="py-3 px-3.5">
@@ -2177,27 +2058,7 @@ export default function Importar() {
       )}
 
       {/* 6. Guidance and reference information */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 text-xs text-slate-600">
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
-          <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
-            <Users className="w-4 h-4 text-violet-600" />
-            <span>Responsáveis (Orçamento)</span>
-          </div>
-          <p className="text-slate-500 leading-relaxed">
-            Mapeados da coluna "Orçamento" da planilha para identificar "de quem" é cada gasto:
-          </p>
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {RESPONSIBLE_PERSONS.map((person) => (
-              <span
-                key={person}
-                className="px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 font-medium border border-violet-100"
-              >
-                {person}
-              </span>
-            ))}
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 text-xs text-slate-600">
         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
           <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
             <Building2 className="w-4 h-4 text-indigo-600" />

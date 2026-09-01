@@ -537,15 +537,6 @@ export default function Dashboard() {
                               <span>{tx.subcategory.name}</span>
                             </span>
                           )}
-                          {tx.responsible && (
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200"
-                              title={`Responsável: ${tx.responsible}`}
-                            >
-                              <User className="w-2.5 h-2.5 text-violet-500" />
-                              <span>{tx.responsible}</span>
-                            </span>
-                          )}
                         </div>
                       </td>
                       <td className="py-3 px-3 text-xs text-slate-600">

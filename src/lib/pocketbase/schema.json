@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-01T21:14:34.801Z",
+  "generatedAt": "2026-09-01T21:36:11.612Z",
   "collections": [
     {
       "name": "users",
@@ -722,12 +722,6 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
-        },
-        {
-          "name": "responsible",
-          "type": "text",
-          "required": false,
-          "system": false
         },
         {
           "name": "subcategory_id",

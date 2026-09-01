@@ -5,7 +5,7 @@ import { AiTransactionModal } from '@/components/transactions/AiTransactionModal
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
-import { Transaction, TransactionType, RESPONSIBLE_PERSONS } from '@/types/database'
+import { Transaction, TransactionType } from '@/types/database'
 import { toast } from 'sonner'
 import {
   Plus,
@@ -22,7 +22,6 @@ import {
   Repeat,
   Package,
   Sparkles,
-  User,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,7 +49,6 @@ export default function TransactionsPage() {
   const [accountFilter, setAccountFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [subcategoryFilter, setSubcategoryFilter] = useState<string>('all')
-  const [responsibleFilter, setResponsibleFilter] = useState<string>('all')
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 10
 
@@ -78,9 +76,7 @@ export default function TransactionsPage() {
           ?.toLowerCase()
           .includes(searchTerm.toLowerCase().trim())
         const matchesNotes = tx.notes?.toLowerCase().includes(searchTerm.toLowerCase().trim())
-        const matchesResp = tx.responsible?.toLowerCase().includes(searchTerm.toLowerCase().trim())
-        if (!matchesDesc && !matchesCat && !matchesSub && !matchesNotes && !matchesResp)
-          return false
+        if (!matchesDesc && !matchesCat && !matchesSub && !matchesNotes) return false
       }
       // Type
       if (typeFilter !== 'all' && tx.type !== typeFilter) return false
@@ -96,26 +92,10 @@ export default function TransactionsPage() {
           return false
         }
       }
-      // Responsible
-      if (responsibleFilter !== 'all') {
-        if (responsibleFilter === '__none__') {
-          if (tx.responsible && tx.responsible.trim() !== '') return false
-        } else if (tx.responsible !== responsibleFilter) {
-          return false
-        }
-      }
 
       return true
     })
-  }, [
-    transactions,
-    searchTerm,
-    typeFilter,
-    accountFilter,
-    categoryFilter,
-    subcategoryFilter,
-    responsibleFilter,
-  ])
+  }, [transactions, searchTerm, typeFilter, accountFilter, categoryFilter, subcategoryFilter])
 
   // Subcategories filtered by currently selected category
   const availableSubcategories = useMemo(() => {
@@ -215,7 +195,7 @@ export default function TransactionsPage() {
           <div className="relative sm:col-span-2 lg:col-span-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
-              placeholder="Buscar descrição ou responsável..."
+              placeholder="Buscar descrição ou categoria..."
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value)
@@ -305,28 +285,6 @@ export default function TransactionsPage() {
                 </SelectItem>
               ))}
               <SelectItem value="__none__">Sem subcategoria</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Responsible Filter */}
-          <Select
-            value={responsibleFilter}
-            onValueChange={(v) => {
-              setResponsibleFilter(v)
-              setCurrentPage(1)
-            }}
-          >
-            <SelectTrigger className="rounded-xl h-10 text-sm">
-              <SelectValue placeholder="Filtrar por responsável" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl">
-              <SelectItem value="all">Todos Responsáveis</SelectItem>
-              {RESPONSIBLE_PERSONS.map((person) => (
-                <SelectItem key={person} value={person}>
-                  {person}
-                </SelectItem>
-              ))}
-              <SelectItem value="__none__">Sem responsável definido</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -439,15 +397,6 @@ export default function TransactionsPage() {
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                           <span className="text-slate-400">↳</span>
                           <span>{tx.subcategory.name}</span>
-                        </span>
-                      )}
-                      {tx.responsible && (
-                        <span
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-violet-50 text-violet-700 border border-violet-200"
-                          title={`Responsável: ${tx.responsible}`}
-                        >
-                          <User className="w-3 h-3 text-violet-500" />
-                          <span>{tx.responsible}</span>
                         </span>
                       )}
                     </div>
@@ -584,15 +533,6 @@ export default function TransactionsPage() {
                           {tx.subcategory && (
                             <span className="text-slate-500"> → {tx.subcategory.name}</span>
                           )}
-                        </span>
-                      </>
-                    )}
-                    {tx.responsible && (
-                      <>
-                        <span>•</span>
-                        <span className="inline-flex items-center gap-1 font-semibold text-violet-700 bg-violet-50 px-1.5 py-0.2 rounded border border-violet-200 text-[10px]">
-                          <User className="w-2.5 h-2.5 text-violet-500" />
-                          {tx.responsible}
                         </span>
                       </>
                     )}
