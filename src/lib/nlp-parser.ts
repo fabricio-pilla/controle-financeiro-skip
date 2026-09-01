@@ -536,17 +536,15 @@ function extractCategory(
       // Find a matching category in the company's list (by name, case-insensitive, no accents)
       const match = categories.find(
         (c) =>
-          c.type === type &&
-          (c.name.toLowerCase() === rule.category.toLowerCase() ||
-            stripAccents(c.name) === stripAccents(rule.category)),
+          c.name.toLowerCase() === rule.category.toLowerCase() ||
+          stripAccents(c.name) === stripAccents(rule.category),
       )
       if (match) return { categoryId: match.id, categoryName: match.name, matched: true }
       // Loose: category contains keyword
       const loose = categories.find(
         (c) =>
-          c.type === type &&
-          (c.name.toLowerCase().includes(rule.category.toLowerCase()) ||
-            stripAccents(c.name).includes(stripAccents(rule.category))),
+          c.name.toLowerCase().includes(rule.category.toLowerCase()) ||
+          stripAccents(c.name).includes(stripAccents(rule.category)),
       )
       if (loose) return { categoryId: loose.id, categoryName: loose.name, matched: true }
       // Suggested category name not present in DB -> fall back to "Outros"
@@ -704,7 +702,7 @@ export function parseNaturalLanguageTransaction(
   )?.type
   const type = extractType(normalized, provisionalCatType)
 
-  // Re-extract category with the resolved type
+  // Re-extract category
   const category = extractCategory(normalized, categories, type)
   const account = extractAccount(normalized, accounts)
   const date = extractDate(text)

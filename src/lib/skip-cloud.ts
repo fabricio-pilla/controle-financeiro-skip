@@ -19,26 +19,213 @@ import {
 } from '@/types/database'
 import pb from '@/lib/pocketbase/client'
 
-export const DEFAULT_EXPENSE_CATEGORIES = [
-  { name: 'Moradia', color: '#EF4444', icon: 'Home' },
-  { name: 'Alimentação', color: '#F97316', icon: 'Utensils' },
-  { name: 'Transporte', color: '#F59E0B', icon: 'Car' },
-  { name: 'Saúde', color: '#EC4899', icon: 'Heart' },
-  { name: 'Educação', color: '#8B5CF6', icon: 'Book' },
-  { name: 'Lazer', color: '#06B6D4', icon: 'Gamepad2' },
-  { name: 'Compras', color: '#6366F1', icon: 'ShoppingBag' },
-  { name: 'Assinaturas', color: '#10B981', icon: 'Repeat' },
-  { name: 'Utilidades', color: '#3B82F6', icon: 'Zap' },
-  { name: 'Outros', color: '#64748B', icon: 'MoreHorizontal' },
+export const DEFAULT_CATEGORIES = [
+  {
+    name: 'Fabrício',
+    color: '#6366F1',
+    icon: 'User',
+    subcategories: [
+      'IRPF',
+      'Outros',
+      'PLR',
+      'Salário',
+      'Vendas',
+      'Alimentação',
+      'Celular',
+      'Cuidados Pessoais',
+      'Diversos',
+      'Doações',
+      'Educação',
+      'Exercícios',
+      'Lazer',
+      'Medicamentos',
+      'Médicos / Psicólogos',
+      'Plano de Saúde',
+      'Presentes',
+      'Roupas e Acessórios',
+      'Salão',
+      'Seguros Individuais',
+      'Trabalho',
+      'Transporte',
+    ],
+  },
+  {
+    name: 'Investimento',
+    color: '#8B5CF6',
+    icon: 'TrendingUp',
+    subcategories: [
+      'Emanuel',
+      'Fabricio',
+      'Helena',
+      'Matheus',
+      'Raffaela',
+      'Viagens',
+      'Empréstimo Franquia',
+      'Empréstimo Ibi Marmore',
+      'Financiamento Casa',
+    ],
+  },
+  {
+    name: 'Raffaela',
+    color: '#EC4899',
+    icon: 'User',
+    subcategories: [
+      'Outros',
+      'Salário',
+      'Alimentação',
+      'Celular',
+      'Cuidados Pessoais',
+      'Diversos',
+      'Doações',
+      'Educação',
+      'Exercícios',
+      'Lazer',
+      'Medicamentos',
+      'Médicos / Psicólogos',
+      'Plano de Saúde',
+      'Presentes',
+      'Roupas e Acessórios',
+      'Salão',
+      'Seguros Individuais',
+      'Trabalho',
+      'Transporte',
+    ],
+  },
+  {
+    name: 'Pets',
+    color: '#10B981',
+    icon: 'PawPrint',
+    subcategories: ['Banho', 'Medicamentos', 'Outros', 'Ração', 'Veterinário'],
+  },
+  {
+    name: 'Transporte',
+    color: '#F59E0B',
+    icon: 'Car',
+    subcategories: [
+      'Combustível',
+      'Consorcio',
+      'Diversos',
+      'Estacionamento/Pedágio',
+      'Impostos',
+      'Lavagem',
+      'Multas',
+      'Revisão / Manutenção',
+      'Seguro',
+    ],
+  },
+  {
+    name: 'Moradia',
+    color: '#EF4444',
+    icon: 'Home',
+    subcategories: [
+      'Água',
+      'Decoração / Utensílios',
+      'Diarista',
+      'Diversos',
+      'Gás',
+      'Internet',
+      'Iptu',
+      'Luz',
+      'Manutenção',
+      'Seguro',
+    ],
+  },
+  {
+    name: 'Emanuel',
+    color: '#3B82F6',
+    icon: 'Baby',
+    subcategories: [
+      'Brinquedos / Livros',
+      'Cuidados Pessoais',
+      'Diversos',
+      'Educação',
+      'Exercícios',
+      'Lazer',
+      'Medicamentos',
+      'Médicos / Psicólogos',
+      'Pensão',
+      'Plano de Saúde',
+      'Roupas e Acessórios',
+      'Salão',
+      'Transporte',
+    ],
+  },
+  {
+    name: 'Família',
+    color: '#06B6D4',
+    icon: 'Users',
+    subcategories: [
+      'Assinaturas',
+      'Comemorações',
+      'Farmácia',
+      'Igreja',
+      'Lavanderia',
+      'Lazer',
+      'Plano de Saúde',
+      'Presentes',
+      'Restaurantes / Delivery',
+      'Supermercado',
+      'Suplementos',
+      'Viagens',
+    ],
+  },
+  {
+    name: 'Fast Escova',
+    color: '#F43F5E',
+    icon: 'Scissors',
+    subcategories: ['Alimentação', 'Implantação', 'Imposto', 'Pagamento de Contas', 'Viagens'],
+  },
+  {
+    name: 'Helena',
+    color: '#A855F7',
+    icon: 'Baby',
+    subcategories: [
+      'Alimentação',
+      'Brinquedos / Livros',
+      'Celular',
+      'Cuidados Pessoais',
+      'Diversos',
+      'Educação',
+      'Exercícios',
+      'Lazer',
+      'Medicamentos',
+      'Médicos / Psicólogos',
+      'Pensão',
+      'Plano de Saúde',
+      'Presentes',
+      'Roupas e Acessórios',
+      'Salão',
+      'Seguros Individuais',
+      'Transporte',
+    ],
+  },
+  {
+    name: 'Matheus',
+    color: '#14B8A6',
+    icon: 'Baby',
+    subcategories: [
+      'Alimentação',
+      'Brinquedos / Livros',
+      'Celular',
+      'Cuidados Pessoais',
+      'Diversos',
+      'Educação',
+      'Exercícios',
+      'Lazer',
+      'Medicamentos',
+      'Médicos / Psicólogos',
+      'Plano de Saúde',
+      'Presentes',
+      'Roupas e Acessórios',
+      'Salão',
+      'Seguros Individuais',
+      'Transporte',
+    ],
+  },
 ]
 
-export const DEFAULT_INCOME_CATEGORIES = [
-  { name: 'Salário', color: '#10B981', icon: 'Briefcase' },
-  { name: 'Freelance', color: '#06B6D4', icon: 'Laptop' },
-  { name: 'Investimentos', color: '#8B5CF6', icon: 'TrendingUp' },
-  { name: 'Reembolsos', color: '#F59E0B', icon: 'Undo2' },
-  { name: 'Outros', color: '#64748B', icon: 'PlusCircle' },
-]
+export const DEFAULT_EXPENSE_CATEGORIES = DEFAULT_CATEGORIES
+export const DEFAULT_INCOME_CATEGORIES = DEFAULT_CATEGORIES
 
 export const PALETTE_COLORS = [
   '#6366F1', // Indigo
@@ -382,9 +569,9 @@ class SkipCloudService {
         })
       }
 
-      // Seed default categories
-      for (const c of DEFAULT_EXPENSE_CATEGORIES) {
-        await pb.collection('categories').create({
+      // Seed default categories and subcategories
+      for (const c of DEFAULT_CATEGORIES) {
+        const catRec = await pb.collection('categories').create({
           control_id: companyId,
           name: c.name,
           type: 'despesa',
@@ -392,16 +579,13 @@ class SkipCloudService {
           icon: c.icon,
           is_default: true,
         })
-      }
-      for (const c of DEFAULT_INCOME_CATEGORIES) {
-        await pb.collection('categories').create({
-          control_id: companyId,
-          name: c.name,
-          type: 'receita',
-          color: c.color,
-          icon: c.icon,
-          is_default: true,
-        })
+        for (const subName of c.subcategories) {
+          await pb.collection('subcategories').create({
+            control_id: companyId,
+            category_id: catRec.id,
+            name: subName,
+          })
+        }
       }
 
       // Create a starter account

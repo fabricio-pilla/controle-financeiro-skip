@@ -87,15 +87,9 @@ export default function CategoriesPage() {
     return { categoryStats: catStats, subcategoryStats: subStats }
   }, [transactions])
 
-  const expenseCategories = useMemo(
-    () => categories.filter((c) => c.type === 'despesa'),
-    [categories],
-  )
+  const expenseCategories = useMemo(() => categories, [categories])
 
-  const incomeCategories = useMemo(
-    () => categories.filter((c) => c.type === 'receita'),
-    [categories],
-  )
+  const incomeCategories = useMemo(() => categories, [categories])
 
   // Group subcategories by category_id
   const subcategoriesByCategory = useMemo(() => {

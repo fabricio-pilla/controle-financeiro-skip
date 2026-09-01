@@ -38,19 +38,19 @@ import { Input } from '@/components/ui/input'
 import { formatCurrency } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
 
-// 10 Standard categories recognized in the system
+// 11 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
-  'Moradia',
-  'Alimentação',
-  'Transporte',
-  'Saúde',
-  'Filhos',
+  'Fabrício',
+  'Investimento',
+  'Raffaela',
   'Pets',
-  'Lazer',
-  'Investimentos',
-  'Pessoal',
-  'Salário',
+  'Transporte',
+  'Moradia',
+  'Emanuel',
+  'Família',
   'Fast Escova',
+  'Helena',
+  'Matheus',
 ] as const
 
 type SystemCategoryName = (typeof SYSTEM_CATEGORIES)[number]
@@ -197,15 +197,17 @@ function parseExcelAmount(value: any): number {
 
 // Intelligent Category & Subcategory Mapper based on user's spreadsheet structure
 function mapCategoryAndSubcategory(
-  rawCategoryCol: string, // Column "Categoria" in Excel is actually the Subcategory!
+  rawCategoryCol: string, // Column "Categoria" or "Orçamento" in Excel
   rawDescription: string,
   rawType?: string,
+  rawBudgetCol?: string, // Column "Orçamento" in Excel
 ): {
-  categoryName: SystemCategoryName | 'Outros'
+  categoryName: SystemCategoryName | 'Família' | 'Outros'
   subcategoryName: string
   type: 'despesa' | 'receita'
 } {
   const normSub = normalizeText(rawCategoryCol)
+  const normBudget = normalizeText(rawBudgetCol || '')
   const normDesc = normalizeText(rawDescription)
   const normType = normalizeText(rawType || '')
   const cleanSubName = rawCategoryCol.trim()
@@ -220,44 +222,101 @@ function mapCategoryAndSubcategory(
     normSub.includes('rendimento') ||
     normSub.includes('vendas')
 
-  // --- RECEITAS (Entradas) ---
-  if (isIncome) {
+  const txType: 'despesa' | 'receita' = isIncome ? 'receita' : 'despesa'
+
+  // If Orçamento column exists and directly maps to a category:
+  if (normBudget) {
+    if (normBudget.includes('animais') || normBudget.includes('pet')) {
+      return { categoryName: 'Pets', subcategoryName: cleanSubName || 'Outros', type: txType }
+    }
     if (
-      normSub.includes('rendimento') ||
-      normSub.includes('dividendo') ||
-      normSub.includes('aplicacao')
+      normBudget.includes('automovel') ||
+      normBudget.includes('carro') ||
+      normBudget.includes('transporte')
     ) {
       return {
-        categoryName: 'Investimentos',
-        subcategoryName: cleanSubName || 'Rendimentos',
-        type: 'receita',
+        categoryName: 'Transporte',
+        subcategoryName: cleanSubName || 'Diversos',
+        type: txType,
       }
     }
-    return {
-      categoryName: 'Salário',
-      subcategoryName: cleanSubName || 'Salário',
-      type: 'receita',
+    if (normBudget.includes('casa') || normBudget.includes('moradia')) {
+      return { categoryName: 'Moradia', subcategoryName: cleanSubName || 'Diversos', type: txType }
+    }
+    if (normBudget.includes('fabricio')) {
+      return { categoryName: 'Fabrício', subcategoryName: cleanSubName || 'Diversos', type: txType }
+    }
+    if (normBudget.includes('raffaela')) {
+      return { categoryName: 'Raffaela', subcategoryName: cleanSubName || 'Diversos', type: txType }
+    }
+    if (normBudget.includes('investimento')) {
+      return {
+        categoryName: 'Investimento',
+        subcategoryName: cleanSubName || 'Diversos',
+        type: txType,
+      }
+    }
+    if (normBudget.includes('emanuel')) {
+      return { categoryName: 'Emanuel', subcategoryName: cleanSubName || 'Diversos', type: txType }
+    }
+    if (normBudget.includes('helena')) {
+      return { categoryName: 'Helena', subcategoryName: cleanSubName || 'Diversos', type: txType }
+    }
+    if (normBudget.includes('matheus')) {
+      return { categoryName: 'Matheus', subcategoryName: cleanSubName || 'Diversos', type: txType }
+    }
+    if (normBudget.includes('familia')) {
+      return { categoryName: 'Família', subcategoryName: cleanSubName || 'Diversos', type: txType }
+    }
+    if (normBudget.includes('fast escova')) {
+      return {
+        categoryName: 'Fast Escova',
+        subcategoryName: cleanSubName || 'Diversos',
+        type: txType,
+      }
     }
   }
 
-  // --- DESPESAS (Saídas) ---
-
-  // 1. Fast Escova (se descrição ou subcategoria for específico)
-  if (normDesc.includes('fast escova') || normSub.includes('implantacao')) {
-    return {
-      categoryName: 'Fast Escova',
-      subcategoryName: cleanSubName || 'Diversos',
-      type: 'despesa',
-    }
+  // --- Direct match by Category column if it matches a parent name ---
+  if (normSub.includes('animais de estimacao') || normSub === 'pets') {
+    return { categoryName: 'Pets', subcategoryName: 'Outros', type: txType }
+  }
+  if (normSub.includes('automovel')) {
+    return { categoryName: 'Transporte', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub === 'casa') {
+    return { categoryName: 'Moradia', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub === 'fabricio' || normSub === 'fabrício') {
+    return { categoryName: 'Fabrício', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub === 'raffaela') {
+    return { categoryName: 'Raffaela', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub.includes('investimento')) {
+    return { categoryName: 'Investimento', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub === 'emanuel') {
+    return { categoryName: 'Emanuel', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub === 'helena') {
+    return { categoryName: 'Helena', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub === 'matheus') {
+    return { categoryName: 'Matheus', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub === 'familia' || normSub === 'família') {
+    return { categoryName: 'Família', subcategoryName: 'Diversos', type: txType }
+  }
+  if (normSub.includes('fast escova')) {
+    return { categoryName: 'Fast Escova', subcategoryName: 'Diversos', type: txType }
   }
 
-  // 2. Pets (ex Animais de Estimação: Banho, Medicamentos, Ração, Veterinário, etc.)
+  // --- Pets subcategories ---
   if (
     normSub.includes('banho') ||
     normSub.includes('racao') ||
     normSub.includes('veterinario') ||
-    normSub.includes('pet') ||
-    normSub.includes('animais') ||
     normDesc.includes('petshop') ||
     normDesc.includes('cobasi') ||
     normDesc.includes('petz')
@@ -265,11 +324,11 @@ function mapCategoryAndSubcategory(
     return {
       categoryName: 'Pets',
       subcategoryName: cleanSubName || 'Outros',
-      type: 'despesa',
+      type: txType,
     }
   }
 
-  // 3. Transporte (ex Automóvel: Combustível, Consórcio, Estacionamento/Pedágio, Lavagem, Multas, Revisão / Manutenção, Seguro)
+  // --- Transporte subcategories ---
   if (
     normSub.includes('combustivel') ||
     normSub.includes('gasolina') ||
@@ -280,21 +339,16 @@ function mapCategoryAndSubcategory(
     normSub.includes('multa') ||
     normSub.includes('revisao') ||
     normSub.includes('oficina') ||
-    normSub.includes('uber') ||
-    normSub.includes('transporte') ||
-    normSub.includes('automovel') ||
-    normDesc.includes('posto') ||
-    normDesc.includes('sem parar') ||
-    normDesc.includes('ipva')
+    normSub.includes('ipva')
   ) {
     return {
       categoryName: 'Transporte',
       subcategoryName: cleanSubName || 'Diversos',
-      type: 'despesa',
+      type: txType,
     }
   }
 
-  // 4. Moradia (ex Casa: Água, Decoração / Utensílios, Diarista, Gás, Internet, Iptu, Luz, Manutenção, Seguro)
+  // --- Moradia subcategories ---
   if (
     normSub.includes('agua') ||
     normSub.includes('luz') ||
@@ -306,139 +360,65 @@ function mapCategoryAndSubcategory(
     normSub.includes('utensilios') ||
     normSub.includes('manutencao') ||
     normSub.includes('aluguel') ||
-    normSub.includes('condominio') ||
-    normSub.includes('faxina') ||
-    normSub.includes('casa')
+    normSub.includes('condominio')
   ) {
     return {
       categoryName: 'Moradia',
       subcategoryName: cleanSubName || 'Diversos',
-      type: 'despesa',
+      type: txType,
     }
   }
 
-  // 5. Alimentação (Supermercado, Restaurantes / Delivery, Alimentação, Suplementos)
-  if (
-    normSub.includes('supermercado') ||
-    normSub.includes('restaurante') ||
-    normSub.includes('delivery') ||
-    normSub.includes('alimentacao') ||
-    normSub.includes('suplemento') ||
-    normDesc.includes('carrefour') ||
-    normDesc.includes('pao de acucar') ||
-    normDesc.includes('ifood') ||
-    normDesc.includes('feira') ||
-    normDesc.includes('mercado')
-  ) {
-    return {
-      categoryName: 'Alimentação',
-      subcategoryName: cleanSubName || 'Alimentação',
-      type: 'despesa',
-    }
-  }
-
-  // 6. Saúde (Cuidados Pessoais, Exercícios, Farmácia, Medicamentos, Médicos / Psicólogos, Plano de Saúde, Salão)
-  if (
-    normSub.includes('farmacia') ||
-    normSub.includes('medicamento') ||
-    normSub.includes('remedio') ||
-    normSub.includes('medico') ||
-    normSub.includes('psicolog') ||
-    normSub.includes('plano de saude') ||
-    normSub.includes('exercicio') ||
-    normSub.includes('academia') ||
-    normSub.includes('salao') ||
-    normSub.includes('cuidados pessoais') ||
-    normSub.includes('dentista') ||
-    normDesc.includes('drogasil') ||
-    normDesc.includes('droga raia')
-  ) {
-    return {
-      categoryName: 'Saúde',
-      subcategoryName: cleanSubName || 'Cuidados Pessoais',
-      type: 'despesa',
-    }
-  }
-
-  // 7. Lazer (Assinaturas, Comemorações, Igreja, Lavanderia, Lazer, Presentes, Viagens)
-  if (
-    normSub.includes('assinatura') ||
-    normSub.includes('comemorac') ||
-    normSub.includes('igreja') ||
-    normSub.includes('lavanderia') ||
-    normSub.includes('lazer') ||
-    normSub.includes('presente') ||
-    normSub.includes('viagen') ||
-    normSub.includes('viagem') ||
-    normDesc.includes('netflix') ||
-    normDesc.includes('spotify') ||
-    normDesc.includes('cinema') ||
-    normDesc.includes('hotel')
-  ) {
-    return {
-      categoryName: 'Lazer',
-      subcategoryName: cleanSubName || 'Lazer',
-      type: 'despesa',
-    }
-  }
-
-  // 8. Filhos (Brinquedos / Livros, Educação, Pensão, Escola)
-  if (
-    normSub.includes('brinquedo') ||
-    normSub.includes('livro') ||
-    normSub.includes('pensao') ||
-    normSub.includes('filho') ||
-    normDesc.includes('escola') ||
-    normDesc.includes('colegio') ||
-    normDesc.includes('pediatra')
-  ) {
-    return {
-      categoryName: 'Filhos',
-      subcategoryName: cleanSubName || 'Diversos',
-      type: 'despesa',
-    }
-  }
-
-  // 9. Investimentos (Empréstimo Franquia, Empréstimo Ibi Marmore, Financiamento Casa, etc.)
+  // --- Investimento subcategories ---
   if (
     normSub.includes('emprestimo') ||
     normSub.includes('financiamento') ||
     normSub.includes('franquia') ||
-    normSub.includes('ibi marmore') ||
-    normSub.includes('investimento')
+    normSub.includes('ibi marmore')
   ) {
     return {
-      categoryName: 'Investimentos',
-      subcategoryName: cleanSubName || 'Diversos',
-      type: 'despesa',
+      categoryName: 'Investimento',
+      subcategoryName: cleanSubName || 'Financiamento Casa',
+      type: txType,
     }
   }
 
-  // 10. Pessoal (Celular, Doações, Roupas e Acessórios, Seguros Individuais, Trabalho, Diversos, Educação)
+  // --- Família subcategories ---
   if (
-    normSub.includes('celular') ||
-    normSub.includes('doacao') ||
-    normSub.includes('doacoes') ||
-    normSub.includes('roupa') ||
-    normSub.includes('acessorio') ||
-    normSub.includes('seguro individual') ||
-    normSub.includes('seguros individuais') ||
-    normSub.includes('trabalho') ||
-    normSub.includes('educacao') ||
-    normSub.includes('curso')
+    normSub.includes('supermercado') ||
+    normSub.includes('restaurante') ||
+    normSub.includes('delivery') ||
+    normSub.includes('farmacia') ||
+    normSub.includes('igreja') ||
+    normSub.includes('lavanderia') ||
+    normSub.includes('suplemento') ||
+    normSub.includes('comemorac')
   ) {
     return {
-      categoryName: 'Pessoal',
+      categoryName: 'Família',
       subcategoryName: cleanSubName || 'Diversos',
-      type: 'despesa',
+      type: txType,
     }
   }
 
-  // Default fallback to Pessoal
+  // --- Fast Escova subcategories ---
+  if (
+    normDesc.includes('fast escova') ||
+    normSub.includes('implantacao') ||
+    normSub.includes('pagamento de contas')
+  ) {
+    return {
+      categoryName: 'Fast Escova',
+      subcategoryName: cleanSubName || 'Diversos',
+      type: txType,
+    }
+  }
+
+  // Default fallback to Fabrício
   return {
-    categoryName: 'Pessoal',
+    categoryName: 'Fabrício',
     subcategoryName: cleanSubName || 'Diversos',
-    type: 'despesa',
+    type: txType,
   }
 }
 
@@ -761,6 +741,13 @@ export default function Importar() {
         'Subcategoria',
       )
       const typeVal = getVal('Tipo Lançamento', 'Tipo Transação', 'Natureza', 'D/C', 'Operação')
+      const budgetVal = getVal(
+        'Orçamento',
+        'Orcamento',
+        'Budget',
+        'Centro de Custo',
+        'Centro de Custo / Orçamento',
+      )
       const parcelasVal = getVal(
         'Parcelas',
         'Parcela',
@@ -783,12 +770,13 @@ export default function Importar() {
       const dateFormatted = parseExcelDate(dateVal)
       const paymentMethodRaw = String(accountVal || '').trim()
       const categoryRaw = String(catVal || '').trim()
+      const budgetRaw = String(budgetVal || '').trim()
 
       // Account match
       const matchedAccount = matchAccount(paymentMethodRaw, accountsList)
 
       // Category & Subcategory match
-      const mapped = mapCategoryAndSubcategory(categoryRaw, description, String(typeVal))
+      const mapped = mapCategoryAndSubcategory(categoryRaw, description, String(typeVal), budgetRaw)
       const matchedCatRecord =
         categoriesList.find(
           (c) =>
@@ -937,11 +925,10 @@ export default function Importar() {
       }),
     ])
 
-    const getCatId = (name: string, type: 'despesa' | 'receita'): string => {
+    const getCatId = (name: string, _type: 'despesa' | 'receita'): string => {
       const match =
-        freshCategories.find(
-          (c) => normalizeText(c.name) === normalizeText(name) && c.type === type,
-        ) || freshCategories.find((c) => normalizeText(c.name) === normalizeText(name))
+        freshCategories.find((c) => normalizeText(c.name) === normalizeText(name)) ||
+        freshCategories.find((c) => normalizeText(c.name).includes(normalizeText(name)))
       return match ? match.id : ''
     }
 

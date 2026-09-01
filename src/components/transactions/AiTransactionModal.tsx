@@ -90,10 +90,10 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
     }
   }, [open, accounts])
 
-  const filteredCategories = useMemo(
-    () => categories.filter((c) => c.type === type),
-    [categories, type],
-  )
+  const filteredCategories = useMemo(() => {
+    const matched = categories.filter((c) => c.type === type)
+    return matched.length > 0 ? matched : categories
+  }, [categories, type])
 
   const filteredSubcategories = useMemo(
     () => subcategories.filter((s) => s.category_id === categoryId),

@@ -116,8 +116,11 @@ export function TransactionModal({
     }
   }, [transaction, defaultType, accounts])
 
-  // Filter categories by selected type
-  const filteredCategories = categories.filter((c) => c.type === type)
+  // Filter categories by selected type (if category matches type or all categories since categories are shared)
+  const filteredCategories = useMemo(() => {
+    const matched = categories.filter((c) => c.type === type)
+    return matched.length > 0 ? matched : categories
+  }, [categories, type])
 
   // Filter subcategories by selected category
   const filteredSubcategories = useMemo(
