@@ -7,13 +7,32 @@ export function formatCurrency(value: number): string {
   }).format(value || 0)
 }
 
-export function formatDateBR(dateString: string): string {
-  if (!dateString) return ''
-  // Support YYYY-MM-DD or ISO string
-  const cleanDate = dateString.split('T')[0]
-  const [year, month, day] = cleanDate.split('-')
-  if (!year || !month || !day) return dateString
-  return `${day}/${month}/${year}`
+export function formatDateBR(dateString?: string | null): string {
+  if (!dateString) return '-'
+  const str = String(dateString).trim()
+  if (!str) return '-'
+
+  // Clean time part if present: "2026-01-18 00:00:00.000Z" or "2026-01-18T00:00:00.000Z"
+  const cleanDate = str.split(/[T\s]/)[0]
+  const parts = cleanDate.split('-')
+  if (parts.length === 3) {
+    const [year, month, day] = parts
+    if (year && month && day && year.length === 4) {
+      return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`
+    }
+  }
+
+  // Check if it's already in DD/MM/YYYY
+  const brMatch = str.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/)
+  if (brMatch) {
+    const day = brMatch[1].padStart(2, '0')
+    const month = brMatch[2].padStart(2, '0')
+    let year = brMatch[3]
+    if (year.length === 2) year = '20' + year
+    return `${day}/${month}/${year}`
+  }
+
+  return str
 }
 
 export function getGreeting(name?: string): string {

@@ -97,12 +97,20 @@ export default function TransactionsPage() {
     })
   }, [transactions, searchTerm, typeFilter, accountFilter, categoryFilter, subcategoryFilter])
 
-  // Subcategories filtered by currently selected category
+  // Sorted categories
+  const sortedCategories = useMemo(() => {
+    return [...categories].sort((a, b) =>
+      a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
+    )
+  }, [categories])
+
+  // Subcategories filtered by currently selected category and sorted alphabetically
   const availableSubcategories = useMemo(() => {
-    if (categoryFilter !== 'all') {
-      return subcategories.filter((s) => s.category_id === categoryFilter)
-    }
-    return subcategories
+    const list =
+      categoryFilter !== 'all'
+        ? subcategories.filter((s) => s.category_id === categoryFilter)
+        : subcategories
+    return [...list].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
   }, [subcategories, categoryFilter])
 
   // Summary of filtered items
@@ -258,9 +266,9 @@ export default function TransactionsPage() {
             </SelectTrigger>
             <SelectContent className="rounded-xl">
               <SelectItem value="all">Todas as Categorias</SelectItem>
-              {categories.map((cat) => (
+              {sortedCategories.map((cat) => (
                 <SelectItem key={cat.id} value={cat.id}>
-                  {cat.name} ({cat.type})
+                  {cat.name} ({cat.type === 'despesa' ? 'Despesa' : 'Receita'})
                 </SelectItem>
               ))}
             </SelectContent>

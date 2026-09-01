@@ -35,7 +35,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { formatCurrency } from '@/lib/formatters'
+import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
 
 // 11 Standard categories recognized in the system
@@ -127,15 +127,22 @@ function parseExcelDate(value: any): string {
 
   // If it's already a JS Date
   if (value instanceof Date && !isNaN(value.getTime())) {
-    return value.toISOString().split('T')[0]
+    const y = value.getFullYear()
+    const m = String(value.getMonth() + 1).padStart(2, '0')
+    const d = String(value.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
   }
 
   // If it's an Excel numeric serial date (e.g. 45292)
   if (typeof value === 'number') {
-    // Excel base date offset
+    // Excel base date offset: Excel counts from 1900-01-01 with a leap year bug
+    // In UTC ms: (value - 25569) * 86400 * 1000
     const dateObj = new Date(Math.round((value - 25569) * 86400 * 1000))
     if (!isNaN(dateObj.getTime())) {
-      return dateObj.toISOString().split('T')[0]
+      const y = dateObj.getUTCFullYear()
+      const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0')
+      const d = String(dateObj.getUTCDate()).padStart(2, '0')
+      return `${y}-${m}-${d}`
     }
   }
 
@@ -165,7 +172,10 @@ function parseExcelDate(value: any): string {
   // Try Date.parse
   const parsed = new Date(str)
   if (!isNaN(parsed.getTime())) {
-    return parsed.toISOString().split('T')[0]
+    const y = parsed.getFullYear()
+    const m = String(parsed.getMonth() + 1).padStart(2, '0')
+    const d = String(parsed.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
   }
 
   return new Date().toISOString().split('T')[0]
@@ -1509,7 +1519,7 @@ export default function Importar() {
                       #{row.rowIndex}
                     </td>
                     <td className="py-3 px-4 font-medium text-slate-900 whitespace-nowrap">
-                      {row.dateFormatted}
+                      {formatDateBR(row.dateFormatted)}
                     </td>
                     <td className="py-3 px-4 max-w-[240px] truncate font-medium text-slate-800">
                       {row.description}
@@ -1909,7 +1919,7 @@ export default function Importar() {
                               </span>
                             </td>
                             <td className="py-3 px-3.5 font-medium text-slate-700 whitespace-nowrap">
-                              {item.dateFormatted}
+                              {formatDateBR(item.dateFormatted)}
                             </td>
                             <td className="py-3 px-3.5 font-semibold text-slate-900 max-w-[200px] truncate">
                               {item.description}

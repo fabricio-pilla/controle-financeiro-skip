@@ -366,7 +366,7 @@ function mapTransaction(
     description: r.description || '',
     amount: Number(r.amount) || 0,
     type: (r.type as TransactionType) || 'despesa',
-    date: r.date || new Date().toISOString().split('T')[0],
+    date: r.date ? String(r.date).split(/[T\s]/)[0] : new Date().toISOString().split('T')[0],
     paid: r.paid !== undefined ? Boolean(r.paid) : true,
     is_recurring:
       r.is_recurring !== undefined
@@ -875,9 +875,11 @@ class SkipCloudService {
     try {
       const recs = await pb.collection('categories').getFullList({
         filter: `control_id="${companyId}"`,
-        sort: '-created',
+        sort: 'name',
       })
-      return recs.map(mapCategory)
+      const mapped = recs.map(mapCategory)
+      mapped.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+      return mapped
     } catch (e: any) {
       throw pbErr(e)
     }
@@ -921,12 +923,40 @@ class SkipCloudService {
 
   async deleteCategory(categoryId: string): Promise<void> {
     try {
-      const txs = await pb.collection('transactions').getFullList({
+      // 1. Check if category itself has any transactions linked
+      const catTxs = await pb.collection('transactions').getFullList({
         filter: `category_id="${categoryId}"`,
       })
-      if (txs.length > 0) {
-        throw new Error('Não é possível excluir uma categoria que possui lançamentos vinculados.')
+      if (catTxs.length > 0) {
+        throw new Error(
+          `Não é possível excluir esta categoria pois ela possui ${catTxs.length} lançamento(s) vinculado(s).`,
+        )
       }
+
+      // 2. Find all subcategories under this category
+      const subcats = await pb.collection('subcategories').getFullList({
+        filter: `category_id="${categoryId}"`,
+      })
+
+      // 3. Check if any of these subcategories have transactions linked
+      if (subcats.length > 0) {
+        const subFilter = subcats.map((s: any) => `subcategory_id="${s.id}"`).join(' || ')
+        const subTxs = await pb.collection('transactions').getFullList({
+          filter: subFilter,
+        })
+        if (subTxs.length > 0) {
+          throw new Error(
+            `Não é possível excluir esta categoria pois há ${subTxs.length} lançamento(s) vinculado(s) às suas subcategorias.`,
+          )
+        }
+
+        // 4. Delete all linked subcategories
+        for (const sub of subcats) {
+          await pb.collection('subcategories').delete(sub.id)
+        }
+      }
+
+      // 5. Delete the category itself
       await pb.collection('categories').delete(categoryId)
     } catch (e: any) {
       throw pbErr(e)
@@ -944,7 +974,9 @@ class SkipCloudService {
         sort: 'name',
         expand: 'category_id',
       })
-      return recs.map((r: any) => mapSubcategory(r))
+      const mapped = recs.map((r: any) => mapSubcategory(r))
+      mapped.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+      return mapped
     } catch (e: any) {
       throw pbErr(e)
     }

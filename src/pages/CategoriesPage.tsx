@@ -87,16 +87,29 @@ export default function CategoriesPage() {
     return { categoryStats: catStats, subcategoryStats: subStats }
   }, [transactions])
 
-  const expenseCategories = useMemo(() => categories, [categories])
+  // Filter and sort categories alphabetically
+  const expenseCategories = useMemo(() => {
+    return [...categories]
+      .filter((c) => c.type === 'despesa')
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+  }, [categories])
 
-  const incomeCategories = useMemo(() => categories, [categories])
+  const incomeCategories = useMemo(() => {
+    return [...categories]
+      .filter((c) => c.type === 'receita')
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+  }, [categories])
 
-  // Group subcategories by category_id
+  // Group subcategories by category_id and sort alphabetically
   const subcategoriesByCategory = useMemo(() => {
     const map: Record<string, Subcategory[]> = {}
     subcategories.forEach((sub) => {
       if (!map[sub.category_id]) map[sub.category_id] = []
       map[sub.category_id].push(sub)
+    })
+    // Sort subcategories alphabetically in each category
+    Object.keys(map).forEach((catId) => {
+      map[catId].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
     })
     return map
   }, [subcategories])
@@ -112,20 +125,29 @@ export default function CategoriesPage() {
   }
 
   const handleDeletePrompt = (cat: Category) => {
-    const usage = categoryStats[cat.id]?.count || 0
-    if (usage > 0) {
+    // Check if category itself has transactions
+    const catUsage = categoryStats[cat.id]?.count || 0
+    if (catUsage > 0) {
       toast.error(
-        `Esta categoria não pode ser excluída pois possui ${usage} lançamento(s) vinculado(s).`,
+        `Esta categoria não pode ser excluída pois possui ${catUsage} lançamento(s) vinculado(s).`,
       )
       return
     }
-    const subCount = subcategoriesByCategory[cat.id]?.length || 0
-    if (subCount > 0) {
+
+    // Check if any of its subcategories have transactions
+    const catSubs = subcategoriesByCategory[cat.id] || []
+    let subTransactionsTotal = 0
+    catSubs.forEach((sub) => {
+      subTransactionsTotal += subcategoryStats[sub.id]?.count || 0
+    })
+
+    if (subTransactionsTotal > 0) {
       toast.error(
-        `Esta categoria possui ${subCount} subcategoria(s). Exclua as subcategorias antes de excluir a categoria.`,
+        `Esta categoria não pode ser excluída pois há ${subTransactionsTotal} lançamento(s) vinculado(s) às suas subcategorias.`,
       )
       return
     }
+
     setCatToDelete(cat)
     setConfirmDeleteOpen(true)
   }
@@ -481,8 +503,13 @@ export default function CategoriesPage() {
         open={confirmDeleteOpen}
         onOpenChange={setConfirmDeleteOpen}
         title="Excluir Categoria"
-        description={`Tem certeza que deseja excluir a categoria "${catToDelete?.name}"?`}
-        confirmText="Excluir Categoria"
+        description={
+          catToDelete && (subcategoriesByCategory[catToDelete.id]?.length || 0) > 0
+            ? `Tem certeza que deseja excluir a categoria "${catToDelete?.name}" e todas as suas ${subcategoriesByCategory[catToDelete.id].length} subcategoria(s) vinculada(s)? Esta ação não pode ser desfeita.`
+            : `Tem certeza que deseja excluir a categoria "${catToDelete?.name}"? Esta ação não pode ser desfeita.`
+        }
+        confirmText="Sim"
+        cancelText="Não"
         variant="danger"
         onConfirm={confirmDelete}
       />
@@ -493,7 +520,8 @@ export default function CategoriesPage() {
         onOpenChange={setConfirmDeleteSubOpen}
         title="Excluir Subcategoria"
         description={`Tem certeza que deseja excluir a subcategoria "${subToDelete?.name}"?`}
-        confirmText="Excluir Subcategoria"
+        confirmText="Sim"
+        cancelText="Não"
         variant="danger"
         onConfirm={confirmDeleteSubcategory}
       />

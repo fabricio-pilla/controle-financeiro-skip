@@ -116,23 +116,28 @@ export function TransactionModal({
     }
   }, [transaction, defaultType, accounts])
 
-  // Filter categories by selected type (categories with type === type OR dual-flow categories: Fabrício, Raffaela, Investimento)
+  // Filter categories by selected type (categories with type === type OR dual-flow categories: Fabrício, Raffaela, Investimento) sorted A-Z
   const filteredCategories = useMemo(() => {
-    return categories.filter((c) => {
-      if (c.type === type) return true
-      const normName = c.name.toLowerCase().trim()
-      return (
-        normName === 'fabrício' ||
-        normName === 'fabricio' ||
-        normName === 'raffaela' ||
-        normName === 'investimento'
-      )
-    })
+    return categories
+      .filter((c) => {
+        if (c.type === type) return true
+        const normName = c.name.toLowerCase().trim()
+        return (
+          normName === 'fabrício' ||
+          normName === 'fabricio' ||
+          normName === 'raffaela' ||
+          normName === 'investimento'
+        )
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
   }, [categories, type])
 
-  // Filter subcategories by selected category
+  // Filter subcategories by selected category sorted A-Z
   const filteredSubcategories = useMemo(
-    () => subcategories.filter((s) => s.category_id === categoryId),
+    () =>
+      subcategories
+        .filter((s) => s.category_id === categoryId)
+        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })),
     [subcategories, categoryId],
   )
 
