@@ -91,20 +91,25 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   }, [open, accounts])
 
   const filteredCategories = useMemo(() => {
-    return categories.filter((c) => {
-      if (c.type === type) return true
-      const normName = c.name.toLowerCase().trim()
-      return (
-        normName === 'fabrício' ||
-        normName === 'fabricio' ||
-        normName === 'raffaela' ||
-        normName === 'investimento'
-      )
-    })
+    return categories
+      .filter((c) => {
+        if (c.type === type) return true
+        const normName = c.name.toLowerCase().trim()
+        return (
+          normName === 'fabrício' ||
+          normName === 'fabricio' ||
+          normName === 'raffaela' ||
+          normName === 'investimento'
+        )
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
   }, [categories, type])
 
   const filteredSubcategories = useMemo(
-    () => subcategories.filter((s) => s.category_id === categoryId),
+    () =>
+      subcategories
+        .filter((s) => s.category_id === categoryId)
+        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })),
     [subcategories, categoryId],
   )
 

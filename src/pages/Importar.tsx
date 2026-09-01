@@ -610,9 +610,15 @@ export default function Importar() {
           sort: 'name',
         }),
       ])
+      const sortedCats = [...cats].sort((a, b) =>
+        a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
+      )
+      const sortedSubs = [...subs].sort((a, b) =>
+        a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
+      )
       setDbAccounts(accs)
-      setDbCategories(cats)
-      setDbSubcategories(subs)
+      setDbCategories(sortedCats)
+      setDbSubcategories(sortedSubs)
     } catch (e: any) {
       console.error('Erro ao buscar contas/categorias:', e)
       setErrorBanner('Erro ao carregar contas e categorias do controle ativo.')
