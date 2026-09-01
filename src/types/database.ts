@@ -11,6 +11,8 @@ export const RESPONSIBLE_PERSONS = [
   'Emanuel',
   'Helena',
   'Matheus',
+  'Fast Escova',
+  'Investimento',
 ] as const
 
 export type ResponsiblePerson = (typeof RESPONSIBLE_PERSONS)[number]

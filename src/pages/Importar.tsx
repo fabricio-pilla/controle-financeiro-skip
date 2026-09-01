@@ -202,6 +202,37 @@ function normalizeResponsible(value: any): ResponsiblePerson | '' {
   if (!str) return ''
   const norm = normalizeText(str)
 
+  // Specialized aliases / variations mapping before generic matching
+  if (norm.includes('fast escova') || norm.includes('fastescova') || norm === 'fast') {
+    return 'Fast Escova'
+  }
+  if (
+    norm === 'investimento' ||
+    norm === 'investimentos' ||
+    norm.includes('investimento') ||
+    norm.includes('investimentos')
+  ) {
+    return 'Investimento'
+  }
+  if (norm.includes('familia')) {
+    return 'Família'
+  }
+  if (norm.includes('fabricio')) {
+    return 'Fabrício'
+  }
+  if (norm.includes('raffaela') || norm.includes('rafaela')) {
+    return 'Raffaela'
+  }
+  if (norm.includes('emanuel')) {
+    return 'Emanuel'
+  }
+  if (norm.includes('helena')) {
+    return 'Helena'
+  }
+  if (norm.includes('matheus') || norm.includes('mateus')) {
+    return 'Matheus'
+  }
+
   for (const person of RESPONSIBLE_PERSONS) {
     if (normalizeText(person) === norm) {
       return person
