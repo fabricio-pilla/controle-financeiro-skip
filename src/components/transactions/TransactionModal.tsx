@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -48,7 +48,14 @@ export function TransactionModal({
   transaction,
   defaultType = 'despesa',
 }: TransactionModalProps) {
-  const { accounts, categories, transactions, createTransaction, updateTransaction } = useCompany()
+  const {
+    accounts,
+    categories,
+    subcategories,
+    transactions,
+    createTransaction,
+    updateTransaction,
+  } = useCompany()
 
   const isEditing = Boolean(transaction)
   const isInstallment = Boolean(
@@ -65,6 +72,7 @@ export function TransactionModal({
   const [amountStr, setAmountStr] = useState(transaction ? String(transaction.amount) : '')
   const [accountId, setAccountId] = useState(transaction?.account_id || accounts[0]?.id || '')
   const [categoryId, setCategoryId] = useState(transaction?.category_id || '')
+  const [subcategoryId, setSubcategoryId] = useState(transaction?.subcategory_id || '')
   const [date, setDate] = useState(transaction?.date || new Date().toISOString().split('T')[0])
   const [isRecurring, setIsRecurring] = useState(transaction?.is_recurring || false)
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(
@@ -87,6 +95,7 @@ export function TransactionModal({
       setAmountStr(String(transaction.amount))
       setAccountId(transaction.account_id)
       setCategoryId(transaction.category_id)
+      setSubcategoryId(transaction.subcategory_id || '')
       setDate(transaction.date)
       setIsRecurring(Boolean(transaction.is_recurring))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
@@ -102,6 +111,7 @@ export function TransactionModal({
       setDescription('')
       setAmountStr('')
       setAccountId(accounts[0]?.id || '')
+      setSubcategoryId('')
       setDate(new Date().toISOString().split('T')[0])
       setIsRecurring(false)
       setResponsible('')
@@ -113,12 +123,19 @@ export function TransactionModal({
   // Filter categories by selected type
   const filteredCategories = categories.filter((c) => c.type === type)
 
+  // Filter subcategories by selected category
+  const filteredSubcategories = useMemo(
+    () => subcategories.filter((s) => s.category_id === categoryId),
+    [subcategories, categoryId],
+  )
+
   // Set default category if none or not in list
   React.useEffect(() => {
     if (filteredCategories.length > 0) {
       const exists = filteredCategories.some((c) => c.id === categoryId)
       if (!exists) {
         setCategoryId(filteredCategories[0].id)
+        setSubcategoryId('')
       }
     }
   }, [type, filteredCategories, categoryId])
@@ -152,6 +169,7 @@ export function TransactionModal({
           type,
           account_id: accountId,
           category_id: categoryId,
+          subcategory_id: subcategoryId || undefined,
           date,
           is_recurring: isRecurring,
           recurrence_type: isRecurring ? recurrenceType : undefined,
@@ -166,6 +184,7 @@ export function TransactionModal({
           type,
           account_id: accountId,
           category_id: categoryId,
+          subcategory_id: subcategoryId || undefined,
           date,
           is_recurring: isRecurring,
           recurrence_type: isRecurring ? recurrenceType : undefined,
@@ -352,7 +371,16 @@ export function TransactionModal({
                 <Tag className="w-3.5 h-3.5 text-slate-500" />
                 Categoria *
               </Label>
-              <Select value={categoryId} onValueChange={setCategoryId}>
+              <Select
+                value={categoryId}
+                onValueChange={(val) => {
+                  setCategoryId(val)
+                  const valid = subcategories.filter((s) => s.category_id === val)
+                  if (!valid.some((s) => s.id === subcategoryId)) {
+                    setSubcategoryId('')
+                  }
+                }}
+              >
                 <SelectTrigger id="tx-category" className="rounded-xl h-11">
                   <SelectValue placeholder="Selecione..." />
                 </SelectTrigger>
@@ -371,6 +399,66 @@ export function TransactionModal({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          {/* Subcategory */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label
+                htmlFor="tx-subcategory"
+                className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
+              >
+                <Tag className="w-3.5 h-3.5 text-slate-400" />
+                Subcategoria (opcional)
+              </Label>
+              {subcategoryId && (
+                <button
+                  type="button"
+                  onClick={() => setSubcategoryId('')}
+                  className="text-xs text-indigo-600 hover:underline"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+            <Select
+              value={subcategoryId || '__none__'}
+              onValueChange={(v) => setSubcategoryId(v === '__none__' ? '' : v)}
+              disabled={!categoryId || filteredSubcategories.length === 0}
+            >
+              <SelectTrigger id="tx-subcategory" className="rounded-xl h-11">
+                <SelectValue
+                  placeholder={
+                    !categoryId
+                      ? 'Selecione uma categoria primeiro'
+                      : filteredSubcategories.length === 0
+                        ? 'Nenhuma subcategoria para esta categoria'
+                        : 'Selecione uma subcategoria...'
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl">
+                <SelectItem value="__none__">
+                  <span className="text-slate-400">Nenhuma subcategoria</span>
+                </SelectItem>
+                {filteredSubcategories.map((sub) => (
+                  <SelectItem key={sub.id} value={sub.id}>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{
+                          backgroundColor:
+                            sub.color ||
+                            categories.find((c) => c.id === sub.category_id)?.color ||
+                            '#6366F1',
+                        }}
+                      />
+                      <span>{sub.name}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Responsible Person */}

@@ -11,6 +11,7 @@ import {
   CompanyMember,
   Account,
   Category,
+  Subcategory,
   Transaction,
   UserRole,
   AccountType,
@@ -26,6 +27,7 @@ interface CompanyContextType {
   members: CompanyMember[]
   accounts: Account[]
   categories: Category[]
+  subcategories: Subcategory[]
   transactions: Transaction[]
   isLoading: boolean
   isCompanyLoading: boolean
@@ -88,10 +90,24 @@ interface CompanyContextType {
   ) => Promise<Category>
   deleteCategory: (categoryId: string) => Promise<void>
 
+  // Subcategories
+  createSubcategory: (data: {
+    category_id: string
+    name: string
+    color?: string
+    icon?: string
+  }) => Promise<Subcategory>
+  updateSubcategory: (
+    subcategoryId: string,
+    data: Partial<Omit<Subcategory, 'id' | 'control_id' | 'created_at' | 'category'>>,
+  ) => Promise<Subcategory>
+  deleteSubcategory: (subcategoryId: string) => Promise<void>
+
   // Transactions
   createTransaction: (data: {
     account_id: string
     category_id: string
+    subcategory_id?: string
     description: string
     amount: number
     type: TransactionType
@@ -128,6 +144,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [members, setMembers] = useState<CompanyMember[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Category[]>([])
+  const [subcategories, setSubcategories] = useState<Subcategory[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCompanyLoading, setIsCompanyLoading] = useState(false)
@@ -167,11 +184,12 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     if (!activeCompanyId || !userId) return
     setIsCompanyLoading(true)
     try {
-      const [role, mems, accs, cats, txs, freshComp] = await Promise.all([
+      const [role, mems, accs, cats, subcats, txs, freshComp] = await Promise.all([
         skipCloud.getUserRoleInCompany(activeCompanyId, userId),
         skipCloud.getCompanyMembers(activeCompanyId),
         skipCloud.getAccounts(activeCompanyId),
         skipCloud.getCategories(activeCompanyId),
+        skipCloud.getSubcategories(activeCompanyId),
         skipCloud.getTransactions(activeCompanyId),
         skipCloud.getCompany(activeCompanyId),
       ])
@@ -180,6 +198,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setMembers(mems)
       setAccounts(accs)
       setCategories(cats)
+      setSubcategories(subcats)
       setTransactions(txs)
     } catch (e) {
       console.error('[CompanyContext] reloadCompanyData falhou:', e)
@@ -202,15 +221,17 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setCurrentCompany(comp)
         setCurrentRole(role)
 
-        const [mems, accs, cats, txs] = await Promise.all([
+        const [mems, accs, cats, subcats, txs] = await Promise.all([
           skipCloud.getCompanyMembers(companyId),
           skipCloud.getAccounts(companyId),
           skipCloud.getCategories(companyId),
+          skipCloud.getSubcategories(companyId),
           skipCloud.getTransactions(companyId),
         ])
         setMembers(mems)
         setAccounts(accs)
         setCategories(cats)
+        setSubcategories(subcats)
         setTransactions(txs)
         return true
       } catch (e) {
@@ -324,11 +345,43 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     [reloadCompanyData],
   )
 
+  // Subcategory operations
+  const createSubcategory = useCallback(
+    async (data: { category_id: string; name: string; color?: string; icon?: string }) => {
+      if (!currentCompany) throw new Error('Nenhum controle selecionado.')
+      const sub = await skipCloud.createSubcategory(currentCompany.id, data)
+      await reloadCompanyData()
+      return sub
+    },
+    [currentCompany, reloadCompanyData],
+  )
+
+  const updateSubcategory = useCallback(
+    async (
+      subcategoryId: string,
+      data: Partial<Omit<Subcategory, 'id' | 'control_id' | 'created_at' | 'category'>>,
+    ) => {
+      const sub = await skipCloud.updateSubcategory(subcategoryId, data)
+      await reloadCompanyData()
+      return sub
+    },
+    [reloadCompanyData],
+  )
+
+  const deleteSubcategory = useCallback(
+    async (subcategoryId: string) => {
+      await skipCloud.deleteSubcategory(subcategoryId)
+      await reloadCompanyData()
+    },
+    [reloadCompanyData],
+  )
+
   // Transaction operations
   const createTransaction = useCallback(
     async (data: {
       account_id: string
       category_id: string
+      subcategory_id?: string
       description: string
       amount: number
       type: TransactionType
@@ -412,6 +465,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         members,
         accounts,
         categories,
+        subcategories,
         transactions,
         isLoading,
         isCompanyLoading,
@@ -434,6 +488,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         createCategory,
         updateCategory,
         deleteCategory,
+        createSubcategory,
+        updateSubcategory,
+        deleteSubcategory,
         createTransaction,
         updateTransaction,
         deleteTransaction,

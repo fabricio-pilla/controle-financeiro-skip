@@ -56,7 +56,7 @@ const EXAMPLES = [
 ]
 
 export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalProps) {
-  const { accounts, categories, createTransaction } = useCompany()
+  const { accounts, categories, subcategories, createTransaction } = useCompany()
 
   const [text, setText] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
@@ -71,6 +71,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [accountId, setAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
+  const [subcategoryId, setSubcategoryId] = useState('')
   const [responsible, setResponsible] = useState<string>('')
   const [installmentsTotal, setInstallmentsTotal] = useState(1)
 
@@ -86,6 +87,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setDate(new Date().toISOString().split('T')[0])
       setAccountId(accounts[0]?.id || '')
       setCategoryId('')
+      setSubcategoryId('')
       setResponsible('')
       setInstallmentsTotal(1)
     }
@@ -96,10 +98,18 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
     [categories, type],
   )
 
+  const filteredSubcategories = useMemo(
+    () => subcategories.filter((s) => s.category_id === categoryId),
+    [subcategories, categoryId],
+  )
+
   React.useEffect(() => {
     if (filteredCategories.length > 0) {
       const exists = filteredCategories.some((c) => c.id === categoryId)
-      if (!exists) setCategoryId(filteredCategories[0].id)
+      if (!exists) {
+        setCategoryId(filteredCategories[0].id)
+        setSubcategoryId('')
+      }
     }
   }, [type, filteredCategories, categoryId])
 
@@ -134,8 +144,10 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
           setResponsible('')
         }
 
-        // Category: if not matched, try to pick a sensible default of the right type
+        // Category & Subcategory matching
+        let finalCatId = ''
         if (result.category_id) {
+          finalCatId = result.category_id
           setCategoryId(result.category_id)
         } else {
           const fallback =
@@ -146,8 +158,19 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
             ) ||
             categories.find((c) => c.type === result.type) ||
             null
-          setCategoryId(fallback?.id || '')
+          finalCatId = fallback?.id || ''
+          setCategoryId(finalCatId)
         }
+
+        // Try to match subcategory from text
+        const possibleSubs = subcategories.filter((s) => s.category_id === finalCatId)
+        const matchedSub = possibleSubs.find((s) => lowerText.includes(s.name.toLowerCase()))
+        if (matchedSub) {
+          setSubcategoryId(matchedSub.id)
+        } else {
+          setSubcategoryId('')
+        }
+
         setHasInterpreted(true)
       } catch (err: any) {
         toast.error(err?.message || 'Não consegui interpretar o texto.')
@@ -185,6 +208,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         type,
         account_id: accountId,
         category_id: categoryId,
+        subcategory_id: subcategoryId || undefined,
         date,
         responsible: responsible || undefined,
         installments_total: installmentsTotal,
@@ -401,7 +425,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                     <Tag className="w-3.5 h-3.5 text-slate-500" />
                     Categoria *
                   </Label>
-                  <Select value={categoryId} onValueChange={setCategoryId}>
+                  <Select
+                    value={categoryId}
+                    onValueChange={(val) => {
+                      setCategoryId(val)
+                      const valid = subcategories.filter((s) => s.category_id === val)
+                      if (!valid.some((s) => s.id === subcategoryId)) {
+                        setSubcategoryId('')
+                      }
+                    }}
+                  >
                     <SelectTrigger id="ai-category" className="rounded-xl h-11">
                       <SelectValue placeholder="Selecione..." />
                     </SelectTrigger>
@@ -420,6 +453,66 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              {/* Subcategory */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label
+                    htmlFor="ai-subcategory"
+                    className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
+                  >
+                    <Tag className="w-3.5 h-3.5 text-slate-400" />
+                    Subcategoria (opcional)
+                  </Label>
+                  {subcategoryId && (
+                    <button
+                      type="button"
+                      onClick={() => setSubcategoryId('')}
+                      className="text-xs text-indigo-600 hover:underline"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+                <Select
+                  value={subcategoryId || '__none__'}
+                  onValueChange={(v) => setSubcategoryId(v === '__none__' ? '' : v)}
+                  disabled={!categoryId || filteredSubcategories.length === 0}
+                >
+                  <SelectTrigger id="ai-subcategory" className="rounded-xl h-11">
+                    <SelectValue
+                      placeholder={
+                        !categoryId
+                          ? 'Selecione uma categoria primeiro'
+                          : filteredSubcategories.length === 0
+                            ? 'Nenhuma subcategoria para esta categoria'
+                            : 'Selecione uma subcategoria...'
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    <SelectItem value="__none__">
+                      <span className="text-slate-400">Nenhuma subcategoria</span>
+                    </SelectItem>
+                    {filteredSubcategories.map((sub) => (
+                      <SelectItem key={sub.id} value={sub.id}>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{
+                              backgroundColor:
+                                sub.color ||
+                                categories.find((c) => c.id === sub.category_id)?.color ||
+                                '#6366F1',
+                            }}
+                          />
+                          <span>{sub.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Responsible Person */}

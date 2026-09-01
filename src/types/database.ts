@@ -71,11 +71,24 @@ export interface Category {
   created_at: string
 }
 
+export interface Subcategory {
+  id: string
+  control_id: string
+  category_id: string
+  name: string
+  color?: string
+  icon?: string
+  created_at: string
+  // Populated for UI
+  category?: Category
+}
+
 export interface Transaction {
   id: string
   control_id: string
   account_id: string
   category_id: string
+  subcategory_id?: string
   user_id: string
   description: string
   amount: number
@@ -94,6 +107,7 @@ export interface Transaction {
   // Populated for UI display
   account?: Account
   category?: Category
+  subcategory?: Subcategory
   user?: User
 }
 

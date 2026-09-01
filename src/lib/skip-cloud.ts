@@ -11,6 +11,7 @@ import {
   CompanyMember,
   Account,
   Category,
+  Subcategory,
   Transaction,
   AccountType,
   TransactionType,
@@ -126,22 +127,43 @@ function mapCategory(r: any): Category {
   }
 }
 
+function mapSubcategory(r: any, categoriesCache?: Record<string, Category>): Subcategory {
+  const cat = r.expand?.category_id
+    ? mapCategory(r.expand.category_id)
+    : categoriesCache?.[r.category_id]
+  return {
+    id: r.id,
+    control_id: r.control_id || '',
+    category_id: r.category_id || '',
+    name: r.name || '',
+    color: r.color || undefined,
+    icon: r.icon || undefined,
+    created_at: r.created || new Date().toISOString(),
+    category: cat,
+  }
+}
+
 function mapTransaction(
   r: any,
   accountsCache?: Record<string, Account>,
   categoriesCache?: Record<string, Category>,
   usersCache?: Record<string, User>,
+  subcategoriesCache?: Record<string, Subcategory>,
 ): Transaction {
   const acc = r.expand?.account_id ? mapAccount(r.expand.account_id) : accountsCache?.[r.account_id]
   const cat = r.expand?.category_id
     ? mapCategory(r.expand.category_id)
     : categoriesCache?.[r.category_id]
+  const subcat = r.expand?.subcategory_id
+    ? mapSubcategory(r.expand.subcategory_id, categoriesCache)
+    : subcategoriesCache?.[r.subcategory_id]
   const user = r.expand?.user_id ? mapUser(r.expand.user_id) : usersCache?.[r.user_id]
   return {
     id: r.id,
     control_id: r.control_id || '',
     account_id: r.account_id || '',
     category_id: r.category_id || '',
+    subcategory_id: r.subcategory_id || undefined,
     user_id: r.user_id || '',
     description: r.description || '',
     amount: Number(r.amount) || 0,
@@ -177,6 +199,7 @@ function mapTransaction(
     created_at: r.created || new Date().toISOString(),
     account: acc,
     category: cat,
+    subcategory: subcat,
     user,
   }
 }
@@ -716,14 +739,82 @@ class SkipCloudService {
     }
   }
 
+  // --- SUBCATEGORIES ---
+  async getSubcategories(companyId: string, categoryId?: string): Promise<Subcategory[]> {
+    try {
+      const filter = categoryId
+        ? `control_id="${companyId}" && category_id="${categoryId}"`
+        : `control_id="${companyId}"`
+      const recs = await pb.collection('subcategories').getFullList({
+        filter,
+        sort: 'name',
+        expand: 'category_id',
+      })
+      return recs.map((r: any) => mapSubcategory(r))
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  async createSubcategory(
+    companyId: string,
+    data: { category_id: string; name: string; color?: string; icon?: string },
+  ): Promise<Subcategory> {
+    try {
+      const r = await pb.collection('subcategories').create({
+        control_id: companyId,
+        category_id: data.category_id,
+        name: data.name.trim(),
+        color: data.color?.trim() || '',
+        icon: data.icon?.trim() || '',
+      })
+      return mapSubcategory(r)
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  async updateSubcategory(
+    subcategoryId: string,
+    data: Partial<Omit<Subcategory, 'id' | 'control_id' | 'created_at' | 'category'>>,
+  ): Promise<Subcategory> {
+    try {
+      const payload: any = {}
+      if (data.name !== undefined) payload.name = data.name.trim()
+      if (data.category_id !== undefined) payload.category_id = data.category_id
+      if (data.color !== undefined) payload.color = data.color.trim()
+      if (data.icon !== undefined) payload.icon = data.icon.trim()
+      const r = await pb.collection('subcategories').update(subcategoryId, payload)
+      return mapSubcategory(r)
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  async deleteSubcategory(subcategoryId: string): Promise<void> {
+    try {
+      const txs = await pb.collection('transactions').getFullList({
+        filter: `subcategory_id="${subcategoryId}"`,
+      })
+      if (txs.length > 0) {
+        throw new Error(
+          `Não é possível excluir esta subcategoria pois existem ${txs.length} lançamento(s) vinculado(s) a ela.`,
+        )
+      }
+      await pb.collection('subcategories').delete(subcategoryId)
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
   // --- TRANSACTIONS ---
   async getTransactions(companyId: string): Promise<Transaction[]> {
     try {
-      const [recs, accs, cats, mems] = await Promise.all([
+      const [recs, accs, cats, mems, subcats] = await Promise.all([
         pb.collection('transactions').getFullList({
           filter: `control_id="${companyId}"`,
           sort: '-date,-created',
-          expand: 'account_id,category_id,user_id',
+          expand: 'account_id,category_id,subcategory_id,user_id',
         }),
         pb.collection('accounts').getFullList({ filter: `control_id="${companyId}"` }),
         pb.collection('categories').getFullList({ filter: `control_id="${companyId}"` }),
@@ -731,18 +822,21 @@ class SkipCloudService {
           filter: `control_id="${companyId}"`,
           expand: 'user_id',
         }),
+        pb.collection('subcategories').getFullList({ filter: `control_id="${companyId}"` }),
       ])
       const accountsCache: Record<string, Account> = {}
       accs.forEach((a: any) => (accountsCache[a.id] = mapAccount(a)))
       const categoriesCache: Record<string, Category> = {}
       cats.forEach((c: any) => (categoriesCache[c.id] = mapCategory(c)))
+      const subcategoriesCache: Record<string, Subcategory> = {}
+      subcats.forEach((s: any) => (subcategoriesCache[s.id] = mapSubcategory(s, categoriesCache)))
       const usersCache: Record<string, User> = {}
       mems.forEach((m: any) => {
         if (m.user_id)
           usersCache[m.user_id] = mapMember(m).user || mapUser({ id: m.user_id, email: m.email })
       })
       const txs = recs.map((r: any) =>
-        mapTransaction(r, accountsCache, categoriesCache, usersCache),
+        mapTransaction(r, accountsCache, categoriesCache, usersCache, subcategoriesCache),
       )
       // Sort by date desc (PocketBase sort may be string-based)
       txs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -766,6 +860,7 @@ class SkipCloudService {
     data: {
       account_id: string
       category_id: string
+      subcategory_id?: string
       description: string
       amount: number
       type: TransactionType
@@ -809,6 +904,7 @@ class SkipCloudService {
             amount: parcelAmount,
             description: `${baseDescription} (${i}/${installmentsTotal})`,
             category_id: data.category_id || '',
+            subcategory_id: data.subcategory_id || '',
             account_id: data.account_id,
             date: addMonths(baseDate, i - 1),
             paid: true,
@@ -842,6 +938,7 @@ class SkipCloudService {
         amount: Number(data.amount),
         description: data.description.trim(),
         category_id: data.category_id || '',
+        subcategory_id: data.subcategory_id || '',
         account_id: data.account_id,
         date: data.date,
         paid: true,
@@ -893,6 +990,7 @@ class SkipCloudService {
       const payload: any = {}
       if (data.account_id !== undefined) payload.account_id = data.account_id
       if (data.category_id !== undefined) payload.category_id = data.category_id || ''
+      if (data.subcategory_id !== undefined) payload.subcategory_id = data.subcategory_id || ''
       if (data.description !== undefined) payload.description = data.description
       if (data.amount !== undefined) payload.amount = Number(data.amount)
       if (data.type !== undefined) payload.type = data.type

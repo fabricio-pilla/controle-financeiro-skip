@@ -35,14 +35,21 @@ import {
 } from '@/components/ui/select'
 
 export default function TransactionsPage() {
-  const { transactions, accounts, categories, deleteTransaction, canManageTransactions } =
-    useCompany()
+  const {
+    transactions,
+    accounts,
+    categories,
+    subcategories,
+    deleteTransaction,
+    canManageTransactions,
+  } = useCompany()
 
   // State
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | TransactionType>('all')
   const [accountFilter, setAccountFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [subcategoryFilter, setSubcategoryFilter] = useState<string>('all')
   const [responsibleFilter, setResponsibleFilter] = useState<string>('all')
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 10
@@ -66,9 +73,14 @@ export default function TransactionsPage() {
       // Search
       if (searchTerm.trim()) {
         const matchesDesc = tx.description.toLowerCase().includes(searchTerm.toLowerCase().trim())
+        const matchesCat = tx.category?.name.toLowerCase().includes(searchTerm.toLowerCase().trim())
+        const matchesSub = tx.subcategory?.name
+          ?.toLowerCase()
+          .includes(searchTerm.toLowerCase().trim())
         const matchesNotes = tx.notes?.toLowerCase().includes(searchTerm.toLowerCase().trim())
         const matchesResp = tx.responsible?.toLowerCase().includes(searchTerm.toLowerCase().trim())
-        if (!matchesDesc && !matchesNotes && !matchesResp) return false
+        if (!matchesDesc && !matchesCat && !matchesSub && !matchesNotes && !matchesResp)
+          return false
       }
       // Type
       if (typeFilter !== 'all' && tx.type !== typeFilter) return false
@@ -76,6 +88,14 @@ export default function TransactionsPage() {
       if (accountFilter !== 'all' && tx.account_id !== accountFilter) return false
       // Category
       if (categoryFilter !== 'all' && tx.category_id !== categoryFilter) return false
+      // Subcategory
+      if (subcategoryFilter !== 'all') {
+        if (subcategoryFilter === '__none__') {
+          if (tx.subcategory_id && tx.subcategory_id.trim() !== '') return false
+        } else if (tx.subcategory_id !== subcategoryFilter) {
+          return false
+        }
+      }
       // Responsible
       if (responsibleFilter !== 'all') {
         if (responsibleFilter === '__none__') {
@@ -87,7 +107,23 @@ export default function TransactionsPage() {
 
       return true
     })
-  }, [transactions, searchTerm, typeFilter, accountFilter, categoryFilter, responsibleFilter])
+  }, [
+    transactions,
+    searchTerm,
+    typeFilter,
+    accountFilter,
+    categoryFilter,
+    subcategoryFilter,
+    responsibleFilter,
+  ])
+
+  // Subcategories filtered by currently selected category
+  const availableSubcategories = useMemo(() => {
+    if (categoryFilter !== 'all') {
+      return subcategories.filter((s) => s.category_id === categoryFilter)
+    }
+    return subcategories
+  }, [subcategories, categoryFilter])
 
   // Summary of filtered items
   const summaryTotals = useMemo(() => {
@@ -233,6 +269,7 @@ export default function TransactionsPage() {
             value={categoryFilter}
             onValueChange={(v) => {
               setCategoryFilter(v)
+              setSubcategoryFilter('all')
               setCurrentPage(1)
             }}
           >
@@ -246,6 +283,28 @@ export default function TransactionsPage() {
                   {cat.name} ({cat.type})
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+
+          {/* Subcategory Filter */}
+          <Select
+            value={subcategoryFilter}
+            onValueChange={(v) => {
+              setSubcategoryFilter(v)
+              setCurrentPage(1)
+            }}
+          >
+            <SelectTrigger className="rounded-xl h-10 text-sm">
+              <SelectValue placeholder="Subcategoria" />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl">
+              <SelectItem value="all">Todas as Subcategorias</SelectItem>
+              {availableSubcategories.map((sub) => (
+                <SelectItem key={sub.id} value={sub.id}>
+                  {sub.name}
+                </SelectItem>
+              ))}
+              <SelectItem value="__none__">Sem subcategoria</SelectItem>
             </SelectContent>
           </Select>
 
@@ -376,6 +435,12 @@ export default function TransactionsPage() {
                         <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-3 h-3" />
                         {tx.category?.name || 'Geral'}
                       </span>
+                      {tx.subcategory && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                          <span className="text-slate-400">↳</span>
+                          <span>{tx.subcategory.name}</span>
+                        </span>
+                      )}
                       {tx.responsible && (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-violet-50 text-violet-700 border border-violet-200"
@@ -510,7 +575,18 @@ export default function TransactionsPage() {
                   <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
                     <span>{formatDateBR(tx.date)}</span>
                     <span>•</span>
-                    <span className="truncate">{tx.account?.name}</span>
+                    <span className="truncate">{tx.account?.name || 'Conta'}</span>
+                    {tx.category && (
+                      <>
+                        <span>•</span>
+                        <span className="text-slate-700 font-medium">
+                          {tx.category.name}
+                          {tx.subcategory && (
+                            <span className="text-slate-500"> → {tx.subcategory.name}</span>
+                          )}
+                        </span>
+                      </>
+                    )}
                     {tx.responsible && (
                       <>
                         <span>•</span>

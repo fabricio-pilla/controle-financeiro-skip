@@ -531,6 +531,12 @@ export default function Dashboard() {
                             <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-3 h-3" />
                             {tx.category?.name || 'Geral'}
                           </span>
+                          {tx.subcategory && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                              <span className="text-slate-400">↳</span>
+                              <span>{tx.subcategory.name}</span>
+                            </span>
+                          )}
                           {tx.responsible && (
                             <span
                               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200"

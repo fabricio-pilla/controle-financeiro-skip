@@ -36,9 +36,15 @@ import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { formatCurrency } from '@/lib/formatters'
-import { Account, Category, RESPONSIBLE_PERSONS, ResponsiblePerson } from '@/types/database'
+import {
+  Account,
+  Category,
+  Subcategory,
+  RESPONSIBLE_PERSONS,
+  ResponsiblePerson,
+} from '@/types/database'
 
-// 9 Standard categories recognized in the system
+// 10 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
   'Moradia',
   'Alimentação',
@@ -50,6 +56,7 @@ const SYSTEM_CATEGORIES = [
   'Investimentos',
   'Pessoal',
   'Salário',
+  'Fast Escova',
 ] as const
 
 type SystemCategoryName = (typeof SYSTEM_CATEGORIES)[number]
@@ -63,10 +70,12 @@ interface ParsedRow {
   amount: number
   accountRaw: string
   matchedAccount: Account | null
-  categoryRaw: string
+  categoryRaw: string // Raw text in Excel "Categoria" column (user's subcategory)
   matchedCategoryName: SystemCategoryName | 'Outros'
   matchedCategoryId: string | null
   matchedCategoryType: 'despesa' | 'receita'
+  matchedSubcategoryName: string
+  matchedSubcategoryId: string | null
   responsibleRaw: string
   matchedResponsible: ResponsiblePerson | ''
   paymentMethodRaw: string
@@ -249,219 +258,261 @@ function normalizeResponsible(value: any): ResponsiblePerson | '' {
   return ''
 }
 
-// Intelligent Category Mapper based on task instructions
-function mapCategory(
-  rawCategory: string,
+// Intelligent Category & Subcategory Mapper based on user's spreadsheet structure
+function mapCategoryAndSubcategory(
+  rawCategoryCol: string, // Column "Categoria" in Excel is actually the Subcategory!
   rawDescription: string,
   rawType?: string,
-): { name: SystemCategoryName | 'Outros'; type: 'despesa' | 'receita' } {
-  const normCat = normalizeText(rawCategory)
+  rawResponsible?: string,
+): {
+  categoryName: SystemCategoryName | 'Outros'
+  subcategoryName: string
+  type: 'despesa' | 'receita'
+} {
+  const normSub = normalizeText(rawCategoryCol)
   const normDesc = normalizeText(rawDescription)
-  const normCombined = `${normCat} ${normDesc}`
+  const normResp = normalizeText(rawResponsible || '')
   const normType = normalizeText(rawType || '')
+  const cleanSubName = rawCategoryCol.trim()
 
-  // 1. Salário / Receitas
-  if (
-    normCat.includes('salario') ||
-    normCat.includes('rendimento') ||
-    normCat.includes('pro labore') ||
+  const isIncome =
+    normType === 'receita' ||
+    normType === 'entrada' ||
     normDesc.includes('salario') ||
     normDesc.includes('holerite') ||
-    normDesc.includes('pagamento recebido') ||
-    (normType === 'receita' && (normCat.includes('salario') || normCat.includes('rendimento')))
-  ) {
-    return { name: 'Salário', type: 'receita' }
-  }
+    normSub.includes('salario') ||
+    normSub.includes('plr') ||
+    normSub.includes('rendimento') ||
+    normSub.includes('vendas')
 
-  // 2. Investimentos
-  if (
-    normCombined.includes('cdb') ||
-    normCombined.includes('acao') ||
-    normCombined.includes('acoes') ||
-    normCombined.includes('fii') ||
-    normCombined.includes('fiis') ||
-    normCombined.includes('tesouro') ||
-    normCombined.includes('investimento') ||
-    normCombined.includes('aplicacao') ||
-    normCombined.includes('renda fixa') ||
-    normCombined.includes('dividendo') ||
-    normCombined.includes('poupanca')
-  ) {
+  // --- RECEITAS (Entradas) ---
+  if (isIncome) {
+    if (
+      normResp.includes('investimento') ||
+      normSub.includes('rendimento') ||
+      normSub.includes('dividendo') ||
+      normSub.includes('aplicacao')
+    ) {
+      return {
+        categoryName: 'Investimentos',
+        subcategoryName: cleanSubName || 'Rendimentos',
+        type: 'receita',
+      }
+    }
     return {
-      name: 'Investimentos',
-      type: normType === 'receita' || normCombined.includes('dividendo') ? 'receita' : 'despesa',
+      categoryName: 'Salário',
+      subcategoryName: cleanSubName || 'Salário',
+      type: 'receita',
     }
   }
 
-  // 3. Alimentação
+  // --- DESPESAS (Saídas) ---
+
+  // 1. Fast Escova (se responsável ou subcategoria for específico)
   if (
-    normCombined.includes('supermercado') ||
-    normCombined.includes('feira') ||
-    normCombined.includes('acougue') ||
-    normCombined.includes('mercado') ||
-    normCombined.includes('padaria') ||
-    normCombined.includes('sacolao') ||
-    normCombined.includes('hortifruti') ||
-    normCombined.includes('restaurante') ||
-    normCombined.includes('refeicao') ||
-    normCombined.includes('alimentacao') ||
-    normCombined.includes('carrefour') ||
-    normCombined.includes('pao de acucar') ||
-    normCombined.includes('assaí') ||
-    normCombined.includes('assai') ||
-    normCombined.includes('atacadão') ||
-    normCombined.includes('atacadao')
+    normResp.includes('fast escova') ||
+    normDesc.includes('fast escova') ||
+    normSub.includes('implantacao')
   ) {
-    return { name: 'Alimentação', type: 'despesa' }
+    return {
+      categoryName: 'Fast Escova',
+      subcategoryName: cleanSubName || 'Diversos',
+      type: 'despesa',
+    }
   }
 
-  // 4. Moradia
+  // 2. Pets (ex Animais de Estimação: Banho, Medicamentos, Ração, Veterinário, etc.)
   if (
-    normCombined.includes('luz') ||
-    normCombined.includes('agua') ||
-    normCombined.includes('internet') ||
-    normCombined.includes('aluguel') ||
-    normCombined.includes('diarista') ||
-    normCombined.includes('condominio') ||
-    normCombined.includes('energia') ||
-    normCombined.includes('enel') ||
-    normCombined.includes('sabesp') ||
-    normCombined.includes('gas') ||
-    normCombined.includes('comgas') ||
-    normCombined.includes('iptu') ||
-    normCombined.includes('faxina') ||
-    normCombined.includes('moradia') ||
-    normCombined.includes('casa') ||
-    normCombined.includes('financiamento casa')
+    normSub.includes('banho') ||
+    normSub.includes('racao') ||
+    normSub.includes('veterinario') ||
+    normSub.includes('pet') ||
+    normSub.includes('animais') ||
+    normDesc.includes('petshop') ||
+    normDesc.includes('cobasi') ||
+    normDesc.includes('petz')
   ) {
-    return { name: 'Moradia', type: 'despesa' }
+    return {
+      categoryName: 'Pets',
+      subcategoryName: cleanSubName || 'Outros',
+      type: 'despesa',
+    }
   }
 
-  // 5. Transporte
+  // 3. Transporte (ex Automóvel: Combustível, Consórcio, Estacionamento/Pedágio, Lavagem, Multas, Revisão / Manutenção, Seguro)
   if (
-    normCombined.includes('gasolina') ||
-    normCombined.includes('combustivel') ||
-    normCombined.includes('ipva') ||
-    normCombined.includes('seguro carro') ||
-    normCombined.includes('seguro auto') ||
-    normCombined.includes('uber') ||
-    normCombined.includes('99app') ||
-    normCombined.includes('estacionamento') ||
-    normCombined.includes('pedagio') ||
-    normCombined.includes('sem parar') ||
-    normCombined.includes('veloe') ||
-    normCombined.includes('mecanico') ||
-    normCombined.includes('oficina') ||
-    normCombined.includes('onibus') ||
-    normCombined.includes('metro') ||
-    normCombined.includes('transporte')
+    normSub.includes('combustivel') ||
+    normSub.includes('gasolina') ||
+    normSub.includes('consorcio') ||
+    normSub.includes('estacionamento') ||
+    normSub.includes('pedagio') ||
+    normSub.includes('lavagem') ||
+    normSub.includes('multa') ||
+    normSub.includes('revisao') ||
+    normSub.includes('oficina') ||
+    normSub.includes('uber') ||
+    normSub.includes('transporte') ||
+    normSub.includes('automovel') ||
+    normDesc.includes('posto') ||
+    normDesc.includes('sem parar') ||
+    normDesc.includes('ipva')
   ) {
-    return { name: 'Transporte', type: 'despesa' }
+    return {
+      categoryName: 'Transporte',
+      subcategoryName: cleanSubName || 'Diversos',
+      type: 'despesa',
+    }
   }
 
-  // 6. Saúde
+  // 4. Moradia (ex Casa: Água, Decoração / Utensílios, Diarista, Gás, Internet, Iptu, Luz, Manutenção, Seguro)
   if (
-    normCombined.includes('medico') ||
-    normCombined.includes('medicos') ||
-    normCombined.includes('farmacia') ||
-    normCombined.includes('plano de saude') ||
-    normCombined.includes('psicologo') ||
-    normCombined.includes('psicologos') ||
-    normCombined.includes('dentista') ||
-    normCombined.includes('gympass') ||
-    normCombined.includes('droga raia') ||
-    normCombined.includes('drogasil') ||
-    normCombined.includes('drogaria') ||
-    normCombined.includes('consulta') ||
-    normCombined.includes('exame') ||
-    normCombined.includes('academia') ||
-    normCombined.includes('smart fit') ||
-    normCombined.includes('saude')
+    normSub.includes('agua') ||
+    normSub.includes('luz') ||
+    normSub.includes('gas') ||
+    normSub.includes('internet') ||
+    normSub.includes('iptu') ||
+    normSub.includes('diarista') ||
+    normSub.includes('decoracao') ||
+    normSub.includes('utensilios') ||
+    normSub.includes('manutencao') ||
+    normSub.includes('aluguel') ||
+    normSub.includes('condominio') ||
+    normSub.includes('faxina') ||
+    normSub.includes('casa')
   ) {
-    return { name: 'Saúde', type: 'despesa' }
+    return {
+      categoryName: 'Moradia',
+      subcategoryName: cleanSubName || 'Diversos',
+      type: 'despesa',
+    }
   }
 
-  // 7. Filhos
+  // 5. Alimentação (Supermercado, Restaurantes / Delivery, Alimentação, Suplementos)
   if (
-    normCombined.includes('emanuel') ||
-    normCombined.includes('helena') ||
-    normCombined.includes('matheus') ||
-    normCombined.includes('escola') ||
-    normCombined.includes('natacao') ||
-    normCombined.includes('filho') ||
-    normCombined.includes('filhos') ||
-    normCombined.includes('colegio') ||
-    normCombined.includes('pediatra') ||
-    normCombined.includes('material escolar') ||
-    normCombined.includes('brinquedo')
+    normSub.includes('supermercado') ||
+    normSub.includes('restaurante') ||
+    normSub.includes('delivery') ||
+    normSub.includes('alimentacao') ||
+    normSub.includes('suplemento') ||
+    normDesc.includes('carrefour') ||
+    normDesc.includes('pao de acucar') ||
+    normDesc.includes('ifood') ||
+    normDesc.includes('feira') ||
+    normDesc.includes('mercado')
   ) {
-    return { name: 'Filhos', type: 'despesa' }
+    return {
+      categoryName: 'Alimentação',
+      subcategoryName: cleanSubName || 'Alimentação',
+      type: 'despesa',
+    }
   }
 
-  // 8. Pets
+  // 6. Saúde (Cuidados Pessoais, Exercícios, Farmácia, Medicamentos, Médicos / Psicólogos, Plano de Saúde, Salão)
   if (
-    normCombined.includes('racao') ||
-    normCombined.includes('pet shop') ||
-    normCombined.includes('petshop') ||
-    normCombined.includes('veterinario') ||
-    normCombined.includes('pet') ||
-    normCombined.includes('pets') ||
-    normCombined.includes('cobasi') ||
-    normCombined.includes('petz') ||
-    normCombined.includes('banho e tosa') ||
-    normCombined.includes('cachorro') ||
-    normCombined.includes('gato')
+    normSub.includes('farmacia') ||
+    normSub.includes('medicamento') ||
+    normSub.includes('remedio') ||
+    normSub.includes('medico') ||
+    normSub.includes('psicolog') ||
+    normSub.includes('plano de saude') ||
+    normSub.includes('exercicio') ||
+    normSub.includes('academia') ||
+    normSub.includes('salao') ||
+    normSub.includes('cuidados pessoais') ||
+    normSub.includes('dentista') ||
+    normDesc.includes('drogasil') ||
+    normDesc.includes('droga raia')
   ) {
-    return { name: 'Pets', type: 'despesa' }
+    return {
+      categoryName: 'Saúde',
+      subcategoryName: cleanSubName || 'Cuidados Pessoais',
+      type: 'despesa',
+    }
   }
 
-  // 9. Lazer
+  // 7. Lazer (Assinaturas, Comemorações, Igreja, Lavanderia, Lazer, Presentes, Viagens)
   if (
-    normCombined.includes('viagens') ||
-    normCombined.includes('viagem') ||
-    normCombined.includes('netflix') ||
-    normCombined.includes('spotify') ||
-    normCombined.includes('streaming') ||
-    normCombined.includes('ifood') ||
-    normCombined.includes('lazer') ||
-    normCombined.includes('cinema') ||
-    normCombined.includes('hotel') ||
-    normCombined.includes('airbnb') ||
-    normCombined.includes('passagem') ||
-    normCombined.includes('bar') ||
-    normCombined.includes('show') ||
-    normCombined.includes('hbo') ||
-    normCombined.includes('disney') ||
-    normCombined.includes('amazon prime')
+    normSub.includes('assinatura') ||
+    normSub.includes('comemorac') ||
+    normSub.includes('igreja') ||
+    normSub.includes('lavanderia') ||
+    normSub.includes('lazer') ||
+    normSub.includes('presente') ||
+    normSub.includes('viagen') ||
+    normSub.includes('viagem') ||
+    normDesc.includes('netflix') ||
+    normDesc.includes('spotify') ||
+    normDesc.includes('cinema') ||
+    normDesc.includes('hotel')
   ) {
-    return { name: 'Lazer', type: 'despesa' }
+    return {
+      categoryName: 'Lazer',
+      subcategoryName: cleanSubName || 'Lazer',
+      type: 'despesa',
+    }
   }
 
-  // 10. Pessoal
+  // 8. Filhos (Brinquedos / Livros, Educação, Pensão)
   if (
-    normCombined.includes('celular') ||
-    normCombined.includes('roupas') ||
-    normCombined.includes('roupa') ||
-    normCombined.includes('cabelereiro') ||
-    normCombined.includes('cabeleireiro') ||
-    normCombined.includes('barbearia') ||
-    normCombined.includes('educacao') ||
-    normCombined.includes('curso') ||
-    normCombined.includes('pessoal') ||
-    normCombined.includes('perfume') ||
-    normCombined.includes('cosmetico') ||
-    normCombined.includes('zara') ||
-    normCombined.includes('renner') ||
-    normCombined.includes('shein')
+    normSub.includes('brinquedo') ||
+    normSub.includes('livro') ||
+    normSub.includes('pensao') ||
+    (normSub.includes('educacao') &&
+      (normResp.includes('emanuel') ||
+        normResp.includes('helena') ||
+        normResp.includes('matheus'))) ||
+    normDesc.includes('escola') ||
+    normDesc.includes('colegio') ||
+    normDesc.includes('pediatra')
   ) {
-    return { name: 'Pessoal', type: 'despesa' }
+    return {
+      categoryName: 'Filhos',
+      subcategoryName: cleanSubName || 'Diversos',
+      type: 'despesa',
+    }
   }
 
-  // Fallback to Outros or default type
-  if (normType === 'receita') {
-    return { name: 'Salário', type: 'receita' }
+  // 9. Investimentos (Empréstimo Franquia, Empréstimo Ibi Marmore, Financiamento Casa, etc.)
+  if (
+    normSub.includes('emprestimo') ||
+    normSub.includes('financiamento') ||
+    normSub.includes('franquia') ||
+    normSub.includes('ibi marmore') ||
+    normSub.includes('investimento')
+  ) {
+    return {
+      categoryName: 'Investimentos',
+      subcategoryName: cleanSubName || 'Diversos',
+      type: 'despesa',
+    }
   }
-  return { name: 'Pessoal', type: 'despesa' }
+
+  // 10. Pessoal (Celular, Doações, Roupas e Acessórios, Seguros Individuais, Trabalho, Diversos, Educação)
+  if (
+    normSub.includes('celular') ||
+    normSub.includes('doacao') ||
+    normSub.includes('doacoes') ||
+    normSub.includes('roupa') ||
+    normSub.includes('acessorio') ||
+    normSub.includes('seguro individual') ||
+    normSub.includes('seguros individuais') ||
+    normSub.includes('trabalho') ||
+    normSub.includes('educacao') ||
+    normSub.includes('curso')
+  ) {
+    return {
+      categoryName: 'Pessoal',
+      subcategoryName: cleanSubName || 'Diversos',
+      type: 'despesa',
+    }
+  }
+
+  // Default fallback to Pessoal
+  return {
+    categoryName: 'Pessoal',
+    subcategoryName: cleanSubName || 'Diversos',
+    type: 'despesa',
+  }
 }
 
 // Find matching account by name
@@ -605,6 +656,7 @@ export default function Importar() {
 
   const [dbAccounts, setDbAccounts] = useState<Account[]>([])
   const [dbCategories, setDbCategories] = useState<Category[]>([])
+  const [dbSubcategories, setDbSubcategories] = useState<Subcategory[]>([])
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false)
 
   // Parsed data & execution state
@@ -627,7 +679,7 @@ export default function Importar() {
   const fetchControlMetadata = async (companyId: string) => {
     setIsLoadingMetadata(true)
     try {
-      const [accs, cats] = await Promise.all([
+      const [accs, cats, subs] = await Promise.all([
         pb.collection('accounts').getFullList<Account>({
           filter: `control_id="${companyId}"`,
           sort: 'name',
@@ -636,9 +688,14 @@ export default function Importar() {
           filter: `control_id="${companyId}"`,
           sort: 'name',
         }),
+        pb.collection('subcategories').getFullList<Subcategory>({
+          filter: `control_id="${companyId}"`,
+          sort: 'name',
+        }),
       ])
       setDbAccounts(accs)
       setDbCategories(cats)
+      setDbSubcategories(subs)
     } catch (e: any) {
       console.error('Erro ao buscar contas/categorias:', e)
       setErrorBanner('Erro ao carregar contas e categorias do controle ativo.')
@@ -683,7 +740,7 @@ export default function Importar() {
         setSheetNames(wb.SheetNames)
         if (wb.SheetNames.length > 0) {
           setSelectedSheet(wb.SheetNames[0])
-          parseSheetData(wb, wb.SheetNames[0], dbAccounts, dbCategories)
+          parseSheetData(wb, wb.SheetNames[0], dbAccounts, dbCategories, dbSubcategories)
         }
       } catch (err: any) {
         console.error('Erro ao ler planilha:', err)
@@ -702,6 +759,7 @@ export default function Importar() {
     sheetName: string,
     accountsList: Account[],
     categoriesList: Category[],
+    subcategoriesList: Subcategory[],
   ) => {
     if (!wb || !wb.Sheets[sheetName]) return
 
@@ -813,15 +871,31 @@ export default function Importar() {
       // Account match
       const matchedAccount = matchAccount(paymentMethodRaw, accountsList)
 
-      // Category match
-      const mappedCat = mapCategory(categoryRaw, description, String(typeVal))
+      // Category & Subcategory match
+      const mapped = mapCategoryAndSubcategory(
+        categoryRaw,
+        description,
+        String(typeVal),
+        responsibleRaw,
+      )
       const matchedCatRecord =
         categoriesList.find(
           (c) =>
-            normalizeText(c.name) === normalizeText(mappedCat.name) && c.type === mappedCat.type,
+            normalizeText(c.name) === normalizeText(mapped.categoryName) && c.type === mapped.type,
         ) ||
-        categoriesList.find((c) => normalizeText(c.name) === normalizeText(mappedCat.name)) ||
+        categoriesList.find((c) => normalizeText(c.name) === normalizeText(mapped.categoryName)) ||
         null
+
+      // Try matching subcategory in DB
+      let matchedSubRecord: Subcategory | null = null
+      if (matchedCatRecord && mapped.subcategoryName) {
+        matchedSubRecord =
+          subcategoriesList.find(
+            (s) =>
+              s.category_id === matchedCatRecord.id &&
+              normalizeText(s.name) === normalizeText(mapped.subcategoryName),
+          ) || null
+      }
 
       // Recurrence
       const recurrenceInfo = parseRecurrence(paymentMethodRaw, String(recurrenceVal), description)
@@ -860,9 +934,11 @@ export default function Importar() {
         accountRaw: paymentMethodRaw,
         matchedAccount,
         categoryRaw,
-        matchedCategoryName: mappedCat.name,
+        matchedCategoryName: mapped.categoryName,
         matchedCategoryId: matchedCatRecord?.id || null,
-        matchedCategoryType: mappedCat.type,
+        matchedCategoryType: mapped.type,
+        matchedSubcategoryName: mapped.subcategoryName,
+        matchedSubcategoryId: matchedSubRecord?.id || null,
         responsibleRaw,
         matchedResponsible,
         paymentMethodRaw,
@@ -885,7 +961,7 @@ export default function Importar() {
   const handleSheetChange = (sheetName: string) => {
     setSelectedSheet(sheetName)
     if (workbook) {
-      parseSheetData(workbook, sheetName, dbAccounts, dbCategories)
+      parseSheetData(workbook, sheetName, dbAccounts, dbCategories, dbSubcategories)
     }
   }
 
@@ -942,10 +1018,15 @@ export default function Importar() {
 
     const currentUserId = pb.authStore.model?.id || ''
 
-    // Ensure we have real category IDs by querying current control categories
-    const freshCategories = await pb.collection('categories').getFullList<Category>({
-      filter: `control_id="${currentCompany.id}"`,
-    })
+    // Ensure we have real category & subcategory IDs by querying current control
+    const [freshCategories, freshSubcategories] = await Promise.all([
+      pb.collection('categories').getFullList<Category>({
+        filter: `control_id="${currentCompany.id}"`,
+      }),
+      pb.collection('subcategories').getFullList<Subcategory>({
+        filter: `control_id="${currentCompany.id}"`,
+      }),
+    ])
 
     const getCatId = (name: string, type: 'despesa' | 'receita'): string => {
       const match =
@@ -953,6 +1034,33 @@ export default function Importar() {
           (c) => normalizeText(c.name) === normalizeText(name) && c.type === type,
         ) || freshCategories.find((c) => normalizeText(c.name) === normalizeText(name))
       return match ? match.id : ''
+    }
+
+    // Cache of subcategories so we can dynamically auto-create if missing
+    const subcatsCache: Subcategory[] = [...freshSubcategories]
+    const getOrCreateSubcategoryId = async (
+      categoryId: string,
+      subName: string,
+    ): Promise<string> => {
+      if (!categoryId || !subName.trim()) return ''
+      const existing = subcatsCache.find(
+        (s) => s.category_id === categoryId && normalizeText(s.name) === normalizeText(subName),
+      )
+      if (existing) return existing.id
+
+      // Create new subcategory automatically
+      try {
+        const created = await pb.collection('subcategories').create<Subcategory>({
+          control_id: currentCompany.id,
+          category_id: categoryId,
+          name: subName.trim(),
+        })
+        subcatsCache.push(created)
+        return created.id
+      } catch (err) {
+        console.warn('Erro ao auto-criar subcategoria:', err)
+        return ''
+      }
     }
 
     for (let i = 0; i < parsedRows.length; i++) {
@@ -988,6 +1096,11 @@ export default function Importar() {
         const categoryId =
           row.matchedCategoryId || getCatId(row.matchedCategoryName, row.matchedCategoryType)
 
+        let subcategoryId = row.matchedSubcategoryId
+        if (!subcategoryId && categoryId && row.matchedSubcategoryName) {
+          subcategoryId = await getOrCreateSubcategoryId(categoryId, row.matchedSubcategoryName)
+        }
+
         // Case A: Installment purchase (e.g. "01/05" or "23/36" or "Crédito parcelado")
         if (
           row.totalInstallments &&
@@ -1008,6 +1121,7 @@ export default function Importar() {
             amount: totalEstimatedAmount,
             description: `${row.description} (Total: ${formatCurrency(totalEstimatedAmount)})`,
             category_id: categoryId,
+            subcategory_id: subcategoryId || undefined,
             account_id: row.matchedAccount.id,
             date: row.dateFormatted,
             paid: true,
@@ -1029,6 +1143,7 @@ export default function Importar() {
             amount: unitAmount,
             description: `${row.description} (${currentInst}/${totalInst})`,
             category_id: categoryId,
+            subcategory_id: subcategoryId || undefined,
             account_id: row.matchedAccount.id,
             date: row.dateFormatted,
             paid: true,
@@ -1087,6 +1202,7 @@ export default function Importar() {
               amount: parcelAmount,
               description: `${row.description} (${inst}/${totalInst})`,
               category_id: categoryId,
+              subcategory_id: subcategoryId || undefined,
               account_id: row.matchedAccount.id,
               date: instDate,
               paid: true,
@@ -1139,6 +1255,7 @@ export default function Importar() {
             amount: row.amount,
             description: row.description,
             category_id: categoryId,
+            subcategory_id: subcategoryId || undefined,
             account_id: row.matchedAccount.id,
             date: row.dateFormatted,
             paid: true,
@@ -1553,10 +1670,17 @@ export default function Importar() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        <Tag className="w-3 h-3 text-indigo-500" />
-                        {row.matchedCategoryName}
-                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100 w-fit">
+                          <Tag className="w-3 h-3 text-indigo-500" />
+                          {row.matchedCategoryName}
+                        </span>
+                        {row.matchedSubcategoryName && (
+                          <span className="text-[11px] text-slate-500 pl-1 font-medium">
+                            ↳ {row.matchedSubcategoryName}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-[11px] text-slate-500">
                       {row.isRecurring && (
