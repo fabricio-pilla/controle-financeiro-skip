@@ -91,8 +91,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   }, [open, accounts])
 
   const filteredCategories = useMemo(() => {
-    const matched = categories.filter((c) => c.type === type)
-    return matched.length > 0 ? matched : categories
+    return categories.filter((c) => {
+      if (c.type === type) return true
+      const normName = c.name.toLowerCase().trim()
+      return (
+        normName === 'fabrício' ||
+        normName === 'fabricio' ||
+        normName === 'raffaela' ||
+        normName === 'investimento'
+      )
+    })
   }, [categories, type])
 
   const filteredSubcategories = useMemo(

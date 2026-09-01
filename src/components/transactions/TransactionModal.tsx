@@ -116,10 +116,18 @@ export function TransactionModal({
     }
   }, [transaction, defaultType, accounts])
 
-  // Filter categories by selected type (if category matches type or all categories since categories are shared)
+  // Filter categories by selected type (categories with type === type OR dual-flow categories: Fabrício, Raffaela, Investimento)
   const filteredCategories = useMemo(() => {
-    const matched = categories.filter((c) => c.type === type)
-    return matched.length > 0 ? matched : categories
+    return categories.filter((c) => {
+      if (c.type === type) return true
+      const normName = c.name.toLowerCase().trim()
+      return (
+        normName === 'fabrício' ||
+        normName === 'fabricio' ||
+        normName === 'raffaela' ||
+        normName === 'investimento'
+      )
+    })
   }, [categories, type])
 
   // Filter subcategories by selected category

@@ -22,6 +22,7 @@ import pb from '@/lib/pocketbase/client'
 export const DEFAULT_CATEGORIES = [
   {
     name: 'Fabrício',
+    type: 'receita' as const,
     color: '#6366F1',
     icon: 'User',
     subcategories: [
@@ -51,6 +52,7 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Investimento',
+    type: 'receita' as const,
     color: '#8B5CF6',
     icon: 'TrendingUp',
     subcategories: [
@@ -67,6 +69,7 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Raffaela',
+    type: 'receita' as const,
     color: '#EC4899',
     icon: 'User',
     subcategories: [
@@ -93,12 +96,14 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Pets',
+    type: 'despesa' as const,
     color: '#10B981',
     icon: 'PawPrint',
     subcategories: ['Banho', 'Medicamentos', 'Outros', 'Ração', 'Veterinário'],
   },
   {
     name: 'Transporte',
+    type: 'despesa' as const,
     color: '#F59E0B',
     icon: 'Car',
     subcategories: [
@@ -115,6 +120,7 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Moradia',
+    type: 'despesa' as const,
     color: '#EF4444',
     icon: 'Home',
     subcategories: [
@@ -132,6 +138,7 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Emanuel',
+    type: 'despesa' as const,
     color: '#3B82F6',
     icon: 'Baby',
     subcategories: [
@@ -152,6 +159,7 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Família',
+    type: 'despesa' as const,
     color: '#06B6D4',
     icon: 'Users',
     subcategories: [
@@ -171,12 +179,14 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Fast Escova',
+    type: 'despesa' as const,
     color: '#F43F5E',
     icon: 'Scissors',
     subcategories: ['Alimentação', 'Implantação', 'Imposto', 'Pagamento de Contas', 'Viagens'],
   },
   {
     name: 'Helena',
+    type: 'despesa' as const,
     color: '#A855F7',
     icon: 'Baby',
     subcategories: [
@@ -201,6 +211,7 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Matheus',
+    type: 'despesa' as const,
     color: '#14B8A6',
     icon: 'Baby',
     subcategories: [
@@ -574,7 +585,7 @@ class SkipCloudService {
         const catRec = await pb.collection('categories').create({
           control_id: companyId,
           name: c.name,
-          type: 'despesa',
+          type: c.type || 'despesa',
           color: c.color,
           icon: c.icon,
           is_default: true,
