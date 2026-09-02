@@ -308,6 +308,11 @@ function mapAccount(r: any): Account {
     limit: r.limit !== undefined && r.limit !== null ? Number(r.limit) : undefined,
     color: r.color || '#6366F1',
     bank: r.bank || undefined,
+    due_day:
+      r.due_day !== undefined && r.due_day !== null && r.due_day !== ''
+        ? Number(r.due_day)
+        : undefined,
+    is_primary: Boolean(r.is_primary),
     created_at: r.created || new Date().toISOString(),
   }
 }
@@ -816,9 +821,22 @@ class SkipCloudService {
       limit?: number
       color: string
       bank?: string
+      due_day?: number
+      is_primary?: boolean
     },
   ): Promise<Account> {
     try {
+      // Apenas uma conta pode ser a principal: limpa o flag das demais antes.
+      const isPrimary = Boolean(data.is_primary)
+      if (isPrimary) {
+        const primaries = await pb.collection('accounts').getFullList({
+          filter: `control_id="${companyId}" && is_primary=true`,
+        })
+        for (const p of primaries) {
+          await pb.collection('accounts').update(p.id, { is_primary: false })
+        }
+      }
+
       const payload: any = {
         control_id: companyId,
         name: data.name.trim(),
@@ -826,9 +844,14 @@ class SkipCloudService {
         balance: Number(data.balance) || 0,
         color: data.color || '#6366F1',
         bank: data.bank?.trim() || '',
+        is_primary: isPrimary,
       }
       if (data.type === 'credito') {
         payload.limit = Number(data.limit) || 0
+        payload.due_day =
+          data.due_day !== undefined && data.due_day !== null
+            ? Math.min(31, Math.max(1, Math.floor(Number(data.due_day) || 1)))
+            : 0
       }
       const r = await pb.collection('accounts').create(payload)
       return mapAccount(r)
@@ -842,6 +865,21 @@ class SkipCloudService {
     data: Partial<Omit<Account, 'id' | 'control_id' | 'created_at'>>,
   ): Promise<Account> {
     try {
+      const current = await pb.collection('accounts').getOne(accountId)
+      const companyId = current.control_id || ''
+
+      // Apenas uma conta pode ser a principal: limpa o flag das demais antes.
+      if (data.is_primary === true && current.is_primary !== true) {
+        const primaries = await pb.collection('accounts').getFullList({
+          filter: `control_id="${companyId}" && is_primary=true`,
+        })
+        for (const p of primaries) {
+          if (p.id !== accountId) {
+            await pb.collection('accounts').update(p.id, { is_primary: false })
+          }
+        }
+      }
+
       const payload: any = {}
       if (data.name !== undefined) payload.name = data.name
       if (data.type !== undefined) payload.type = data.type
@@ -849,6 +887,13 @@ class SkipCloudService {
       if (data.color !== undefined) payload.color = data.color
       if (data.bank !== undefined) payload.bank = data.bank
       if (data.limit !== undefined) payload.limit = Number(data.limit) || 0
+      if (data.is_primary !== undefined) payload.is_primary = Boolean(data.is_primary)
+      if (data.type === 'credito' || current.type === 'credito') {
+        if (data.due_day !== undefined) {
+          const v = Math.floor(Number(data.due_day) || 0)
+          payload.due_day = v > 0 ? Math.min(31, Math.max(1, v)) : 0
+        }
+      }
       const r = await pb.collection('accounts').update(accountId, payload)
       return mapAccount(r)
     } catch (e: any) {

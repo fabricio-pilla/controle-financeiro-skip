@@ -22,6 +22,7 @@ import { Account, AccountType } from '@/types/database'
 import { PALETTE_COLORS } from '@/lib/skip-cloud'
 import { toast } from 'sonner'
 import { Loader2, CreditCard, Wallet, Building, ArrowLeftRight, PiggyBank } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 
 interface AccountModalProps {
   open: boolean
@@ -47,6 +48,10 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
   const [limitStr, setLimitStr] = useState(account?.limit ? String(account.limit) : '')
   const [bank, setBank] = useState(account?.bank || '')
   const [color, setColor] = useState(account?.color || PALETTE_COLORS[0])
+  const [isPrimary, setIsPrimary] = useState(Boolean(account?.is_primary))
+  const [dueDay, setDueDay] = useState(
+    account?.type === 'credito' && account?.due_day ? String(account.due_day) : '',
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   React.useEffect(() => {
@@ -57,6 +62,8 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
       setLimitStr(account.limit ? String(account.limit) : '')
       setBank(account.bank || '')
       setColor(account.color)
+      setIsPrimary(Boolean(account.is_primary))
+      setDueDay(account.type === 'credito' && account.due_day ? String(account.due_day) : '')
     } else {
       setName('')
       setType('banco')
@@ -64,6 +71,8 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
       setLimitStr('')
       setBank('')
       setColor(PALETTE_COLORS[0])
+      setIsPrimary(false)
+      setDueDay('')
     }
   }, [account])
 
@@ -86,6 +95,8 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
           limit: parsedLimit,
           bank,
           color,
+          due_day: type === 'credito' && dueDay ? parseInt(dueDay, 10) : undefined,
+          is_primary: isPrimary,
         })
         toast.success('Conta atualizada com sucesso!')
       } else {
@@ -96,6 +107,8 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
           limit: parsedLimit,
           bank,
           color,
+          due_day: type === 'credito' && dueDay ? parseInt(dueDay, 10) : undefined,
+          is_primary: isPrimary,
         })
         toast.success('Conta criada com sucesso!')
       }
@@ -165,6 +178,40 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
                 className="rounded-xl h-11"
               />
             </div>
+          </div>
+
+          {type === 'credito' && (
+            <div className="space-y-1.5 animate-fade-in">
+              <Label htmlFor="acc-due-day" className="text-sm font-medium text-slate-700">
+                Dia do Vencimento da Fatura
+              </Label>
+              <Input
+                id="acc-due-day"
+                type="number"
+                min={1}
+                max={31}
+                step={1}
+                placeholder="Ex: 10 (vence todo dia 10)"
+                value={dueDay}
+                onChange={(e) => setDueDay(e.target.value)}
+                className="rounded-xl h-11 font-bold tabular-nums"
+              />
+              <p className="text-[11px] text-slate-400">
+                Usado para preencher automaticamente a data das despesas lançadas neste cartão.
+              </p>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50">
+            <div className="space-y-0.5">
+              <Label htmlFor="acc-primary-toggle" className="text-sm font-medium text-slate-800">
+                Conta Principal
+              </Label>
+              <p className="text-xs text-slate-500">
+                Será pré-selecionada como padrão nos novos lançamentos
+              </p>
+            </div>
+            <Switch id="acc-primary-toggle" checked={isPrimary} onCheckedChange={setIsPrimary} />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

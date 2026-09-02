@@ -20,7 +20,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { useCompany } from '@/contexts/CompanyContext'
-import { Transaction, TransactionType, RecurrenceType } from '@/types/database'
+import { Transaction, TransactionType, RecurrenceType, Account } from '@/types/database'
 import { toast } from 'sonner'
 import {
   Loader2,
@@ -109,10 +109,28 @@ export function TransactionModal({
     return 1
   }, [transaction])
 
+  // Conta principal/padrão do controle (fallback em todos os cenários)
+  const primaryAccount = useMemo(
+    () => accounts.find((a) => a.is_primary) || accounts[0] || null,
+    [accounts],
+  )
+  const defaultDateForAccount = (acc: Account | null): string => {
+    if (!acc) return new Date().toISOString().split('T')[0]
+    const today = new Date()
+    if (acc.type === 'credito' && acc.due_day) {
+      const y = today.getFullYear()
+      const m = String(today.getMonth() + 1).padStart(2, '0')
+      const lastDay = new Date(y, today.getMonth() + 1, 0).getDate()
+      const day = Math.min(acc.due_day, lastDay)
+      return `${y}-${m}-${String(day).padStart(2, '0')}`
+    }
+    return today.toISOString().split('T')[0]
+  }
+
   const [type, setType] = useState<TransactionType>(transaction?.type || defaultType)
   const [description, setDescription] = useState(transaction?.description || '')
   const [amountStr, setAmountStr] = useState(transaction ? String(transaction.amount) : '')
-  const [accountId, setAccountId] = useState(transaction?.account_id || accounts[0]?.id || '')
+  const [accountId, setAccountId] = useState(transaction?.account_id || primaryAccount?.id || '')
   const [categoryId, setCategoryId] = useState(transaction?.category_id || '')
   const [subcategoryId, setSubcategoryId] = useState(transaction?.subcategory_id || '')
   const [date, setDate] = useState(transaction?.date || new Date().toISOString().split('T')[0])
@@ -144,14 +162,14 @@ export function TransactionModal({
       setType(defaultType)
       setDescription('')
       setAmountStr('')
-      setAccountId(accounts[0]?.id || '')
+      setAccountId(primaryAccount?.id || '')
       setSubcategoryId('')
-      setDate(new Date().toISOString().split('T')[0])
+      setDate(defaultDateForAccount(primaryAccount))
       setIsRecurring(false)
       setNotes('')
       setInstallmentsTotal(1)
     }
-  }, [transaction, defaultType, accounts, resolvedInstallmentsTotal])
+  }, [transaction, defaultType, accounts, primaryAccount, resolvedInstallmentsTotal])
 
   // Filter categories by selected type (categories with type === type OR dual-flow categories: Fabrício, Raffaela, Investimento) sorted A-Z
   const filteredCategories = useMemo(() => {
@@ -437,7 +455,16 @@ export function TransactionModal({
                 <Wallet className="w-3.5 h-3.5 text-slate-500" />
                 Conta de Destino/Origem *
               </Label>
-              <Select value={accountId} onValueChange={setAccountId}>
+              <Select
+                value={accountId}
+                onValueChange={(val) => {
+                  setAccountId(val)
+                  const acc = accounts.find((a) => a.id === val) || null
+                  if (!isEditing) {
+                    setDate(defaultDateForAccount(acc))
+                  }
+                }}
+              >
                 <SelectTrigger id="tx-account" className="rounded-xl h-11">
                   <SelectValue placeholder="Selecione a conta..." />
                 </SelectTrigger>
@@ -450,13 +477,17 @@ export function TransactionModal({
                           style={{ backgroundColor: acc.color }}
                         />
                         {acc.name}
+                        {acc.is_primary && (
+                          <span className="text-[10px] font-semibold text-amber-600">
+                            (principal)
+                          </span>
+                        )}
                       </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
             <div className="space-y-1.5">
               <Label
                 htmlFor="tx-category"

@@ -44,6 +44,8 @@ export interface Account {
   limit?: number // for credit cards
   color: string
   bank?: string
+  due_day?: number // dia do mês do vencimento da fatura (cartões de crédito, 1-31)
+  is_primary?: boolean // conta principal/padrão do controle
   created_at: string
 }
 

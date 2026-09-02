@@ -16,11 +16,12 @@ import {
   Trash2,
   Sparkles,
   ShieldAlert,
+  Star,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export default function AccountsPage() {
-  const { accounts, deleteAccount, canManageFinance } = useCompany()
+  const { accounts, deleteAccount, updateAccount, canManageFinance } = useCompany()
 
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedAcc, setSelectedAcc] = useState<Account | null>(null)
@@ -77,6 +78,24 @@ export default function AccountsPage() {
         return 'Cartão de Crédito'
       case 'investimento':
         return 'Investimentos'
+    }
+  }
+
+  // Ordenação alfabética (A-Z, ignorando acentos)
+  const sortedAccounts = useMemo(
+    () =>
+      [...accounts].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }),
+      ),
+    [accounts],
+  )
+
+  const handleSetPrimary = async (acc: Account) => {
+    try {
+      await updateAccount(acc.id, { is_primary: true })
+      toast.success(`"${acc.name}" agora é a conta principal.`)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao definir conta principal.')
     }
   }
 
@@ -188,7 +207,7 @@ export default function AccountsPage() {
 
       {/* Grid of Accounts */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {accounts.map((acc) => {
+        {sortedAccounts.map((acc) => {
           const Icon = getAccountIcon(acc.type)
           const isCredit = acc.type === 'credito'
           const usedPct = isCredit && acc.limit ? Math.min((acc.balance / acc.limit) * 100, 100) : 0
@@ -209,17 +228,45 @@ export default function AccountsPage() {
                       <Icon className="w-5 h-5" />
                     </div>
                     <div>
-                      <h2 className="font-bold text-base text-slate-900 leading-tight">
+                      <h2 className="font-bold text-base text-slate-900 leading-tight flex items-center gap-1.5">
                         {acc.name}
+                        {acc.is_primary && (
+                          <span
+                            title="Conta principal"
+                            className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full"
+                          >
+                            <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
+                            Principal
+                          </span>
+                        )}
                       </h2>
                       <p className="text-xs text-slate-400 mt-0.5">
                         {getAccountTypeLabel(acc.type)}
+                        {isCredit && acc.due_day ? ` • vence dia ${acc.due_day}` : ''}
                       </p>
                     </div>
                   </div>
 
                   {canManageFinance && (
                     <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleSetPrimary(acc)}
+                        disabled={Boolean(acc.is_primary)}
+                        className={`h-8 w-8 rounded-lg ${
+                          acc.is_primary ? 'text-amber-500' : 'text-slate-400 hover:text-amber-500'
+                        }`}
+                        title={
+                          acc.is_primary
+                            ? 'Esta é a conta principal'
+                            : 'Definir como conta principal'
+                        }
+                      >
+                        <Star
+                          className={`w-3.5 h-3.5 ${acc.is_primary ? 'fill-amber-500 text-amber-500' : ''}`}
+                        />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

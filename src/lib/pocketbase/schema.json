@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-02T01:25:08.328Z",
+  "generatedAt": "2026-09-02T21:49:00.312Z",
   "collections": [
     {
       "name": "users",
@@ -308,6 +308,18 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "due_day",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_primary",
+          "type": "bool",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_accounts_control ON accounts (control_id)"]

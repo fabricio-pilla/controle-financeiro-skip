@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useCompany } from '@/contexts/CompanyContext'
-import { TransactionType, RecurrenceType } from '@/types/database'
+import { TransactionType, RecurrenceType, Account } from '@/types/database'
 import { parseNaturalLanguageTransaction } from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
 import { toast } from 'sonner'
@@ -60,6 +60,28 @@ const EXAMPLES = [
 export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalProps) {
   const { accounts, categories, subcategories, createTransaction } = useCompany()
 
+  // Conta principal/padrão do controle: cai nela quando a IA não identificar conta
+  const primaryAccount = useMemo(
+    () => accounts.find((a) => a.is_primary) || accounts[0] || null,
+    [accounts],
+  )
+  const resolveAccountId = (accId?: string): string => {
+    if (accId && accounts.some((a) => a.id === accId)) return accId
+    return primaryAccount?.id || accounts[0]?.id || ''
+  }
+  const defaultDateForAccount = (acc: Account | null): string => {
+    if (!acc) return new Date().toISOString().split('T')[0]
+    const today = new Date()
+    if (acc.type === 'credito' && acc.due_day) {
+      const y = today.getFullYear()
+      const m = String(today.getMonth() + 1).padStart(2, '0')
+      const lastDay = new Date(y, today.getMonth() + 1, 0).getDate()
+      const day = Math.min(acc.due_day, lastDay)
+      return `${y}-${m}-${String(day).padStart(2, '0')}`
+    }
+    return today.toISOString().split('T')[0]
+  }
+
   const [text, setText] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
   const [parsed, setParsed] = useState<ParsedTransaction | null>(null)
@@ -88,14 +110,14 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setDescription('')
       setAmountStr('')
       setDate(new Date().toISOString().split('T')[0])
-      setAccountId(accounts[0]?.id || '')
+      setAccountId(primaryAccount?.id || '')
       setCategoryId('')
       setSubcategoryId('')
       setIsRecurring(false)
       setRecurrenceType('mensal')
       setInstallmentsTotal(1)
     }
-  }, [open, accounts])
+  }, [open, accounts, primaryAccount])
 
   const filteredCategories = useMemo(() => {
     return categories
@@ -150,7 +172,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         setDescription(result.description)
         setAmountStr(result.amount > 0 ? String(result.amount) : '')
         setDate(result.date)
-        setAccountId(result.account_id || accounts[0]?.id || '')
+        setAccountId(resolveAccountId(result.account_id))
         setInstallmentsTotal(result.installments_total)
         setIsRecurring(Boolean(result.is_recurring))
         setRecurrenceType(result.recurrence_type || 'mensal')
@@ -437,6 +459,11 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                               style={{ backgroundColor: acc.color }}
                             />
                             {acc.name}
+                            {acc.is_primary && (
+                              <span className="text-[10px] font-semibold text-amber-600">
+                                (principal)
+                              </span>
+                            )}
                           </span>
                         </SelectItem>
                       ))}

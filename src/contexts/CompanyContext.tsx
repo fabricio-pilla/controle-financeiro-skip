@@ -70,6 +70,8 @@ interface CompanyContextType {
     limit?: number
     color: string
     bank?: string
+    due_day?: number
+    is_primary?: boolean
   }) => Promise<Account>
   updateAccount: (
     accountId: string,
