@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -20,7 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useCompany } from '@/contexts/CompanyContext'
-import { TransactionType } from '@/types/database'
+import { TransactionType, RecurrenceType } from '@/types/database'
 import { parseNaturalLanguageTransaction } from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
 import { toast } from 'sonner'
@@ -35,6 +36,7 @@ import {
   Wallet,
   Calendar,
   CreditCard,
+  Repeat,
   CheckCircle2,
   AlertCircle,
 } from 'lucide-react'
@@ -45,8 +47,9 @@ interface AiTransactionModalProps {
 }
 
 const EXAMPLES = [
+  'Fabricio Entrada Salario 8000,00 recorrente',
   'Padaria 25,90 no crédito',
-  'Salário 5000',
+  'Salário 5000 mensal',
   'Netflix 39,90 parcelado em 12x no Nubank',
   'Aluguel 1500 dia 10',
   'Freela site 3500 recebido dia 15',
@@ -71,6 +74,8 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const [accountId, setAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [subcategoryId, setSubcategoryId] = useState('')
+  const [isRecurring, setIsRecurring] = useState(false)
+  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('mensal')
   const [installmentsTotal, setInstallmentsTotal] = useState(1)
 
   // Reset when modal opens/closes
@@ -86,6 +91,8 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setAccountId(accounts[0]?.id || '')
       setCategoryId('')
       setSubcategoryId('')
+      setIsRecurring(false)
+      setRecurrenceType('mensal')
       setInstallmentsTotal(1)
     }
   }, [open, accounts])
@@ -137,7 +144,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
     // Simulate small delay for UX feedback
     setTimeout(() => {
       try {
-        const result = parseNaturalLanguageTransaction(text, accounts, categories)
+        const result = parseNaturalLanguageTransaction(text, accounts, categories, subcategories)
         setParsed(result)
         setType(result.type)
         setDescription(result.description)
@@ -145,9 +152,10 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         setDate(result.date)
         setAccountId(result.account_id || accounts[0]?.id || '')
         setInstallmentsTotal(result.installments_total)
-        const lowerText = text.toLowerCase()
+        setIsRecurring(Boolean(result.is_recurring))
+        setRecurrenceType(result.recurrence_type || 'mensal')
 
-        // Category & Subcategory matching
+        // Category matching
         let finalCatId = ''
         if (result.category_id) {
           finalCatId = result.category_id
@@ -165,13 +173,19 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
           setCategoryId(finalCatId)
         }
 
-        // Try to match subcategory from text
-        const possibleSubs = subcategories.filter((s) => s.category_id === finalCatId)
-        const matchedSub = possibleSubs.find((s) => lowerText.includes(s.name.toLowerCase()))
-        if (matchedSub) {
-          setSubcategoryId(matchedSub.id)
+        // Subcategory matching
+        if (result.subcategory_id) {
+          setSubcategoryId(result.subcategory_id)
         } else {
-          setSubcategoryId('')
+          // Try to match subcategory from text under the selected category
+          const lowerText = text.toLowerCase()
+          const possibleSubs = subcategories.filter((s) => s.category_id === finalCatId)
+          const matchedSub = possibleSubs.find((s) => lowerText.includes(s.name.toLowerCase()))
+          if (matchedSub) {
+            setSubcategoryId(matchedSub.id)
+          } else {
+            setSubcategoryId('')
+          }
         }
 
         setHasInterpreted(true)
@@ -213,12 +227,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         category_id: categoryId,
         subcategory_id: subcategoryId || undefined,
         date,
+        is_recurring: isRecurring,
+        recurrence_type: isRecurring ? recurrenceType : undefined,
         installments_total: installmentsTotal,
       })
       toast.success(
         installmentsTotal > 1
           ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
-          : 'Lançamento criado com sucesso!',
+          : isRecurring
+            ? 'Lançamento recorrente criado com sucesso!'
+            : 'Lançamento criado com sucesso!',
       )
       onOpenChange(false)
     } catch (err: any) {
@@ -251,7 +269,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
             </Label>
             <Textarea
               id="ai-text"
-              placeholder="Ex: 'Almoço no restaurante 89,90 no cartão de crédito' ou 'Netflix 39,90 parcelado em 12x'"
+              placeholder="Ex: 'Fabricio Entrada Salario 8000,00 recorrente' ou 'Almoço no restaurante 89,90 no crédito'"
               value={text}
               onChange={(e) => setText(e.target.value)}
               className="rounded-xl min-h-[90px] resize-none"
@@ -298,7 +316,13 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                 <ConfidenceBadge label="Valor" ok={parsed.confidence.amount} />
                 <ConfidenceBadge label="Data" ok={parsed.confidence.date} />
                 <ConfidenceBadge label="Categoria" ok={parsed.confidence.category} />
+                {subcategoryId && (
+                  <ConfidenceBadge label="Subcategoria" ok={parsed.confidence.subcategory} />
+                )}
                 <ConfidenceBadge label="Conta" ok={parsed.confidence.account} />
+                {parsed.is_recurring && (
+                  <ConfidenceBadge label="Recorrente" ok={parsed.confidence.recurrence} />
+                )}
                 {parsed.installments_total > 1 && (
                   <ConfidenceBadge label="Parcelas" ok={parsed.confidence.installments} />
                 )}
@@ -517,41 +541,88 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                 </Select>
               </div>
 
-              {/* Installments */}
-              <div className="space-y-1.5">
-                <Label
-                  htmlFor="ai-installments"
-                  className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
-                >
-                  <CreditCard className="w-3.5 h-3.5 text-slate-500" />
-                  Parcelado em X vezes
-                </Label>
-                <div className="flex items-center gap-3">
-                  <Input
-                    id="ai-installments"
-                    type="number"
-                    min={1}
-                    max={60}
-                    step={1}
-                    value={installmentsTotal}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value, 10)
-                      setInstallmentsTotal(isNaN(v) || v < 1 ? 1 : Math.min(v, 60))
-                    }}
-                    className="rounded-xl h-11 w-28 font-semibold tabular-nums"
-                  />
-                  <span className="text-sm text-slate-500">x (à vista = 1)</span>
-                </div>
-                {installmentsTotal > 1 && (
-                  <p className="text-xs text-indigo-600 font-medium animate-fade-in">
-                    Serão criadas {installmentsTotal} transações de{' '}
-                    {formatCurrency(
-                      (parseFloat(amountStr.replace(',', '.')) || 0) / installmentsTotal,
-                    )}{' '}
-                    cada, com datas mensais a partir de {date}.
+              {/* Recurring Switch */}
+              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50">
+                <div className="space-y-0.5">
+                  <Label
+                    htmlFor="ai-recurring-toggle"
+                    className="text-sm font-medium text-slate-800 flex items-center gap-1.5"
+                  >
+                    <Repeat className="w-3.5 h-3.5 text-slate-600" />
+                    Lançamento Recorrente
+                  </Label>
+                  <p className="text-xs text-slate-500">
+                    Marque se este valor se repete periodicamente (ex: Salário mensal)
                   </p>
-                )}
+                </div>
+                <Switch
+                  id="ai-recurring-toggle"
+                  checked={isRecurring}
+                  onCheckedChange={setIsRecurring}
+                />
               </div>
+
+              {isRecurring && (
+                <div className="space-y-1.5 animate-fade-in">
+                  <Label
+                    htmlFor="ai-recurrence-type"
+                    className="text-sm font-medium text-slate-700"
+                  >
+                    Periodicidade
+                  </Label>
+                  <Select
+                    value={recurrenceType}
+                    onValueChange={(v: RecurrenceType) => setRecurrenceType(v)}
+                  >
+                    <SelectTrigger id="ai-recurrence-type" className="rounded-xl h-11">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                      <SelectItem value="mensal">Mensal</SelectItem>
+                      <SelectItem value="semanal">Semanal</SelectItem>
+                      <SelectItem value="anual">Anual</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* Installments */}
+              {!isRecurring && (
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="ai-installments"
+                    className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
+                  >
+                    <CreditCard className="w-3.5 h-3.5 text-slate-500" />
+                    Parcelado em X vezes
+                  </Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      id="ai-installments"
+                      type="number"
+                      min={1}
+                      max={60}
+                      step={1}
+                      value={installmentsTotal}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10)
+                        setInstallmentsTotal(isNaN(v) || v < 1 ? 1 : Math.min(v, 60))
+                      }}
+                      className="rounded-xl h-11 w-28 font-semibold tabular-nums"
+                    />
+                    <span className="text-sm text-slate-500">x (à vista = 1)</span>
+                  </div>
+                  {installmentsTotal > 1 && (
+                    <p className="text-xs text-indigo-600 font-medium animate-fade-in">
+                      Serão criadas {installmentsTotal} transações de{' '}
+                      {formatCurrency(
+                        (parseFloat(amountStr.replace(',', '.')) || 0) / installmentsTotal,
+                      )}{' '}
+                      cada, com datas mensais a partir de {date}.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

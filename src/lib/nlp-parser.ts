@@ -1,4 +1,4 @@
-import { Account, Category, TransactionType } from '@/types/database'
+import { Account, Category, Subcategory, TransactionType, RecurrenceType } from '@/types/database'
 
 export interface ParsedTransaction {
   description: string
@@ -6,15 +6,20 @@ export interface ParsedTransaction {
   type: TransactionType
   date: string // YYYY-MM-DD
   installments_total: number
+  is_recurring?: boolean
+  recurrence_type?: RecurrenceType
   account_id?: string
   category_id?: string
+  subcategory_id?: string
   confidence: {
     type: boolean
     amount: boolean
     date: boolean
     category: boolean
+    subcategory: boolean
     account: boolean
     installments: boolean
+    recurrence: boolean
   }
 }
 
@@ -28,9 +33,11 @@ const ACCENTS: Record<string, string> = {
   é: 'e',
   è: 'e',
   ê: 'e',
+  ë: 'e',
   í: 'i',
   ì: 'i',
   î: 'i',
+  ï: 'i',
   ó: 'o',
   ò: 'o',
   ô: 'o',
@@ -43,7 +50,8 @@ const ACCENTS: Record<string, string> = {
   ç: 'c',
   ñ: 'n',
 }
-function stripAccents(s: string): string {
+
+export function stripAccents(s: string): string {
   return s
     .toLowerCase()
     .split('')
@@ -51,8 +59,43 @@ function stripAccents(s: string): string {
     .join('')
 }
 
-// ---- Category dictionary (PT-BR) ----
-// Maps keyword -> suggested category name (as the user would have it in the DB)
+// ---- Recurrence keywords & helpers ----
+const RECURRING_KEYWORDS = [
+  'recorrente',
+  'recorrencia',
+  'mensal',
+  'mensalidade',
+  'todo mes',
+  'todos os meses',
+  'mensalmente',
+  'fixo',
+  'fixa',
+  'gasto fixo',
+  'receita fixa',
+  'assinatura',
+]
+
+const WEEKLY_KEYWORDS = ['semanal', 'semanalmente', 'toda semana']
+const YEARLY_KEYWORDS = ['anual', 'anualmente', 'todo ano', 'anuidade']
+
+function extractRecurrence(normalized: string): {
+  isRecurring: boolean
+  recurrenceType?: RecurrenceType
+  matched: boolean
+} {
+  if (WEEKLY_KEYWORDS.some((kw) => normalized.includes(stripAccents(kw)))) {
+    return { isRecurring: true, recurrenceType: 'semanal', matched: true }
+  }
+  if (YEARLY_KEYWORDS.some((kw) => normalized.includes(stripAccents(kw)))) {
+    return { isRecurring: true, recurrenceType: 'anual', matched: true }
+  }
+  if (RECURRING_KEYWORDS.some((kw) => normalized.includes(stripAccents(kw)))) {
+    return { isRecurring: true, recurrenceType: 'mensal', matched: true }
+  }
+  return { isRecurring: false, recurrenceType: undefined, matched: false }
+}
+
+// ---- Category dictionary (PT-BR) fallback rules ----
 interface CategoryRule {
   keywords: string[]
   category: string
@@ -109,6 +152,7 @@ const CATEGORY_RULES: CategoryRule[] = [
     keywords: [
       'uber',
       '99',
+      '99app',
       'taxi',
       'táxi',
       'gasolina',
@@ -130,10 +174,11 @@ const CATEGORY_RULES: CategoryRule[] = [
       'mecânico',
       'pneu',
       'carro',
-      'aluguel carro',
-      'locacao veiculo',
-      'locação veículo',
-      'aplicativo transporte',
+      'lavagem',
+      'multa',
+      'multas',
+      'consorcio',
+      'consórcio',
     ],
   },
   // Moradia
@@ -160,11 +205,65 @@ const CATEGORY_RULES: CategoryRule[] = [
       'wifi',
       'obra',
       'reforma',
+      'diarista',
+      'faxina',
+      'decoracao',
+      'decoração',
+      'utensilios',
+      'utensílios',
       'manutencao predial',
       'manutenção predial',
       'financiamento imovel',
       'financiamento imóvel',
     ],
+  },
+  // Pets
+  {
+    category: 'Pets',
+    type: 'despesa',
+    keywords: [
+      'pet',
+      'pets',
+      'cachorro',
+      'gato',
+      'racao',
+      'ração',
+      'veterinario',
+      'veterinária',
+      'veterinario',
+      'banho e tosa',
+      'petshop',
+      'pet shop',
+      'cobasi',
+      'petz',
+    ],
+  },
+  // Família
+  {
+    category: 'Família',
+    type: 'despesa',
+    keywords: [
+      'familia',
+      'família',
+      'supermercado',
+      'mercado',
+      'farmacia',
+      'farmácia',
+      'comemoracao',
+      'comemoração',
+      'lavanderia',
+      'suplementos',
+      'suplemento',
+      'igreja',
+      'dizimo',
+      'dízimo',
+    ],
+  },
+  // Fast Escova
+  {
+    category: 'Fast Escova',
+    type: 'despesa',
+    keywords: ['fast escova', 'fastescova', 'franquia escova', 'implantacao', 'implantação'],
   },
   // Saúde
   {
@@ -185,12 +284,15 @@ const CATEGORY_RULES: CategoryRule[] = [
       'remedio',
       'remédio',
       'medicamento',
+      'medicamentos',
       'exame',
       'laboratorio',
       'laboratório',
       'fisioterapia',
       'psicologo',
       'psicólogo',
+      'psicologa',
+      'psicóloga',
       'terapia',
       'vacina',
       'oftalmologista',
@@ -213,7 +315,6 @@ const CATEGORY_RULES: CategoryRule[] = [
       'globoplay',
       'youtube premium',
       'streaming',
-      'assinatura',
       'viagem',
       'passagem',
       'hotel',
@@ -221,7 +322,6 @@ const CATEGORY_RULES: CategoryRule[] = [
       'passeio',
       'balada',
       'show',
-      'ingresso show',
       'bar',
       'boteco',
       'pub',
@@ -260,44 +360,26 @@ const CATEGORY_RULES: CategoryRule[] = [
       'preparatório',
     ],
   },
-  // Salários / Vendas (receita)
+  // Salários / Proventos
   {
-    category: 'Salários',
+    category: 'Fabrício',
     type: 'receita',
-    keywords: [
-      'salario',
-      'salário',
-      'remuneracao',
-      'remuneração',
-      'provento',
-      'honorario',
-      'honorários',
-      'freela',
-      'freelance',
-      'prestacao servico',
-      'prestação serviço',
-    ],
+    keywords: ['fabricio', 'fabrício'],
   },
   {
-    category: 'Vendas',
+    category: 'Raffaela',
     type: 'receita',
-    keywords: [
-      'venda',
-      'vendas',
-      'vendi',
-      'produto vendido',
-      'recebimento venda',
-      'comissao',
-      'comissão',
-      'faturamento',
-    ],
+    keywords: ['raffaela', 'raffa', 'rafaela', 'rafa'],
   },
   {
-    category: 'Investimentos',
+    category: 'Investimento',
     type: 'receita',
     keywords: [
+      'investimento',
+      'investimentos',
       'rendimento',
       'dividendo',
+      'dividendos',
       'juros recebido',
       'resgate aplicacao',
       'resgate aplicação',
@@ -305,83 +387,6 @@ const CATEGORY_RULES: CategoryRule[] = [
       'cdb',
       'tesouro',
       'fii',
-    ],
-  },
-  // Despesas gerais / negócio
-  {
-    category: 'Marketing',
-    type: 'despesa',
-    keywords: [
-      'marketing',
-      'anuncio',
-      'anúncio',
-      'google ads',
-      'facebook ads',
-      'instagram ads',
-      'trafego pago',
-      'tráfego pago',
-      'campanha',
-      'propaganda',
-      'publicidade',
-    ],
-  },
-  {
-    category: 'Fornecedores',
-    type: 'despesa',
-    keywords: [
-      'fornecedor',
-      'materia prima',
-      'matéria prima',
-      'insumo',
-      'estoque',
-      'compra mercadoria',
-      'reposicao',
-      'reposição',
-    ],
-  },
-  {
-    category: 'Impostos',
-    type: 'despesa',
-    keywords: [
-      'imposto',
-      'tributo',
-      'das',
-      'simples nacional',
-      'irpj',
-      'iss',
-      'contribuicao',
-      'contribuição',
-      'taxa governamental',
-    ],
-  },
-  {
-    category: 'Material de escritório',
-    type: 'despesa',
-    keywords: [
-      'papelaria',
-      'material escritorio',
-      'material de escritorio',
-      'cartucho',
-      'toner',
-      'tinta impressora',
-      'suprimento',
-    ],
-  },
-  {
-    category: 'Utilidades',
-    type: 'despesa',
-    keywords: [
-      'aws',
-      'cloud',
-      'servidor',
-      'hosting',
-      'dominio',
-      'domínio',
-      'saas',
-      'software',
-      'licenca software',
-      'licença software',
-      'assinatura profissional',
     ],
   },
 ]
@@ -400,7 +405,12 @@ const EXPENSE_KEYWORDS = [
   'compra',
   'compramos',
   'pago',
+  'debito',
+  'débito',
+  'saida',
+  'saída',
 ]
+
 const INCOME_KEYWORDS = [
   'recebi',
   'ganhei',
@@ -408,6 +418,7 @@ const INCOME_KEYWORDS = [
   'salário',
   'vendi',
   'venda',
+  'vendas',
   'recebimento',
   'faturamento',
   'rendimento',
@@ -416,9 +427,34 @@ const INCOME_KEYWORDS = [
   'freela',
   'freelance',
   'receita',
+  'receita fixa',
+  'entrada',
+  'entradas',
+  'plr',
+  'bonus',
+  'bônus',
+  'pro-labore',
+  'pro labore',
+  'honorario',
+  'honorarios',
+  'honorários',
   'recebi pix',
   'deposito recebido',
   'depósito recebido',
+]
+
+// Specific subcategories that strongly imply income
+const INCOME_SUBCATEGORIES = [
+  'salario',
+  'salário',
+  'plr',
+  'vendas',
+  'venda',
+  'irpf',
+  'prolabore',
+  'pro labore',
+  'comissao',
+  'comissão',
 ]
 
 // ---- Account detection keywords ----
@@ -441,7 +477,7 @@ function toISODate(d: Date): string {
   return d.toISOString().split('T')[0]
 }
 
-function addMonths(dateStr: string, months: number): string {
+export function addMonths(dateStr: string, months: number): string {
   const d = new Date(dateStr + 'T00:00:00')
   const day = d.getDate()
   d.setMonth(d.getMonth() + months)
@@ -451,7 +487,7 @@ function addMonths(dateStr: string, months: number): string {
 }
 
 // ---- Amount extraction (PT-BR) ----
-// Handles: "25,90", "1.500", "R$ 5.000,00", "5000", "2.000,50"
+// Handles: "8000,00", "8.000,00", "25,90", "1.500", "R$ 5.000,00", "5000", "2.000,50"
 function extractAmount(text: string): number | null {
   // Normalize R$ / currency symbols
   const cleaned = text.replace(/r\$\s?/gi, ' ').replace(/\b(?:reais?)\b/gi, ' ')
@@ -460,7 +496,7 @@ function extractAmount(text: string): number | null {
   // Match numbers possibly with thousand dots and a comma decimal part
   const patterns = [
     /(\d{1,3}(?:\.\d{3})+,\d{1,2})/, // 1.500,00 or 1.234.567,89
-    /(\d+,\d{1,2})/, // 25,90
+    /(\d+,\d{1,2})/, // 8000,00 or 25,90
     /(\d{1,3}(?:\.\d{3})+)/, // 1.500 (no decimal)
     /(\d+(?:\.\d+)?)/, // 5000 or 5.5
   ]
@@ -517,41 +553,155 @@ function extractInstallments(text: string): number {
 }
 
 // ---- Type extraction ----
-function extractType(normalized: string, categoryType?: TransactionType): TransactionType {
-  if (EXPENSE_KEYWORDS.some((kw) => normalized.includes(kw))) return 'despesa'
-  if (INCOME_KEYWORDS.some((kw) => normalized.includes(kw))) return 'receita'
-  // Fallback: rely on the detected category type
-  if (categoryType) return categoryType
-  return 'despesa' // default conservative
-}
-
-// ---- Category extraction ----
-function extractCategory(
+function extractType(
   normalized: string,
-  categories: Category[],
-  type: TransactionType,
-): { categoryId?: string; categoryName: string; matched: boolean } {
-  for (const rule of CATEGORY_RULES) {
-    if (rule.keywords.some((kw) => normalized.includes(stripAccents(kw)))) {
-      // Find a matching category in the company's list (by name, case-insensitive, no accents)
-      const match = categories.find(
-        (c) =>
-          c.name.toLowerCase() === rule.category.toLowerCase() ||
-          stripAccents(c.name) === stripAccents(rule.category),
-      )
-      if (match) return { categoryId: match.id, categoryName: match.name, matched: true }
-      // Loose: category contains keyword
-      const loose = categories.find(
-        (c) =>
-          c.name.toLowerCase().includes(rule.category.toLowerCase()) ||
-          stripAccents(c.name).includes(stripAccents(rule.category)),
-      )
-      if (loose) return { categoryId: loose.id, categoryName: loose.name, matched: true }
-      // Suggested category name not present in DB -> fall back to "Outros"
-      return { categoryName: rule.category, matched: false }
+  category?: Category | null,
+  subcategory?: Subcategory | null,
+): { type: TransactionType; matched: boolean } {
+  // Explicit words for income/expense
+  const hasIncomeKw = INCOME_KEYWORDS.some((kw) => {
+    const regex = new RegExp(`\\b${stripAccents(kw)}\\b`, 'i')
+    return regex.test(normalized)
+  })
+  const hasExpenseKw = EXPENSE_KEYWORDS.some((kw) => {
+    const regex = new RegExp(`\\b${stripAccents(kw)}\\b`, 'i')
+    return regex.test(normalized)
+  })
+
+  // Explicit 'entrada' vs 'saida' / 'despesa'
+  if (/\b(entrada|entradas|receita|receitas|ganhei|recebi)\b/.test(normalized)) {
+    return { type: 'receita', matched: true }
+  }
+  if (/\b(saida|saidas|saída|saídas|despesa|despesas|paguei|gastei|comprei)\b/.test(normalized)) {
+    return { type: 'despesa', matched: true }
+  }
+
+  // Check subcategory hint (e.g. Salário, PLR, Vendas, IRPF -> receita)
+  if (subcategory) {
+    const subNorm = stripAccents(subcategory.name)
+    if (INCOME_SUBCATEGORIES.some((s) => subNorm === s || subNorm.includes(s))) {
+      return { type: 'receita', matched: true }
     }
   }
-  return { categoryName: 'Outros', matched: false }
+
+  // Check if text has income keywords
+  if (hasIncomeKw && !hasExpenseKw) return { type: 'receita', matched: true }
+  if (hasExpenseKw && !hasIncomeKw) return { type: 'despesa', matched: true }
+
+  // Category fallback
+  if (category) {
+    // If category is strictly 'receita', default to receita
+    if (category.type === 'receita') return { type: 'receita', matched: true }
+    return { type: category.type, matched: false }
+  }
+
+  return { type: 'despesa', matched: false }
+}
+
+// ---- Token matching helper ----
+function matchesPhraseOrWord(normalizedText: string, target: string): boolean {
+  const normTarget = stripAccents(target.trim())
+  if (!normTarget) return false
+  // Word boundary regex
+  const escaped = normTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(`\\b${escaped}\\b`, 'i')
+  return regex.test(normalizedText)
+}
+
+// ---- Category & Subcategory extraction ----
+interface CategorySubcategoryMatch {
+  category?: Category
+  subcategory?: Subcategory
+  categoryMatched: boolean
+  subcategoryMatched: boolean
+}
+
+export function extractCategoryAndSubcategory(
+  normalized: string,
+  categories: Category[],
+  subcategories: Subcategory[],
+): CategorySubcategoryMatch {
+  // Step 1: Check direct subcategory matches in the entire text
+  // Sort subcategories by name length descending so multi-word names match first ("Plano de Saúde" before "Saúde")
+  const sortedSubcategories = [...subcategories].sort((a, b) => b.name.length - a.name.length)
+
+  // Find all matching subcategories from text
+  const matchingSubs: Subcategory[] = []
+  for (const sub of sortedSubcategories) {
+    if (matchesPhraseOrWord(normalized, sub.name)) {
+      matchingSubs.push(sub)
+    }
+  }
+
+  // Step 2: Check direct category matches in the text
+  const sortedCategories = [...categories].sort((a, b) => b.name.length - a.name.length)
+  let foundCategory: Category | undefined
+  for (const cat of sortedCategories) {
+    if (matchesPhraseOrWord(normalized, cat.name)) {
+      foundCategory = cat
+      break
+    }
+  }
+
+  // Step 3: Check category rules dictionary if not directly found
+  if (!foundCategory) {
+    for (const rule of CATEGORY_RULES) {
+      if (rule.keywords.some((kw) => matchesPhraseOrWord(normalized, kw))) {
+        const match = categories.find(
+          (c) =>
+            stripAccents(c.name) === stripAccents(rule.category) ||
+            stripAccents(c.name).includes(stripAccents(rule.category)) ||
+            stripAccents(rule.category).includes(stripAccents(c.name)),
+        )
+        if (match) {
+          foundCategory = match
+          break
+        }
+      }
+    }
+  }
+
+  // Step 4: Resolve combination of category and subcategory
+  if (foundCategory) {
+    // Look for a matching subcategory that belongs to this category first
+    const subForFoundCat = matchingSubs.find((s) => s.category_id === foundCategory?.id)
+    if (subForFoundCat) {
+      return {
+        category: foundCategory,
+        subcategory: subForFoundCat,
+        categoryMatched: true,
+        subcategoryMatched: true,
+      }
+    }
+    // If no matching sub under this category, return category with subcategoryMatched = false
+    return {
+      category: foundCategory,
+      subcategory: matchingSubs[0] || undefined,
+      categoryMatched: true,
+      subcategoryMatched: Boolean(
+        matchingSubs[0] && matchingSubs[0].category_id === foundCategory.id,
+      ),
+    }
+  }
+
+  // If category wasn't found directly, but we found matching subcategories:
+  if (matchingSubs.length > 0) {
+    const bestSub = matchingSubs[0]
+    const parentCategory = categories.find((c) => c.id === bestSub.category_id)
+    return {
+      category: parentCategory,
+      subcategory: bestSub,
+      categoryMatched: Boolean(parentCategory),
+      subcategoryMatched: true,
+    }
+  }
+
+  return {
+    category: undefined,
+    subcategory: undefined,
+    categoryMatched: false,
+    subcategoryMatched: false,
+  }
 }
 
 // ---- Account extraction ----
@@ -563,7 +713,7 @@ function extractAccount(
   // Match by account name or bank name (normalized)
   for (const acc of accounts) {
     const accName = stripAccents(acc.name.toLowerCase())
-    if (accName.length > 2 && normalized.includes(accName)) {
+    if (accName.length > 2 && matchesPhraseOrWord(normalized, accName)) {
       return { accountId: acc.id, matched: true }
     }
     if (acc.bank) {
@@ -571,7 +721,7 @@ function extractAccount(
       // Match significant bank tokens (nubank, itau, bradesco, etc.)
       const tokens = bank.split(/[\s/&]+/).filter((t) => t.length > 2)
       for (const tok of tokens) {
-        if (normalized.includes(tok)) {
+        if (matchesPhraseOrWord(normalized, tok)) {
           return { accountId: acc.id, matched: true }
         }
       }
@@ -580,7 +730,7 @@ function extractAccount(
   // Match by account type keyword
   for (const [accType, keywords] of Object.entries(ACCOUNT_TYPE_KEYWORDS)) {
     for (const kw of keywords) {
-      if (normalized.includes(stripAccents(kw))) {
+      if (matchesPhraseOrWord(normalized, kw)) {
         const match = accounts.find((a) => a.type === accType)
         if (match) return { accountId: match.id, matched: true }
       }
@@ -631,13 +781,18 @@ function extractDate(text: string): { date: string; matched: boolean } {
 }
 
 // ---- Description builder ----
-function buildDescription(text: string, amount: number | null, installments: number): string {
+function buildDescription(
+  text: string,
+  amount: number | null,
+  installments: number,
+  categoryName?: string,
+  subcategoryName?: string,
+): string {
   let desc = text.trim()
   // Remove currency symbols
   desc = desc.replace(/r\$\s?/gi, '')
   // Remove amount mentions
   if (amount !== null) {
-    // Try to remove the raw number strings that may represent the amount
     const candidates = new Set<string>()
     const raw = amount.toString().replace('.', ',')
     candidates.add(raw)
@@ -651,39 +806,72 @@ function buildDescription(text: string, amount: number | null, installments: num
     candidates.add(amount.toLocaleString('pt-BR'))
     candidates.add(String(amount))
     candidates.forEach((cand) => {
-      // Word-boundary-ish removal
       desc = desc.split(cand).join('')
     })
   }
+
+  // Remove recurrence keywords
+  RECURRING_KEYWORDS.forEach((kw) => {
+    const reg = new RegExp(`\\b${kw}\\b`, 'gi')
+    desc = desc.replace(reg, '')
+  })
+  WEEKLY_KEYWORDS.forEach((kw) => {
+    const reg = new RegExp(`\\b${kw}\\b`, 'gi')
+    desc = desc.replace(reg, '')
+  })
+  YEARLY_KEYWORDS.forEach((kw) => {
+    const reg = new RegExp(`\\b${kw}\\b`, 'gi')
+    desc = desc.replace(reg, '')
+  })
+
   // Remove installment phrases
   desc = desc.replace(/parcelado\s+em\s+\d{1,2}\s*(vezes)?/gi, '')
   desc = desc.replace(/em\s+\d{1,2}\s+vezes/gi, '')
   desc = desc.replace(/\d{1,2}\s*[xX]\s/gi, '')
   desc = desc.replace(/\d{1,2}\s*[xX]$/gi, '')
   desc = desc.replace(/\b\d{1,2}x\b/gi, '')
+
   // Remove date phrases
   desc = desc.replace(/\bhoje\b/gi, '')
   desc = desc.replace(/\bontem\b/gi, '')
   desc = desc.replace(/\banteontem\b/gi, '')
   desc = desc.replace(/\bsemana passada\b/gi, '')
   desc = desc.replace(/\bdia\s+\d{1,2}\b/gi, '')
+
   // Remove type/action verbs at the start for a cleaner description
-  desc = desc.replace(/^(paguei|gastei|comprei|pagar|pago|recebi|ganhei|vendi)\s+/i, '')
+  desc = desc.replace(
+    /^(paguei|gastei|comprei|pagar|pago|recebi|ganhei|vendi|entrada|receita|despesa|saida|saída)\s+/i,
+    '',
+  )
+
   // Remove leftover account-type filler words near the end
   desc = desc.replace(
     /\b(no|na|em|com|pelo|pela)\s+(cart[aã]o de cr[eé]dito|cart[aã]o de d[eé]bito|cr[eé]dito|d[eé]bito|pix|dinheiro|carteira)\b/gi,
     '',
   )
-  // Remove "no Nubank" / "na conta X" style when account is a known bank name - generic cleanup
   desc = desc.replace(
     /\b(no|na)\s+(nubank|itau|ita[uú]|bradesco|santander|caixa|inter|c6|xp|btg|original|next)\b/gi,
     '',
   )
+
   // Tidy punctuation and whitespace
   desc = desc.replace(/\s+/g, ' ').replace(/\s+,/g, ',').replace(/,\s*$/g, '').trim()
+
+  // If text is empty or just generic, form an intelligent description from Category / Subcategory
+  if (!desc || desc.length <= 1) {
+    if (categoryName && subcategoryName) {
+      desc = `${subcategoryName} (${categoryName})`
+    } else if (subcategoryName) {
+      desc = subcategoryName
+    } else if (categoryName) {
+      desc = categoryName
+    } else {
+      desc = 'Lançamento'
+    }
+  }
+
   // Capitalise first letter
   if (desc.length > 0) desc = desc.charAt(0).toUpperCase() + desc.slice(1)
-  if (!desc) desc = 'Lançamento'
   return desc
 }
 
@@ -692,44 +880,58 @@ export function parseNaturalLanguageTransaction(
   text: string,
   accounts: Account[],
   categories: Category[],
+  subcategories: Subcategory[] = [],
 ): ParsedTransaction {
   const normalized = stripAccents(text.toLowerCase())
 
-  // Determine type early (using a provisional category guess to inform type)
-  const provisionalCat = extractCategory(normalized, categories, 'despesa')
-  const provisionalCatType: TransactionType | undefined = CATEGORY_RULES.find(
-    (r) => stripAccents(r.category) === stripAccents(provisionalCat.categoryName),
-  )?.type
-  const type = extractType(normalized, provisionalCatType)
+  // 1. Extract category & subcategory simultaneously
+  const { category, subcategory, categoryMatched, subcategoryMatched } =
+    extractCategoryAndSubcategory(normalized, categories, subcategories)
 
-  // Re-extract category
-  const category = extractCategory(normalized, categories, type)
+  // 2. Extract Type (receita / despesa)
+  const typeResult = extractType(normalized, category, subcategory)
+
+  // 3. Extract Recurrence
+  const recurrenceResult = extractRecurrence(normalized)
+
+  // 4. Extract Account
   const account = extractAccount(normalized, accounts)
+
+  // 5. Extract Date, Installments and Amount
   const date = extractDate(text)
   const installments = extractInstallments(text)
   const amount = extractAmount(text)
-  const description = buildDescription(text, amount, installments)
+
+  // 6. Build clean description
+  const description = buildDescription(
+    text,
+    amount,
+    installments,
+    category?.name,
+    subcategory?.name,
+  )
 
   return {
     description,
     amount: amount ?? 0,
-    type,
+    type: typeResult.type,
     date: date.date,
     installments_total: installments,
+    is_recurring: recurrenceResult.isRecurring,
+    recurrence_type:
+      recurrenceResult.recurrenceType || (recurrenceResult.isRecurring ? 'mensal' : undefined),
     account_id: account.accountId,
-    category_id: category.categoryId,
+    category_id: category?.id,
+    subcategory_id: subcategory?.id,
     confidence: {
-      type:
-        EXPENSE_KEYWORDS.some((k) => normalized.includes(k)) ||
-        INCOME_KEYWORDS.some((k) => normalized.includes(k)) ||
-        Boolean(provisionalCatType),
+      type: typeResult.matched,
       amount: amount !== null,
       date: date.matched,
-      category: category.matched,
+      category: categoryMatched,
+      subcategory: subcategoryMatched,
       account: account.matched,
       installments: installments > 1,
+      recurrence: recurrenceResult.matched,
     },
   }
 }
-
-export { addMonths }
