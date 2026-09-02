@@ -568,6 +568,14 @@ function extractType(
     return regex.test(normalized)
   })
 
+  // Expense keywords (almoço, mercado, paguei...) indicam despesa — checar ANTES de nomes de pessoas
+  const hasExpenseWord = EXPENSE_KEYWORDS.some((kw) =>
+    new RegExp(`\\b${stripAccents(kw)}\\b`, 'i').test(normalized),
+  )
+  if (hasExpenseWord && !hasIncomeKw) {
+    return { type: 'despesa', matched: true }
+  }
+
   // Explicit 'entrada' vs 'saida' / 'despesa'
   if (/\b(entrada|entradas|receita|receitas|ganhei|recebi)\b/.test(normalized)) {
     return { type: 'receita', matched: true }
@@ -577,11 +585,13 @@ function extractType(
   }
 
   // Check subcategory hint (e.g. Salário, PLR, Vendas, IRPF -> receita)
+  let incomeSubMatched = false
   if (subcategory) {
     const subNorm = stripAccents(subcategory.name)
     if (INCOME_SUBCATEGORIES.some((s) => subNorm === s || subNorm.includes(s))) {
       return { type: 'receita', matched: true }
     }
+    incomeSubMatched = INCOME_SUBCATEGORIES.some((s) => subNorm === s)
   }
 
   // Check if text has income keywords
