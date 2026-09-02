@@ -22,9 +22,18 @@ import {
   Repeat,
   Package,
   Sparkles,
+  CheckCircle2,
+  Clock,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  CheckSquare,
+  Square,
+  Calendar,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
@@ -40,17 +49,30 @@ export default function TransactionsPage() {
     categories,
     subcategories,
     deleteTransaction,
+    setTransactionsPaidStatus,
     canManageTransactions,
   } = useCompany()
 
   // State
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | TransactionType>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'pending'>('all')
   const [accountFilter, setAccountFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [subcategoryFilter, setSubcategoryFilter] = useState<string>('all')
+  const [monthFilter, setMonthFilter] = useState<string>('all') // 'all' or 'YYYY-MM'
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 10
+
+  // Sorting state
+  const [sortField, setSortField] = useState<
+    'date' | 'description' | 'category' | 'account' | 'amount' | 'paid'
+  >('date')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+
+  // Selection state for batch actions
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false)
 
   // Modals state
   const [modalOpen, setModalOpen] = useState(false)
@@ -58,6 +80,29 @@ export default function TransactionsPage() {
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [txToDelete, setTxToDelete] = useState<Transaction | null>(null)
+
+  // Available unique month/year options from all transactions
+  const availableMonths = useMemo(() => {
+    const monthSet = new Set<string>()
+    transactions.forEach((tx) => {
+      if (tx.date) {
+        const ym = tx.date.substring(0, 7) // "YYYY-MM"
+        if (/^\d{4}-\d{2}$/.test(ym)) {
+          monthSet.add(ym)
+        }
+      }
+    })
+    const sorted = Array.from(monthSet).sort().reverse()
+    return sorted.map((ym) => {
+      const [year, month] = ym.split('-')
+      const dateObj = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1)
+      const label = dateObj.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+      return {
+        value: ym,
+        label: label.charAt(0).toUpperCase() + label.slice(1),
+      }
+    })
+  }, [transactions])
 
   // Filtered transactions (ignoring parent installment records)
   const filteredList = useMemo(() => {
@@ -67,6 +112,20 @@ export default function TransactionsPage() {
         (tx.installment_number === 0 || tx.installment_number === undefined) &&
         (tx.installments_total || 0) > 0
       if (isParent) return false
+
+      // Month filter
+      if (monthFilter !== 'all') {
+        if (!tx.date || !tx.date.startsWith(monthFilter)) {
+          return false
+        }
+      }
+
+      // Status filter (paid / pending)
+      if (statusFilter !== 'all') {
+        const isPaid = tx.paid !== false
+        if (statusFilter === 'paid' && !isPaid) return false
+        if (statusFilter === 'pending' && isPaid) return false
+      }
 
       // Search
       if (searchTerm.trim()) {
@@ -95,9 +154,58 @@ export default function TransactionsPage() {
 
       return true
     })
-  }, [transactions, searchTerm, typeFilter, accountFilter, categoryFilter, subcategoryFilter])
+  }, [
+    transactions,
+    searchTerm,
+    typeFilter,
+    statusFilter,
+    accountFilter,
+    categoryFilter,
+    subcategoryFilter,
+    monthFilter,
+  ])
 
-  // Sorted categories
+  // Sorted list according to selected column header
+  const sortedTransactions = useMemo(() => {
+    const list = [...filteredList]
+    list.sort((a, b) => {
+      let comparison = 0
+      if (sortField === 'date') {
+        comparison = new Date(a.date).getTime() - new Date(b.date).getTime()
+      } else if (sortField === 'description') {
+        comparison = a.description.localeCompare(b.description, 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'category') {
+        const catA = a.category?.name || ''
+        const catB = b.category?.name || ''
+        comparison = catA.localeCompare(catB, 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'account') {
+        const accA = a.account?.name || ''
+        const accB = b.account?.name || ''
+        comparison = accA.localeCompare(accB, 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'amount') {
+        comparison = a.amount - b.amount
+      } else if (sortField === 'paid') {
+        const paidA = a.paid !== false ? 1 : 0
+        const paidB = b.paid !== false ? 1 : 0
+        comparison = paidA - paidB
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison
+    })
+    return list
+  }, [filteredList, sortField, sortDirection])
+
+  const handleSort = (
+    field: 'date' | 'description' | 'category' | 'account' | 'amount' | 'paid',
+  ) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDirection(field === 'date' ? 'desc' : 'asc')
+    }
+    setCurrentPage(1)
+  }
   const sortedCategories = useMemo(() => {
     return [...categories].sort((a, b) =>
       a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
@@ -113,27 +221,47 @@ export default function TransactionsPage() {
     return [...list].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
   }, [subcategories, categoryFilter])
 
-  // Summary of filtered items
+  // Summary of filtered items including Paid vs Pending stats
   const summaryTotals = useMemo(() => {
     let income = 0
     let expense = 0
+    let incomePaid = 0
+    let incomePending = 0
+    let expensePaid = 0
+    let expensePending = 0
+
     filteredList.forEach((tx) => {
-      if (tx.type === 'receita') income += tx.amount
-      else expense += tx.amount
+      const isPaid = tx.paid !== false
+      if (tx.type === 'receita') {
+        income += tx.amount
+        if (isPaid) incomePaid += tx.amount
+        else incomePending += tx.amount
+      } else {
+        expense += tx.amount
+        if (isPaid) expensePaid += tx.amount
+        else expensePending += tx.amount
+      }
     })
+
     return {
       income,
       expense,
       balance: income - expense,
+      incomePaid,
+      incomePending,
+      expensePaid,
+      expensePending,
+      netPaid: incomePaid - expensePaid,
+      netPending: incomePending - expensePending,
     }
   }, [filteredList])
 
   // Pagination
-  const totalPages = Math.ceil(filteredList.length / pageSize) || 1
+  const totalPages = Math.ceil(sortedTransactions.length / pageSize) || 1
   const paginatedTransactions = useMemo(() => {
     const start = (currentPage - 1) * pageSize
-    return filteredList.slice(start, start + pageSize)
-  }, [filteredList, currentPage])
+    return sortedTransactions.slice(start, start + pageSize)
+  }, [sortedTransactions, currentPage])
 
   const handleEdit = (tx: Transaction) => {
     setSelectedTx(tx)
@@ -156,9 +284,67 @@ export default function TransactionsPage() {
       await deleteTransaction(txToDelete.id)
       toast.success('Lançamento excluído com sucesso!')
       setTxToDelete(null)
+      setSelectedIds((prev) => prev.filter((id) => id !== txToDelete.id))
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao excluir lançamento.')
     }
+  }
+
+  // Toggle single item paid status
+  const handleTogglePaid = async (tx: Transaction, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const newStatus = !(tx.paid !== false)
+    try {
+      await setTransactionsPaidStatus([tx.id], newStatus)
+      const label =
+        tx.type === 'receita'
+          ? newStatus
+            ? 'Recebido'
+            : 'Pendente'
+          : newStatus
+            ? 'Pago'
+            : 'Pendente'
+      toast.success(`Lançamento marcado como ${label.toLowerCase()}!`)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao alterar status do lançamento.')
+    }
+  }
+
+  // Bulk toggle status
+  const handleBulkStatusChange = async (newPaidStatus: boolean) => {
+    if (selectedIds.length === 0) return
+    setIsBulkUpdating(true)
+    try {
+      await setTransactionsPaidStatus(selectedIds, newPaidStatus)
+      toast.success(
+        `${selectedIds.length} lançamento(s) marcado(s) como ${
+          newPaidStatus ? 'pago(s) / recebido(s)' : 'pendente(s)'
+        }!`,
+      )
+      setSelectedIds([])
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao alterar status dos lançamentos selecionados.')
+    } finally {
+      setIsBulkUpdating(false)
+    }
+  }
+
+  // Select all / deselect all
+  const handleSelectAll = () => {
+    const currentPageIds = paginatedTransactions.map((t) => t.id)
+    const allSelected = currentPageIds.every((id) => selectedIds.includes(id))
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !currentPageIds.includes(id)))
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...currentPageIds])))
+    }
+  }
+
+  const handleToggleSelectOne = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    )
   }
 
   return (
@@ -297,65 +483,390 @@ export default function TransactionsPage() {
           </Select>
         </div>
 
-        {/* Totals Summary of filtered results */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100 text-xs">
-          <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-50/70 border border-emerald-100 text-emerald-800">
-            <TrendingUp className="w-4 h-4 text-emerald-600" />
-            <div>
-              <p className="text-[10px] text-emerald-600 uppercase font-semibold">Total Receitas</p>
-              <p className="text-sm font-bold">{formatCurrency(summaryTotals.income)}</p>
-            </div>
+        {/* Advanced Filter Row (Month and Status) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+          {/* Month Selector Filter */}
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+            <Select
+              value={monthFilter}
+              onValueChange={(v) => {
+                setMonthFilter(v)
+                setCurrentPage(1)
+              }}
+            >
+              <SelectTrigger className="rounded-xl h-10 text-sm">
+                <SelectValue placeholder="Filtrar por Mês" />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl max-h-64">
+                <SelectItem value="all">Todos os Meses</SelectItem>
+                {availableMonths.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          <div className="flex items-center gap-2 p-2 rounded-xl bg-rose-50/70 border border-rose-100 text-rose-800">
-            <TrendingDown className="w-4 h-4 text-rose-600" />
-            <div>
-              <p className="text-[10px] text-rose-600 uppercase font-semibold">Total Despesas</p>
-              <p className="text-sm font-bold">{formatCurrency(summaryTotals.expense)}</p>
+          {/* Status Filter (Pago / Recebido / Pendente) */}
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-slate-400 shrink-0" />
+            <Select
+              value={statusFilter}
+              onValueChange={(v: any) => {
+                setStatusFilter(v)
+                setCurrentPage(1)
+              }}
+            >
+              <SelectTrigger className="rounded-xl h-10 text-sm">
+                <SelectValue placeholder="Status de Pagamento" />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl">
+                <SelectItem value="all">Todos os Status (Pago e Pendente)</SelectItem>
+                <SelectItem value="paid">Apenas Pagos / Recebidos</SelectItem>
+                <SelectItem value="pending">Apenas Pendentes (A Pagar / A Receber)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Totals Summary of filtered results with Paid vs Pending Controls */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100 text-xs">
+          {/* Despesas Pagas */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50/70 border border-emerald-100 text-emerald-900">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[10px] text-emerald-700 uppercase font-semibold">
+                  Já Pago (Despesas)
+                </p>
+                <p className="text-sm font-bold">{formatCurrency(summaryTotals.expensePaid)}</p>
+              </div>
             </div>
+            <span className="text-[10px] font-medium text-emerald-600 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+              Quitado
+            </span>
           </div>
 
-          <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-100/80 border border-slate-200 text-slate-800">
-            <Filter className="w-4 h-4 text-slate-600" />
-            <div>
-              <p className="text-[10px] text-slate-500 uppercase font-semibold">Saldo do Filtro</p>
-              <p
-                className={`text-sm font-bold tabular-nums ${
-                  summaryTotals.balance >= 0 ? 'text-indigo-600' : 'text-rose-600'
-                }`}
-              >
-                {formatCurrency(summaryTotals.balance)}
-              </p>
+          {/* Despesas Pendentes (Falta Pagar) */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[10px] text-amber-800 uppercase font-bold">
+                  Falta Pagar (Pendente)
+                </p>
+                <p className="text-sm font-bold text-amber-950">
+                  {formatCurrency(summaryTotals.expensePending)}
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+              A vencer
+            </span>
+          </div>
+
+          {/* Receitas Recebidas vs Pendentes */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-sky-50/70 border border-sky-100 text-sky-900">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[10px] text-sky-700 uppercase font-semibold">
+                  Receitas Recebidas
+                </p>
+                <p className="text-sm font-bold">{formatCurrency(summaryTotals.incomePaid)}</p>
+                {summaryTotals.incomePending > 0 && (
+                  <p className="text-[10px] text-sky-600">
+                    + {formatCurrency(summaryTotals.incomePending)} a receber
+                  </p>
+                )}
+              </div>
+            </div>
+            <span className="text-[10px] font-medium text-sky-600 bg-sky-100 px-2 py-0.5 rounded-full">
+              Total {formatCurrency(summaryTotals.income)}
+            </span>
+          </div>
+
+          {/* Saldo Líquido Realizado vs Previsto */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-100/90 border border-slate-200 text-slate-800">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center">
+                <Filter className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase font-semibold">
+                  Saldo Realizado
+                </p>
+                <p
+                  className={`text-sm font-bold tabular-nums ${
+                    summaryTotals.netPaid >= 0 ? 'text-indigo-600' : 'text-rose-600'
+                  }`}
+                >
+                  {formatCurrency(summaryTotals.netPaid)}
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  Total Geral: {formatCurrency(summaryTotals.balance)}
+                </p>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Bulk Action Bar (when rows are selected) */}
+      {selectedIds.length > 0 && (
+        <div className="bg-indigo-900 text-white p-3.5 rounded-2xl shadow-lg flex flex-col sm:flex-row items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-2.5 text-sm font-medium">
+            <span className="bg-indigo-800 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-200">
+              {selectedIds.length} selecionado(s)
+            </span>
+            <span>Ações em lote para os lançamentos selecionados:</span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              disabled={isBulkUpdating}
+              onClick={() => handleBulkStatusChange(true)}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold h-9 px-3.5 shadow-sm"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+              Marcar como Pago / Recebido
+            </Button>
+            <Button
+              size="sm"
+              disabled={isBulkUpdating}
+              onClick={() => handleBulkStatusChange(false)}
+              className="bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold h-9 px-3.5 shadow-sm"
+            >
+              <Clock className="w-3.5 h-3.5 mr-1.5" />
+              Marcar como Pendente
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedIds([])}
+              className="text-indigo-200 hover:text-white hover:bg-indigo-800 rounded-xl text-xs h-9 px-2.5"
+            >
+              Desmarcar todos
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Desktop Table View */}
       <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              <th className="py-3.5 px-4">Data</th>
-              <th className="py-3.5 px-4">Descrição</th>
-              <th className="py-3.5 px-4">Categoria</th>
-              <th className="py-3.5 px-4">Conta</th>
-              <th className="py-3.5 px-4">Tipo</th>
-              <th className="py-3.5 px-4 text-right">Valor</th>
+              {/* Checkbox column */}
+              <th className="py-3.5 px-3 w-10 text-center">
+                <input
+                  type="checkbox"
+                  checked={
+                    paginatedTransactions.length > 0 &&
+                    paginatedTransactions.every((t) => selectedIds.includes(t.id))
+                  }
+                  onChange={handleSelectAll}
+                  aria-label="Selecionar todos os lançamentos da página"
+                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
+              </th>
+
+              {/* Status Paid / Pending Column */}
+              <th
+                onClick={() => handleSort('paid')}
+                className="py-3.5 px-3 w-28 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Status</span>
+                  {sortField === 'paid' ? (
+                    sortDirection === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    )
+                  ) : (
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  )}
+                </div>
+              </th>
+
+              {/* Date Column */}
+              <th
+                onClick={() => handleSort('date')}
+                className="py-3.5 px-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Data</span>
+                  {sortField === 'date' ? (
+                    sortDirection === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    )
+                  ) : (
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  )}
+                </div>
+              </th>
+
+              {/* Description Column */}
+              <th
+                onClick={() => handleSort('description')}
+                className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Descrição</span>
+                  {sortField === 'description' ? (
+                    sortDirection === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    )
+                  ) : (
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  )}
+                </div>
+              </th>
+
+              {/* Category Column */}
+              <th
+                onClick={() => handleSort('category')}
+                className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Categoria</span>
+                  {sortField === 'category' ? (
+                    sortDirection === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    )
+                  ) : (
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  )}
+                </div>
+              </th>
+
+              {/* Account Column */}
+              <th
+                onClick={() => handleSort('account')}
+                className="py-3.5 px-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Conta</span>
+                  {sortField === 'account' ? (
+                    sortDirection === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    )
+                  ) : (
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  )}
+                </div>
+              </th>
+
+              {/* Type Column */}
+              <th className="py-3.5 px-3">Tipo</th>
+
+              {/* Amount Column */}
+              <th
+                onClick={() => handleSort('amount')}
+                className="py-3.5 px-4 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+              >
+                <div className="flex items-center justify-end gap-1">
+                  <span>Valor</span>
+                  {sortField === 'amount' ? (
+                    sortDirection === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    )
+                  ) : (
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  )}
+                </div>
+              </th>
+
               <th className="py-3.5 px-4 text-center">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {paginatedTransactions.map((tx) => {
               const isExpense = tx.type === 'despesa'
+              const isPaid = tx.paid !== false
+              const isSelected = selectedIds.includes(tx.id)
+
               return (
-                <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3.5 px-4 text-xs font-medium text-slate-500 whitespace-nowrap">
+                <tr
+                  key={tx.id}
+                  className={`hover:bg-slate-50/80 transition-colors ${
+                    isSelected ? 'bg-indigo-50/40' : ''
+                  }`}
+                >
+                  {/* Selection Checkbox */}
+                  <td className="py-3.5 px-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => handleToggleSelectOne(tx.id, e as any)}
+                      aria-label={`Selecionar lançamento ${tx.description}`}
+                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  </td>
+
+                  {/* Status Toggle Button */}
+                  <td className="py-3.5 px-3 whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={(e) => handleTogglePaid(tx, e)}
+                      title={
+                        isPaid
+                          ? isExpense
+                            ? 'Clique para marcar como Pendente (a pagar)'
+                            : 'Clique para marcar como Pendente (a receber)'
+                          : isExpense
+                            ? 'Clique para marcar como Pago'
+                            : 'Clique para marcar como Recebido'
+                      }
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all shadow-xs ${
+                        isPaid
+                          ? 'bg-emerald-100/80 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                          : 'bg-amber-100/80 text-amber-800 border border-amber-300 hover:bg-amber-200'
+                      }`}
+                    >
+                      {isPaid ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>{isExpense ? 'Pago' : 'Recebido'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Clock className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Pendente</span>
+                        </>
+                      )}
+                    </button>
+                  </td>
+
+                  {/* Date */}
+                  <td className="py-3.5 px-3 text-xs font-medium text-slate-500 whitespace-nowrap">
                     {formatDateBR(tx.date)}
                   </td>
+
+                  {/* Description */}
                   <td className="py-3.5 px-4 font-semibold text-slate-900">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span>{tx.description}</span>
+                      <span className={isPaid ? '' : 'text-slate-800'}>{tx.description}</span>
                       {tx.is_recurring && (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200"
@@ -372,7 +883,8 @@ export default function TransactionsPage() {
                       )}
                       {Boolean(
                         tx.parent_transaction_id ||
-                        (tx.installment_number && tx.installment_number > 0),
+                        (tx.installment_number && tx.installment_number > 0) ||
+                        (tx.installments_total && tx.installments_total > 1),
                       ) && (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
@@ -389,6 +901,8 @@ export default function TransactionsPage() {
                       <p className="text-xs text-slate-400 font-normal mt-0.5">{tx.notes}</p>
                     )}
                   </td>
+
+                  {/* Category */}
                   <td className="py-3.5 px-4">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
@@ -409,7 +923,9 @@ export default function TransactionsPage() {
                       )}
                     </div>
                   </td>
-                  <td className="py-3.5 px-4 text-xs font-medium text-slate-600">
+
+                  {/* Account */}
+                  <td className="py-3.5 px-3 text-xs font-medium text-slate-600">
                     <span className="flex items-center gap-1.5">
                       <span
                         className="w-2 h-2 rounded-full"
@@ -418,7 +934,9 @@ export default function TransactionsPage() {
                       {tx.account?.name || 'Conta'}
                     </span>
                   </td>
-                  <td className="py-3.5 px-4">
+
+                  {/* Type */}
+                  <td className="py-3.5 px-3">
                     <span
                       className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                         isExpense
@@ -434,6 +952,8 @@ export default function TransactionsPage() {
                       {isExpense ? 'Despesa' : 'Receita'}
                     </span>
                   </td>
+
+                  {/* Amount */}
                   <td
                     className={`py-3.5 px-4 text-right font-bold tabular-nums ${
                       isExpense ? 'text-rose-600' : 'text-emerald-600'
@@ -442,6 +962,8 @@ export default function TransactionsPage() {
                     {isExpense ? '- ' : '+ '}
                     {formatCurrency(tx.amount)}
                   </td>
+
+                  {/* Actions */}
                   <td className="py-3.5 px-4 text-center">
                     <div className="flex items-center justify-center gap-1">
                       <Button
@@ -470,7 +992,7 @@ export default function TransactionsPage() {
 
             {paginatedTransactions.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-sm text-slate-400">
+                <td colSpan={9} className="py-12 text-center text-sm text-slate-400">
                   Nenhum lançamento encontrado para os filtros selecionados.
                 </td>
               </tr>
@@ -478,99 +1000,145 @@ export default function TransactionsPage() {
           </tbody>
         </table>
       </div>
-
       {/* Mobile Card List View */}
       <div className="md:hidden space-y-3">
         {paginatedTransactions.map((tx) => {
           const isExpense = tx.type === 'despesa'
+          const isPaid = tx.paid !== false
+          const isSelected = selectedIds.includes(tx.id)
+
           return (
             <div
               key={tx.id}
-              className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between"
+              className={`bg-white p-4 rounded-2xl border border-slate-200 shadow-sm transition-all ${
+                isSelected ? 'ring-2 ring-indigo-500 bg-indigo-50/20' : ''
+              }`}
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0"
-                  style={{ backgroundColor: tx.category?.color || '#6366F1' }}
-                >
-                  <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-5 h-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <p className="font-semibold text-sm text-slate-900 truncate">
-                      {tx.description}
-                    </p>
-                    {tx.is_recurring && (
-                      <span
-                        className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200"
-                        title="Recorrente"
-                      >
-                        <Repeat className="w-2.5 h-2.5 text-sky-600" />
-                        <span>
-                          {tx.recurrence_type
-                            ? tx.recurrence_type.charAt(0).toUpperCase() +
-                              tx.recurrence_type.slice(1)
-                            : 'Recorrente'}
-                        </span>
-                      </span>
-                    )}
-                    {Boolean(
-                      tx.parent_transaction_id ||
-                      (tx.installment_number && tx.installment_number > 0),
-                    ) && (
-                      <span
-                        className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
-                        title="Parcela"
-                      >
-                        <Package className="w-2.5 h-2.5 text-amber-600" />
-                        <span>
-                          {tx.installment_number || 1}/{tx.installments_total || '?'}
-                        </span>
-                      </span>
-                    )}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                  {/* Select Checkbox for Mobile */}
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={(e) => handleToggleSelectOne(tx.id, e as any)}
+                    className="w-4 h-4 mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 mt-0.5"
+                    style={{ backgroundColor: tx.category?.color || '#6366F1' }}
+                  >
+                    <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-4 h-4" />
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
-                    <span>{formatDateBR(tx.date)}</span>
-                    <span>•</span>
-                    <span className="truncate">{tx.account?.name || 'Conta'}</span>
-                    {tx.category && (
-                      <>
-                        <span>•</span>
-                        <span className="text-slate-700 font-medium">
-                          {tx.category.name}
-                          {tx.subcategory && (
-                            <span className="text-slate-500"> → {tx.subcategory.name}</span>
-                          )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="font-semibold text-sm text-slate-900 leading-snug">
+                        {tx.description}
+                      </p>
+                      {tx.is_recurring && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200"
+                          title="Recorrente"
+                        >
+                          <Repeat className="w-2.5 h-2.5 text-sky-600" />
+                          <span>
+                            {tx.recurrence_type
+                              ? tx.recurrence_type.charAt(0).toUpperCase() +
+                                tx.recurrence_type.slice(1)
+                              : 'Recorrente'}
+                          </span>
                         </span>
-                      </>
-                    )}
+                      )}
+                      {Boolean(
+                        tx.parent_transaction_id ||
+                        (tx.installment_number && tx.installment_number > 0) ||
+                        (tx.installments_total && tx.installments_total > 1),
+                      ) && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                          title="Parcela"
+                        >
+                          <Package className="w-2.5 h-2.5 text-amber-600" />
+                          <span>
+                            {tx.installment_number || 1}/{tx.installments_total || '?'}
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
+                      <span>{formatDateBR(tx.date)}</span>
+                      <span>•</span>
+                      <span className="truncate">{tx.account?.name || 'Conta'}</span>
+                      {tx.category && (
+                        <>
+                          <span>•</span>
+                          <span className="text-slate-700 font-medium truncate">
+                            {tx.category.name}
+                            {tx.subcategory && (
+                              <span className="text-slate-500"> → {tx.subcategory.name}</span>
+                            )}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-right shrink-0">
+                  <p
+                    className={`text-sm font-bold tabular-nums ${
+                      isExpense ? 'text-rose-600' : 'text-emerald-600'
+                    }`}
+                  >
+                    {isExpense ? '- ' : '+ '}
+                    {formatCurrency(tx.amount)}
+                  </p>
+                  <div className="flex items-center justify-end gap-1 mt-1.5">
+                    <button
+                      onClick={() => handleEdit(tx)}
+                      className="p-1 text-slate-400 hover:text-indigo-600"
+                      title="Editar"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDeletePrompt(tx)}
+                      className="p-1 text-slate-400 hover:text-rose-600"
+                      title="Excluir"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               </div>
 
-              <div className="text-right shrink-0 ml-3">
-                <p
-                  className={`text-sm font-bold tabular-nums ${
-                    isExpense ? 'text-rose-600' : 'text-emerald-600'
+              {/* Status Action in Mobile Card */}
+              <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={(e) => handleTogglePaid(tx, e)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    isPaid
+                      ? 'bg-emerald-100/80 text-emerald-800 border border-emerald-300'
+                      : 'bg-amber-100/80 text-amber-800 border border-amber-300'
                   }`}
                 >
-                  {isExpense ? '- ' : '+ '}
-                  {formatCurrency(tx.amount)}
-                </p>
-                <div className="flex items-center justify-end gap-1 mt-1">
-                  <button
-                    onClick={() => handleEdit(tx)}
-                    className="p-1 text-slate-400 hover:text-indigo-600"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleDeletePrompt(tx)}
-                    className="p-1 text-slate-400 hover:text-rose-600"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                  {isPaid ? (
+                    <>
+                      <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                      <span>{isExpense ? 'Pago' : 'Recebido'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="w-3 h-3 text-amber-700" />
+                      <span>Pendente (clique p/ quitar)</span>
+                    </>
+                  )}
+                </button>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  {isExpense ? 'Despesa' : 'Receita'}
+                </span>
               </div>
             </div>
           )
@@ -582,7 +1150,6 @@ export default function TransactionsPage() {
           </div>
         )}
       </div>
-
       {/* Pagination Controls */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between bg-white p-3 rounded-2xl border border-slate-200 shadow-sm">

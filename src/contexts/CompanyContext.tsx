@@ -122,6 +122,7 @@ interface CompanyContextType {
     data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
   ) => Promise<Transaction>
   deleteTransaction: (transactionId: string) => Promise<void>
+  setTransactionsPaidStatus: (transactionIds: string[], paid: boolean) => Promise<void>
 
   // Team
   inviteMember: (email: string, role: UserRole) => Promise<CompanyMember>
@@ -418,6 +419,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     [reloadCompanyData],
   )
 
+  const setTransactionsPaidStatus = useCallback(
+    async (transactionIds: string[], paid: boolean) => {
+      await skipCloud.setTransactionsPaidStatus(transactionIds, paid)
+      await reloadCompanyData()
+    },
+    [reloadCompanyData],
+  )
+
   // Team operations
   const inviteMember = useCallback(
     async (email: string, role: UserRole) => {
@@ -492,6 +501,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         createTransaction,
         updateTransaction,
         deleteTransaction,
+        setTransactionsPaidStatus,
         inviteMember,
         updateMemberRole,
         removeMember,

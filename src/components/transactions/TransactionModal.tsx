@@ -33,6 +33,11 @@ import {
   Repeat,
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/formatters'
+import { RecurrencePropagationModal, PropagationChoice } from './RecurrencePropagationModal'
+import {
+  updateTransactionWithPropagation,
+  UpdateTransactionPayload,
+} from '@/lib/transaction-propagation'
 
 interface TransactionModalProps {
   open: boolean
@@ -83,6 +88,8 @@ export function TransactionModal({
       ? transaction.installments_total
       : 1,
   )
+  const [propagationModalOpen, setPropagationModalOpen] = useState(false)
+  const [pendingFormData, setPendingFormData] = useState<UpdateTransactionPayload | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Sync when transaction changes
@@ -152,6 +159,34 @@ export function TransactionModal({
     }
   }, [type, filteredCategories, categoryId])
 
+  const executeUpdate = async (formData: UpdateTransactionPayload, choice?: PropagationChoice) => {
+    if (!transaction) return
+    setIsSubmitting(true)
+    try {
+      await updateTransactionWithPropagation({
+        transaction,
+        allTransactions: transactions,
+        formData,
+        choice,
+      })
+      // Refresh context data
+      await updateTransaction(transaction.id, {})
+      toast.success('Lançamento atualizado com sucesso!')
+      setPropagationModalOpen(false)
+      setPendingFormData(null)
+      onOpenChange(false)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao atualizar lançamento.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handlePropagationConfirm = async (choice: PropagationChoice) => {
+    if (!pendingFormData) return
+    await executeUpdate(pendingFormData, choice)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!description.trim()) {
@@ -172,42 +207,61 @@ export function TransactionModal({
       return
     }
 
+    const payload: UpdateTransactionPayload = {
+      description: description.trim(),
+      amount: parsedAmount,
+      type,
+      account_id: accountId,
+      category_id: categoryId,
+      subcategory_id: subcategoryId || undefined,
+      date,
+      is_recurring: isRecurring,
+      recurrence_type: isRecurring ? recurrenceType : undefined,
+      notes: notes.trim(),
+      installments_total: installmentsTotal,
+    }
+
+    if (isEditing && transaction) {
+      const isTxRecurring = Boolean(transaction.is_recurring || transaction.recurring)
+      const isTxInstallment = Boolean(
+        transaction.parent_transaction_id ||
+        (transaction.installment_number && transaction.installment_number > 0) ||
+        (transaction.installments_total && transaction.installments_total > 1),
+      )
+
+      // Se for recorrente ou parcelado, perguntar ao usuário como propagar antes de aplicar!
+      if (isTxRecurring || isTxInstallment) {
+        setPendingFormData(payload)
+        setPropagationModalOpen(true)
+        return
+      }
+
+      // Se for uma transação simples única
+      await executeUpdate(payload, 'single')
+      return
+    }
+
+    // Criar nova transação
     setIsSubmitting(true)
     try {
-      if (isEditing && transaction) {
-        await updateTransaction(transaction.id, {
-          description,
-          amount: parsedAmount,
-          type,
-          account_id: accountId,
-          category_id: categoryId,
-          subcategory_id: subcategoryId || undefined,
-          date,
-          is_recurring: isRecurring,
-          recurrence_type: isRecurring ? recurrenceType : undefined,
-          notes,
-        })
-        toast.success('Lançamento atualizado com sucesso!')
-      } else {
-        await createTransaction({
-          description,
-          amount: parsedAmount,
-          type,
-          account_id: accountId,
-          category_id: categoryId,
-          subcategory_id: subcategoryId || undefined,
-          date,
-          is_recurring: isRecurring,
-          recurrence_type: isRecurring ? recurrenceType : undefined,
-          notes,
-          installments_total: installmentsTotal,
-        })
-        toast.success(
-          installmentsTotal > 1
-            ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
-            : 'Lançamento criado com sucesso!',
-        )
-      }
+      await createTransaction({
+        description,
+        amount: parsedAmount,
+        type,
+        account_id: accountId,
+        category_id: categoryId,
+        subcategory_id: subcategoryId || undefined,
+        date,
+        is_recurring: isRecurring,
+        recurrence_type: isRecurring ? recurrenceType : undefined,
+        notes,
+        installments_total: installmentsTotal,
+      })
+      toast.success(
+        installmentsTotal > 1
+          ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
+          : 'Lançamento criado com sucesso!',
+      )
       onOpenChange(false)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao salvar lançamento.')
@@ -506,32 +560,37 @@ export function TransactionModal({
           )}
 
           {/* Installments */}
-          {!isEditing && (
+          {(!isEditing || isInstallment) && (
             <div className="space-y-1.5">
               <Label
                 htmlFor="tx-installments"
                 className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
               >
                 <CreditCard className="w-3.5 h-3.5 text-slate-500" />
-                Parcelado em X vezes
+                {isEditing ? 'Total de Parcelas da Compra' : 'Parcelado em X vezes'}
               </Label>
               <div className="flex items-center gap-3">
                 <Input
                   id="tx-installments"
                   type="number"
-                  min={1}
+                  min={isEditing ? transaction?.installment_number || 1 : 1}
                   max={60}
                   step={1}
                   value={installmentsTotal}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10)
-                    setInstallmentsTotal(isNaN(v) || v < 1 ? 1 : Math.min(v, 60))
+                    const minVal = isEditing ? 1 : 1
+                    setInstallmentsTotal(isNaN(v) || v < minVal ? minVal : Math.min(v, 60))
                   }}
                   className="rounded-xl h-11 w-28 font-semibold tabular-nums"
                 />
-                <span className="text-sm text-slate-500">x (à vista = 1)</span>
+                <span className="text-sm text-slate-500">
+                  {isEditing
+                    ? `parcelas no total (atual: ${transaction?.installment_number || 1})`
+                    : 'x (à vista = 1)'}
+                </span>
               </div>
-              {installmentsTotal > 1 && (
+              {!isEditing && installmentsTotal > 1 && (
                 <p className="text-xs text-indigo-600 font-medium animate-fade-in">
                   Serão criadas {installmentsTotal} transações de{' '}
                   {formatCurrency(parseFloat(amountStr.replace(',', '.')) || 0)} →{' '}
@@ -539,6 +598,17 @@ export function TransactionModal({
                     (parseFloat(amountStr.replace(',', '.')) || 0) / installmentsTotal,
                   )}{' '}
                   cada, com datas mensais a partir de {date}.
+                </p>
+              )}
+              {isEditing && installmentsTotal !== (transaction?.installments_total || 1) && (
+                <p className="text-xs text-amber-700 font-medium animate-fade-in">
+                  {installmentsTotal > (transaction?.installments_total || 1)
+                    ? `Serão criadas ${
+                        installmentsTotal - (transaction?.installments_total || 1)
+                      } novas parcelas futuras.`
+                    : `Serão excluídas ${
+                        (transaction?.installments_total || 1) - installmentsTotal
+                      } parcelas excedentes.`}
                 </p>
               )}
             </div>
@@ -590,6 +660,22 @@ export function TransactionModal({
           </DialogFooter>
         </form>
       </DialogContent>
+
+      {/* Recurrence & Installment Propagation Dialog */}
+      <RecurrencePropagationModal
+        open={propagationModalOpen}
+        onOpenChange={setPropagationModalOpen}
+        isInstallment={Boolean(
+          transaction?.parent_transaction_id ||
+          (transaction?.installment_number && transaction?.installment_number > 0) ||
+          (transaction?.installments_total && transaction?.installments_total > 1),
+        )}
+        isRecurring={Boolean(transaction?.is_recurring || transaction?.recurring)}
+        currentInstallment={transaction?.installment_number}
+        totalInstallments={transaction?.installments_total}
+        onConfirm={handlePropagationConfirm}
+        isSubmitting={isSubmitting}
+      />
     </Dialog>
   )
 }

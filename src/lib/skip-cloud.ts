@@ -1219,8 +1219,18 @@ class SkipCloudService {
       if (data.type !== undefined) payload.type = data.type
       if (data.date !== undefined) payload.date = data.date
       if (data.notes !== undefined) payload.notes = data.notes || ''
-      if (data.is_recurring !== undefined) payload.is_recurring = data.is_recurring
+      if (data.is_recurring !== undefined) {
+        payload.is_recurring = data.is_recurring
+        payload.recurring = data.is_recurring
+      }
       if (data.recurrence_type !== undefined) payload.recurrence_type = data.recurrence_type || ''
+      if (data.paid !== undefined) payload.paid = data.paid
+      if (data.parent_transaction_id !== undefined)
+        payload.parent_transaction_id = data.parent_transaction_id
+      if (data.installment_number !== undefined)
+        payload.installment_number = data.installment_number
+      if (data.installments_total !== undefined) payload.installment_total = data.installments_total
+
       const r = await pb.collection('transactions').update(transactionId, payload)
       const newAccId = r.account_id
       const newAmount = Number(r.amount)
@@ -1237,6 +1247,16 @@ class SkipCloudService {
       const tx = await pb.collection('transactions').getOne(transactionId)
       await this.adjustAccountBalance(tx.account_id, Number(tx.amount), tx.type, -1)
       await pb.collection('transactions').delete(transactionId)
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  async setTransactionsPaidStatus(transactionIds: string[], paid: boolean): Promise<void> {
+    try {
+      for (const id of transactionIds) {
+        await pb.collection('transactions').update(id, { paid })
+      }
     } catch (e: any) {
       throw pbErr(e)
     }
