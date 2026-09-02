@@ -576,6 +576,16 @@ function extractType(
     return { type: 'despesa', matched: true }
   }
 
+  // Consumption words from expense category rules (almoço, mercado, supermercado, restaurante,
+  // janta, lanche, padaria, farmácia...) indicam despesa — checar ANTES do fallback de categoria,
+  // mas nunca sobrepor uma palavra explícita de renda.
+  const hasConsumptionWord = CONSUMPTION_KEYWORDS.some((kw) =>
+    new RegExp(`\\b${kw}\\b`, 'i').test(normalized),
+  )
+  if (hasConsumptionWord && !hasIncomeKw) {
+    return { type: 'despesa', matched: true }
+  }
+
   // Explicit 'entrada' vs 'saida' / 'despesa'
   if (/\b(entrada|entradas|receita|receitas|ganhei|recebi)\b/.test(normalized)) {
     return { type: 'receita', matched: true }
