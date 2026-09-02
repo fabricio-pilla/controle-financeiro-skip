@@ -220,6 +220,7 @@ async function handleInstallmentPropagation({
           is_recurring: false,
           recurrence_type: '',
           installments_total: newTotal,
+          installment_total: newTotal,
           installment_number: i,
           parent_transaction_id: parentId,
           notes: formData.notes?.trim() || '',

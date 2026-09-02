@@ -71,6 +71,44 @@ export function TransactionModal({
     if (!transaction?.parent_transaction_id) return null
     return transactions.find((t) => t.id === transaction.parent_transaction_id) || null
   }, [transaction, transactions])
+
+  // Helper to resolve effective total installments from transaction, description or parent
+  const resolvedInstallmentsTotal = React.useMemo(() => {
+    if (!transaction) return 1
+    if (transaction.installments_total && transaction.installments_total > 1) {
+      return transaction.installments_total
+    }
+    // Try extract from description (e.g. "Emprestimo (7/10)")
+    const match = transaction.description?.match(/\(\s*(\d+)\s*\/\s*(\d+)\s*\)/)
+    if (match) {
+      const tot = parseInt(match[2], 10)
+      if (tot > 1) return tot
+    }
+    // Try check parent transaction
+    if (parentTransaction?.installments_total && parentTransaction.installments_total > 1) {
+      return parentTransaction.installments_total
+    }
+    // Fallback if it's installment number > 1
+    if (transaction.installment_number && transaction.installment_number > 1) {
+      return transaction.installment_number
+    }
+    return 1
+  }, [transaction, parentTransaction])
+
+  // Resolved current installment number
+  const resolvedInstallmentNumber = React.useMemo(() => {
+    if (!transaction) return 1
+    if (transaction.installment_number && transaction.installment_number > 0) {
+      return transaction.installment_number
+    }
+    const match = transaction.description?.match(/\(\s*(\d+)\s*\/\s*(\d+)\s*\)/)
+    if (match) {
+      const num = parseInt(match[1], 10)
+      if (num > 0) return num
+    }
+    return 1
+  }, [transaction])
+
   const [type, setType] = useState<TransactionType>(transaction?.type || defaultType)
   const [description, setDescription] = useState(transaction?.description || '')
   const [amountStr, setAmountStr] = useState(transaction ? String(transaction.amount) : '')
@@ -83,11 +121,7 @@ export function TransactionModal({
     transaction?.recurrence_type || 'mensal',
   )
   const [notes, setNotes] = useState(transaction?.notes || '')
-  const [installmentsTotal, setInstallmentsTotal] = useState(
-    transaction?.installments_total && transaction.installments_total > 1
-      ? transaction.installments_total
-      : 1,
-  )
+  const [installmentsTotal, setInstallmentsTotal] = useState(resolvedInstallmentsTotal)
   const [propagationModalOpen, setPropagationModalOpen] = useState(false)
   const [pendingFormData, setPendingFormData] = useState<UpdateTransactionPayload | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -105,11 +139,7 @@ export function TransactionModal({
       setIsRecurring(Boolean(transaction.is_recurring))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
       setNotes(transaction.notes || '')
-      setInstallmentsTotal(
-        transaction.installments_total && transaction.installments_total > 1
-          ? transaction.installments_total
-          : 1,
-      )
+      setInstallmentsTotal(resolvedInstallmentsTotal)
     } else {
       setType(defaultType)
       setDescription('')
@@ -121,7 +151,7 @@ export function TransactionModal({
       setNotes('')
       setInstallmentsTotal(1)
     }
-  }, [transaction, defaultType, accounts])
+  }, [transaction, defaultType, accounts, resolvedInstallmentsTotal])
 
   // Filter categories by selected type (categories with type === type OR dual-flow categories: Fabrício, Raffaela, Investimento) sorted A-Z
   const filteredCategories = useMemo(() => {
@@ -226,7 +256,7 @@ export function TransactionModal({
       const isTxInstallment = Boolean(
         transaction.parent_transaction_id ||
         (transaction.installment_number && transaction.installment_number > 0) ||
-        (transaction.installments_total && transaction.installments_total > 1),
+        resolvedInstallmentsTotal > 1,
       )
 
       // Se for recorrente ou parcelado, perguntar ao usuário como propagar antes de aplicar!
@@ -289,8 +319,8 @@ export function TransactionModal({
               <div className="flex items-center gap-1.5 font-semibold text-amber-800">
                 <Package className="w-4 h-4 text-amber-600" />
                 <span>
-                  Esta transação é uma parcela ({transaction?.installment_number || 1}/
-                  {transaction?.installments_total || '?'})
+                  Esta transação é uma parcela ({resolvedInstallmentNumber}/
+                  {resolvedInstallmentsTotal})
                 </span>
               </div>
               <p className="text-amber-700 leading-relaxed">
@@ -309,7 +339,7 @@ export function TransactionModal({
                 ) : (
                   <>
                     Esta transação faz parte de um plano de parcelamento em{' '}
-                    {transaction?.installments_total || '?'}x.
+                    {resolvedInstallmentsTotal}x.
                   </>
                 )}
               </p>
@@ -573,20 +603,19 @@ export function TransactionModal({
                 <Input
                   id="tx-installments"
                   type="number"
-                  min={isEditing ? transaction?.installment_number || 1 : 1}
+                  min={1}
                   max={60}
                   step={1}
                   value={installmentsTotal}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10)
-                    const minVal = isEditing ? 1 : 1
-                    setInstallmentsTotal(isNaN(v) || v < minVal ? minVal : Math.min(v, 60))
+                    setInstallmentsTotal(isNaN(v) || v < 1 ? 1 : Math.min(v, 60))
                   }}
                   className="rounded-xl h-11 w-28 font-semibold tabular-nums"
                 />
                 <span className="text-sm text-slate-500">
                   {isEditing
-                    ? `parcelas no total (atual: ${transaction?.installment_number || 1})`
+                    ? `parcelas no total (parcela atual: ${resolvedInstallmentNumber})`
                     : 'x (à vista = 1)'}
                 </span>
               </div>
@@ -600,15 +629,17 @@ export function TransactionModal({
                   cada, com datas mensais a partir de {date}.
                 </p>
               )}
-              {isEditing && installmentsTotal !== (transaction?.installments_total || 1) && (
+              {isEditing && installmentsTotal !== resolvedInstallmentsTotal && (
                 <p className="text-xs text-amber-700 font-medium animate-fade-in">
-                  {installmentsTotal > (transaction?.installments_total || 1)
+                  {installmentsTotal > resolvedInstallmentsTotal
                     ? `Serão criadas ${
-                        installmentsTotal - (transaction?.installments_total || 1)
+                        installmentsTotal - resolvedInstallmentsTotal
                       } novas parcelas futuras.`
-                    : `Serão excluídas ${
-                        (transaction?.installments_total || 1) - installmentsTotal
-                      } parcelas excedentes.`}
+                    : installmentsTotal < resolvedInstallmentNumber
+                      ? `Aviso: o novo total (${installmentsTotal}) é menor que a parcela atual (${resolvedInstallmentNumber}). As parcelas posteriores serão ajustadas.`
+                      : `Serão excluídas ${
+                          resolvedInstallmentsTotal - installmentsTotal
+                        } parcelas excedentes.`}
                 </p>
               )}
             </div>
@@ -668,11 +699,11 @@ export function TransactionModal({
         isInstallment={Boolean(
           transaction?.parent_transaction_id ||
           (transaction?.installment_number && transaction?.installment_number > 0) ||
-          (transaction?.installments_total && transaction?.installments_total > 1),
+          resolvedInstallmentsTotal > 1,
         )}
         isRecurring={Boolean(transaction?.is_recurring || transaction?.recurring)}
-        currentInstallment={transaction?.installment_number}
-        totalInstallments={transaction?.installments_total}
+        currentInstallment={resolvedInstallmentNumber}
+        totalInstallments={resolvedInstallmentsTotal}
         onConfirm={handlePropagationConfirm}
         isSubmitting={isSubmitting}
       />

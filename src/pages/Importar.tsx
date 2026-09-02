@@ -1038,6 +1038,7 @@ export default function Importar() {
             paid: true,
             is_recurring: false,
             installments_total: totalInst,
+            installment_total: totalInst,
             installment_number: 0,
             notes: `Importado de planilha: registro pai consolidado (${totalInst}x)`,
           }
@@ -1059,6 +1060,7 @@ export default function Importar() {
             paid: true,
             is_recurring: false,
             installments_total: totalInst,
+            installment_total: totalInst,
             installment_number: currentInst,
             parent_transaction_id: parentRecord.id,
             notes: `Importado de planilha: parcela ${currentInst}/${totalInst}`,
@@ -1117,6 +1119,7 @@ export default function Importar() {
               paid: true,
               is_recurring: false,
               installments_total: totalInst,
+              installment_total: totalInst,
               installment_number: inst,
               notes: 'Importado de planilha via parcelamento automático',
             }
