@@ -95,6 +95,46 @@ function extractRecurrence(normalized: string): {
   return { isRecurring: false, recurrenceType: undefined, matched: false }
 }
 
+// ---- Consumption / expense keywords for disambiguation ----
+const CONSUMPTION_KEYWORDS = [
+  'almoco',
+  'almoco',
+  'almoço',
+  'janta',
+  'jantar',
+  'lanche',
+  'padaria',
+  'restaurante',
+  'mercado',
+  'supermercado',
+  'ifood',
+  'delivery',
+  'cafe',
+  'café',
+  'pizza',
+  'pizzaria',
+  'hamburguer',
+  'burger',
+  'uber',
+  'gasolina',
+  'farmacia',
+  'farmácia',
+  'remedio',
+  'remédio',
+  'cinema',
+  'estacionamento',
+  'pedagio',
+  'pedágio',
+  'passagem',
+  'hotel',
+  'pet',
+  'racao',
+  'ração',
+  'veterinario',
+  'veterinário',
+  'vet',
+]
+
 // ---- Category dictionary (PT-BR) fallback rules ----
 interface CategoryRule {
   keywords: string[]
@@ -653,59 +693,65 @@ export function extractCategoryAndSubcategory(
     }
   }
 
-  // Step 2: Check direct category matches in the text
-  const sortedCategories = [...categories].sort((a, b) => b.name.length - a.name.length)
-  let foundCategory: Category | undefined
-  for (const cat of sortedCategories) {
-    if (matchesPhraseOrWord(normalized, cat.name)) {
-      foundCategory = cat
-      break
-    }
-  }
-
-  // Step 3: Check category rules dictionary if not directly found
-  if (!foundCategory) {
-    for (const rule of CATEGORY_RULES) {
-      if (rule.keywords.some((kw) => matchesPhraseOrWord(normalized, kw))) {
-        const match = categories.find(
-          (c) =>
-            stripAccents(c.name) === stripAccents(rule.category) ||
-            stripAccents(c.name).includes(stripAccents(rule.category)) ||
-            stripAccents(rule.category).includes(stripAccents(c.name)),
-        )
-        if (match) {
-          foundCategory = match
-          break
-        }
+  // Step 2: Check dictionary rules FIRST if the text contains strong consumption keywords
+  // (e.g. "almoço" -> matches category rules before person name category like "Raffaela")
+  const ruleMatches: Category[] = []
+  for (const rule of CATEGORY_RULES) {
+    if (rule.keywords.some((kw) => matchesPhraseOrWord(normalized, kw))) {
+      const match = categories.find(
+        (c) =>
+          stripAccents(c.name) === stripAccents(rule.category) ||
+          stripAccents(c.name).includes(stripAccents(rule.category)) ||
+          stripAccents(rule.category).includes(stripAccents(c.name)),
+      )
+      if (match) {
+        ruleMatches.push(match)
       }
     }
   }
 
-  // Step 4: Resolve combination of category and subcategory
-  if (foundCategory) {
-    // Look for a matching subcategory that belongs to this category first
-    const subForFoundCat = matchingSubs.find((s) => s.category_id === foundCategory?.id)
-    if (subForFoundCat) {
+  // Step 3: Check direct category matches in the text
+  const sortedCategories = [...categories].sort((a, b) => b.name.length - a.name.length)
+  const directCatMatches: Category[] = []
+  for (const cat of sortedCategories) {
+    if (matchesPhraseOrWord(normalized, cat.name)) {
+      directCatMatches.push(cat)
+    }
+  }
+
+  // Step 4: If matching subcategories exist, prioritize them!
+  // E.g. If "Almoço" or "Restaurante" matches subcategory "Restaurantes / Delivery",
+  // that points directly to category "Família" and subcategory "Restaurantes / Delivery".
+  // Also check if any category rule matches a subcategory name directly (e.g. "almoco" -> "Restaurantes / Delivery" or "Alimentação")
+  if (matchingSubs.length > 0) {
+    // If we have a ruleMatch or directCatMatch that owns this subcategory, perfect!
+    const subOwnedByRule = matchingSubs.find((s) =>
+      ruleMatches.some((rm) => rm.id === s.category_id),
+    )
+    if (subOwnedByRule) {
+      const parent = categories.find((c) => c.id === subOwnedByRule.category_id)
       return {
-        category: foundCategory,
-        subcategory: subForFoundCat,
-        categoryMatched: true,
+        category: parent,
+        subcategory: subOwnedByRule,
+        categoryMatched: Boolean(parent),
         subcategoryMatched: true,
       }
     }
-    // If no matching sub under this category, return category with subcategoryMatched = false
-    return {
-      category: foundCategory,
-      subcategory: matchingSubs[0] || undefined,
-      categoryMatched: true,
-      subcategoryMatched: Boolean(
-        matchingSubs[0] && matchingSubs[0].category_id === foundCategory.id,
-      ),
-    }
-  }
 
-  // If category wasn't found directly, but we found matching subcategories:
-  if (matchingSubs.length > 0) {
+    const subOwnedByDirect = matchingSubs.find((s) =>
+      directCatMatches.some((dc) => dc.id === s.category_id),
+    )
+    if (subOwnedByDirect) {
+      const parent = categories.find((c) => c.id === subOwnedByDirect.category_id)
+      return {
+        category: parent,
+        subcategory: subOwnedByDirect,
+        categoryMatched: Boolean(parent),
+        subcategoryMatched: true,
+      }
+    }
+
+    // Otherwise, the best matched subcategory gives us its parent category
     const bestSub = matchingSubs[0]
     const parentCategory = categories.find((c) => c.id === bestSub.category_id)
     return {
@@ -713,6 +759,97 @@ export function extractCategoryAndSubcategory(
       subcategory: bestSub,
       categoryMatched: Boolean(parentCategory),
       subcategoryMatched: true,
+    }
+  }
+
+  // If no direct subcategory matched yet, see if dictionary rule keywords match a subcategory
+  // e.g. "almoco" matches "Restaurantes / Delivery" or "Alimentação"
+  for (const rule of CATEGORY_RULES) {
+    const matchedKeyword = rule.keywords.find((kw) => matchesPhraseOrWord(normalized, kw))
+    if (matchedKeyword) {
+      // Look for a subcategory whose name or category matches
+      // First check if any subcategory contains or relates to this keyword
+      const subMatch = subcategories.find((s) => {
+        const sNorm = stripAccents(s.name)
+        return (
+          sNorm.includes(matchedKeyword) ||
+          matchedKeyword.includes(sNorm) ||
+          (matchedKeyword === 'almoco' &&
+            (sNorm.includes('restaurante') || sNorm.includes('alimentac'))) ||
+          (matchedKeyword === 'jantar' &&
+            (sNorm.includes('restaurante') || sNorm.includes('alimentac'))) ||
+          (matchedKeyword === 'ifood' &&
+            (sNorm.includes('delivery') || sNorm.includes('restaurante')))
+        )
+      })
+      if (subMatch) {
+        const parent = categories.find((c) => c.id === subMatch.category_id)
+        if (parent) {
+          return {
+            category: parent,
+            subcategory: subMatch,
+            categoryMatched: true,
+            subcategoryMatched: true,
+          }
+        }
+      }
+    }
+  }
+
+  // Step 5: Check category from ruleMatches or directCatMatches
+  // Notice: If ruleMatches has an expense category (e.g. Alimentação/Família) and directCatMatches is a person name
+  // in a context with an expense keyword ("almoço"), ruleMatch or person category?
+  // If the user said "almoço raffaela", Raffaela could be the category or subcategory of Raffaela (e.g. Alimentação under Raffaela).
+  // Let's check if there is a person category named in directCatMatches (e.g. "Raffaela")
+  const personCat = directCatMatches.find((c) => {
+    const n = stripAccents(c.name)
+    return (
+      n === 'raffaela' || n === 'fabricio' || n === 'emanuel' || n === 'helena' || n === 'matheus'
+    )
+  })
+
+  if (personCat) {
+    // If the person category has a subcategory for the expense (e.g. "Alimentação" or "Restaurante" under Helena/Raffaela), match it!
+    const personSubs = subcategories.filter((s) => s.category_id === personCat.id)
+    const subInPerson = personSubs.find((s) => {
+      const sNorm = stripAccents(s.name)
+      return (
+        matchesPhraseOrWord(normalized, s.name) ||
+        (sNorm.includes('alimentac') &&
+          (normalized.includes('almoco') ||
+            normalized.includes('restaurante') ||
+            normalized.includes('lanche')))
+      )
+    })
+    if (subInPerson) {
+      return {
+        category: personCat,
+        subcategory: subInPerson,
+        categoryMatched: true,
+        subcategoryMatched: true,
+      }
+    }
+  }
+
+  // Otherwise, if we have ruleMatches, pick the first ruleMatch
+  if (ruleMatches.length > 0) {
+    const found = ruleMatches[0]
+    return {
+      category: found,
+      subcategory: undefined,
+      categoryMatched: true,
+      subcategoryMatched: false,
+    }
+  }
+
+  // Otherwise, direct category matches
+  if (directCatMatches.length > 0) {
+    const found = directCatMatches[0]
+    return {
+      category: found,
+      subcategory: undefined,
+      categoryMatched: true,
+      subcategoryMatched: false,
     }
   }
 
@@ -747,17 +884,76 @@ function extractAccount(
       }
     }
   }
+  // Match by combinations: e.g. "credito santander" -> account with 'santander' and type 'credito' (or 'credito' in name)
+  // or "debito neon" -> account with 'neon' and type != 'credito'
+  const isCreditoKw =
+    normalized.includes('credito') ||
+    normalized.includes('crédito') ||
+    normalized.includes('cartao de credito') ||
+    normalized.includes('cartão de crédito')
+  const isDebitoKw =
+    normalized.includes('debito') ||
+    normalized.includes('débito') ||
+    normalized.includes('cartao de debito') ||
+    normalized.includes('cartão de débito')
+
+  // Check bank keywords mentioned in normalized string
+  const knownBanks = [
+    'santander',
+    'neon',
+    'nubank',
+    'itau',
+    'bradesco',
+    'inter',
+    'c6',
+    'caixa',
+    'flash',
+    'original',
+    'next',
+  ]
+  for (const bankName of knownBanks) {
+    if (matchesPhraseOrWord(normalized, bankName)) {
+      const bankAccounts = accounts.filter((a) => {
+        const aName = stripAccents(a.name.toLowerCase())
+        const aBank = stripAccents((a.bank || '').toLowerCase())
+        return aName.includes(bankName) || aBank.includes(bankName)
+      })
+
+      if (bankAccounts.length > 0) {
+        if (isCreditoKw) {
+          const credAcc = bankAccounts.find(
+            (a) => a.type === 'credito' || stripAccents(a.name.toLowerCase()).includes('credito'),
+          )
+          if (credAcc) return { accountId: credAcc.id, matched: true }
+        }
+        if (isDebitoKw) {
+          const debAcc = bankAccounts.find(
+            (a) => a.type !== 'credito' && !stripAccents(a.name.toLowerCase()).includes('credito'),
+          )
+          if (debAcc) return { accountId: debAcc.id, matched: true }
+        }
+        // If neither or only bank mentioned, pick primary among bankAccounts or first
+        const primaryInBank = bankAccounts.find((a) => a.is_primary)
+        return { accountId: (primaryInBank || bankAccounts[0]).id, matched: true }
+      }
+    }
+  }
+
   // Match by account type keyword
   for (const [accType, keywords] of Object.entries(ACCOUNT_TYPE_KEYWORDS)) {
     for (const kw of keywords) {
       if (matchesPhraseOrWord(normalized, kw)) {
-        const match = accounts.find((a) => a.type === accType)
+        // Prefer primary account of this type if any, else first
+        const match =
+          accounts.find((a) => a.type === accType && a.is_primary) ||
+          accounts.find((a) => a.type === accType)
         if (match) return { accountId: match.id, matched: true }
       }
     }
   }
-  // Fallback: first account
-  return { accountId: accounts[0]?.id, matched: false }
+  // Fallback: primary account or first account
+  const primary = accounts.find((a) => a.is_primary)
+  return { accountId: primary?.id || accounts[0]?.id, matched: false }
 }
 
 // ---- Date extraction ----
@@ -825,6 +1021,8 @@ function buildDescription(
     )
     candidates.add(amount.toLocaleString('pt-BR'))
     candidates.add(String(amount))
+    // Also candidate for "45,0" when amount is 45
+    candidates.add(`${Math.floor(amount)},0`)
     candidates.forEach((cand) => {
       desc = desc.split(cand).join('')
     })
@@ -864,13 +1062,13 @@ function buildDescription(
     '',
   )
 
-  // Remove leftover account-type filler words near the end
+  // Remove leftover account-type filler words near the end (e.g., "no credito santander", "no santander", "no credito")
   desc = desc.replace(
-    /\b(no|na|em|com|pelo|pela)\s+(cart[aã]o de cr[eé]dito|cart[aã]o de d[eé]bito|cr[eé]dito|d[eé]bito|pix|dinheiro|carteira)\b/gi,
+    /\b(no|na|em|com|pelo|pela)\s+(cart[aã]o de cr[eé]dito|cart[aã]o de d[eé]bito|cr[eé]dito|d[eé]bito|pix|dinheiro|carteira)(\s+(nubank|itau|ita[uú]|bradesco|santander|caixa|inter|c6|xp|btg|original|next|neon|flash))?\b/gi,
     '',
   )
   desc = desc.replace(
-    /\b(no|na)\s+(nubank|itau|ita[uú]|bradesco|santander|caixa|inter|c6|xp|btg|original|next)\b/gi,
+    /\b(no|na|em|com|pelo|pela)\s+(nubank|itau|ita[uú]|bradesco|santander|caixa|inter|c6|xp|btg|original|next|neon|flash)(\s+(cart[aã]o de cr[eé]dito|cart[aã]o de d[eé]bito|cr[eé]dito|d[eé]bito|pix|dinheiro|carteira))?\b/gi,
     '',
   )
 

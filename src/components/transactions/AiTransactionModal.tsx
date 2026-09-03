@@ -122,6 +122,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const filteredCategories = useMemo(() => {
     return categories
       .filter((c) => {
+        if (c.id === categoryId) return true
         if (c.type === type) return true
         const normName = c.name.toLowerCase().trim()
         return (
@@ -132,7 +133,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         )
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
-  }, [categories, type])
+  }, [categories, type, categoryId])
 
   const filteredSubcategories = useMemo(
     () =>
@@ -145,12 +146,12 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   React.useEffect(() => {
     if (filteredCategories.length > 0) {
       const exists = filteredCategories.some((c) => c.id === categoryId)
-      if (!exists) {
+      if (!exists && !hasInterpreted) {
         setCategoryId(filteredCategories[0].id)
         setSubcategoryId('')
       }
     }
-  }, [type, filteredCategories, categoryId])
+  }, [type, filteredCategories, categoryId, hasInterpreted])
 
   const handleInterpret = () => {
     if (!text.trim()) {
@@ -181,7 +182,6 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         let finalCatId = ''
         if (result.category_id) {
           finalCatId = result.category_id
-          setCategoryId(result.category_id)
         } else {
           const fallback =
             categories.find(
@@ -192,8 +192,8 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
             categories.find((c) => c.type === result.type) ||
             null
           finalCatId = fallback?.id || ''
-          setCategoryId(finalCatId)
         }
+        setCategoryId(finalCatId)
 
         // Subcategory matching
         if (result.subcategory_id) {
