@@ -948,6 +948,42 @@ export default function Importar() {
       return match ? match.id : ''
     }
 
+    // Helpers for rate limiting and backoff retry on 429 (Too Many Requests)
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+    const is429Error = (error: any): boolean => {
+      return (
+        error?.status === 429 ||
+        error?.statusCode === 429 ||
+        error?.response?.status === 429 ||
+        error?.message?.includes('429')
+      )
+    }
+
+    const executeWithRetry = async <T,>(
+      fn: () => Promise<T>,
+      maxRetries = 3,
+      baseDelayMs = 500,
+    ): Promise<T> => {
+      let attempt = 0
+      while (true) {
+        try {
+          return await fn()
+        } catch (error: any) {
+          if (is429Error(error) && attempt < maxRetries) {
+            attempt++
+            const delay = baseDelayMs * Math.pow(2, attempt - 1)
+            console.warn(
+              `[Importar] 429 detectado. Retentando em ${delay}ms (tentativa ${attempt}/${maxRetries})...`,
+            )
+            await sleep(delay)
+            continue
+          }
+          throw error
+        }
+      }
+    }
+
     // Cache of subcategories so we can dynamically auto-create if missing
     const subcatsCache: Subcategory[] = [...freshSubcategories]
     const getOrCreateSubcategoryId = async (
@@ -962,11 +998,13 @@ export default function Importar() {
 
       // Create new subcategory automatically
       try {
-        const created = await pb.collection('subcategories').create<Subcategory>({
-          control_id: currentCompany.id,
-          category_id: categoryId,
-          name: subName.trim(),
-        })
+        const created = await executeWithRetry(() =>
+          pb.collection('subcategories').create<Subcategory>({
+            control_id: currentCompany.id,
+            category_id: categoryId,
+            name: subName.trim(),
+          }),
+        )
         subcatsCache.push(created)
         return created.id
       } catch (err) {
@@ -975,9 +1013,22 @@ export default function Importar() {
       }
     }
 
+    const BATCH_SIZE = 5
+    const BATCH_DELAY_MS = 150
+    const INTER_ROW_DELAY_MS = 30
+
     for (let i = 0; i < parsedRows.length; i++) {
       const row = parsedRows[i]
       setImportProgress({ current: i + 1, total: parsedRows.length })
+
+      // Rate limiting: pause between batches or small delay between rows
+      if (i > 0) {
+        if (i % BATCH_SIZE === 0) {
+          await sleep(BATCH_DELAY_MS)
+        } else {
+          await sleep(INTER_ROW_DELAY_MS)
+        }
+      }
 
       // Check if row is skippable due to missing account or invalid data
       if (!row.isValid || !row.matchedAccount) {
@@ -1043,7 +1094,9 @@ export default function Importar() {
             notes: `Importado de planilha: registro pai consolidado (${totalInst}x)`,
           }
 
-          const parentRecord = await pb.collection('transactions').create(parentPayload)
+          const parentRecord = await executeWithRetry(() =>
+            pb.collection('transactions').create(parentPayload),
+          )
           summary.createdTransactions++
 
           // 2. Create the current individual installment (e.g. 23/36) with sheet date
@@ -1066,19 +1119,23 @@ export default function Importar() {
             notes: `Importado de planilha: parcela ${currentInst}/${totalInst}`,
           }
 
-          await pb.collection('transactions').create(currentInstPayload)
+          await executeWithRetry(() => pb.collection('transactions').create(currentInstPayload))
           summary.createdTransactions++
 
           // Adjust account balance for the created installment
           try {
-            const acc = await pb.collection('accounts').getOne(row.matchedAccount.id)
+            const acc = await executeWithRetry(() =>
+              pb.collection('accounts').getOne(row.matchedAccount.id),
+            )
             let newBalance = Number(acc.balance) || 0
             if (acc.type === 'credito') {
               newBalance += row.matchedCategoryType === 'despesa' ? unitAmount : -unitAmount
             } else {
               newBalance += row.matchedCategoryType === 'receita' ? unitAmount : -unitAmount
             }
-            await pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance })
+            await executeWithRetry(() =>
+              pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
+            )
           } catch (err) {
             console.warn('Erro ao atualizar saldo da conta:', err)
           }
@@ -1125,27 +1182,31 @@ export default function Importar() {
             }
 
             if (inst !== 1) payload.parent_transaction_id = parentId
-            const rec = await pb.collection('transactions').create(payload)
+            const rec = await executeWithRetry(() => pb.collection('transactions').create(payload))
             summary.createdTransactions++
 
             if (inst === 1) {
               parentId = rec.id
-              await pb
-                .collection('transactions')
-                .update(rec.id, { parent_transaction_id: parentId })
+              await executeWithRetry(() =>
+                pb.collection('transactions').update(rec.id, { parent_transaction_id: parentId }),
+              )
             }
           }
 
           // Adjust balance
           try {
-            const acc = await pb.collection('accounts').getOne(row.matchedAccount.id)
+            const acc = await executeWithRetry(() =>
+              pb.collection('accounts').getOne(row.matchedAccount.id),
+            )
             let newBalance = Number(acc.balance) || 0
             if (acc.type === 'credito') {
               newBalance += row.matchedCategoryType === 'despesa' ? row.amount : -row.amount
             } else {
               newBalance += row.matchedCategoryType === 'receita' ? row.amount : -row.amount
             }
-            await pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance })
+            await executeWithRetry(() =>
+              pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
+            )
           } catch (err) {
             console.warn('Erro ao atualizar saldo da conta:', err)
           }
@@ -1181,19 +1242,23 @@ export default function Importar() {
               : 'Importado de planilha',
           }
 
-          await pb.collection('transactions').create(singlePayload)
+          await executeWithRetry(() => pb.collection('transactions').create(singlePayload))
           summary.createdTransactions++
 
           // Adjust balance
           try {
-            const acc = await pb.collection('accounts').getOne(row.matchedAccount.id)
+            const acc = await executeWithRetry(() =>
+              pb.collection('accounts').getOne(row.matchedAccount.id),
+            )
             let newBalance = Number(acc.balance) || 0
             if (acc.type === 'credito') {
               newBalance += row.matchedCategoryType === 'despesa' ? row.amount : -row.amount
             } else {
               newBalance += row.matchedCategoryType === 'receita' ? row.amount : -row.amount
             }
-            await pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance })
+            await executeWithRetry(() =>
+              pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
+            )
           } catch (err) {
             console.warn('Erro ao atualizar saldo da conta:', err)
           }
