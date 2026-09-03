@@ -109,7 +109,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setType('despesa')
       setDescription('')
       setAmountStr('')
-      setDate(new Date().toISOString().split('T')[0])
+      setDate(defaultDateForAccount(primaryAccount))
       setAccountId(primaryAccount?.id || '')
       setCategoryId('')
       setSubcategoryId('')
@@ -122,13 +122,20 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const filteredCategories = useMemo(() => {
     return categories
       .filter((c) => {
+        // Always include currently selected category
         if (c.id === categoryId) return true
+        // Matching type
         if (c.type === type) return true
+        // Allow personal categories (Fabrício, Raffaela, Helena, Emanuel, Matheus) and Investimento across both
         const normName = c.name.toLowerCase().trim()
         return (
           normName === 'fabrício' ||
           normName === 'fabricio' ||
           normName === 'raffaela' ||
+          normName === 'rafaela' ||
+          normName === 'helena' ||
+          normName === 'emanuel' ||
+          normName === 'matheus' ||
           normName === 'investimento'
         )
       })
@@ -172,8 +179,17 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         setType(result.type)
         setDescription(result.description)
         setAmountStr(result.amount > 0 ? String(result.amount) : '')
-        setDate(result.date)
-        setAccountId(resolveAccountId(result.account_id))
+        const resolvedAccId = resolveAccountId(result.account_id)
+        setAccountId(resolvedAccId)
+
+        // If date was explicitly matched in text use it, else if credit card with due_day adapt or keep
+        if (result.confidence.date) {
+          setDate(result.date)
+        } else {
+          const accObj = accounts.find((a) => a.id === resolvedAccId) || null
+          setDate(defaultDateForAccount(accObj))
+        }
+
         setInstallmentsTotal(result.installments_total)
         setIsRecurring(Boolean(result.is_recurring))
         setRecurrenceType(result.recurrence_type || 'mensal')
