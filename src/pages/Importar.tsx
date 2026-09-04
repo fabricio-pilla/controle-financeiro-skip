@@ -27,6 +27,8 @@ import {
   Download,
   Filter,
   Search,
+  FileDown,
+  HelpCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
@@ -38,6 +40,7 @@ import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
 import { sleep, executeWithRetry as executeSharedRetry } from '@/lib/pocketbase/retry'
+import { downloadTemplateXlsx, downloadTemplateCsv } from '@/lib/import-template'
 
 // 11 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
@@ -165,8 +168,8 @@ function extractIsoDateOnly(val: any): string {
 
 // Convert Excel dates (serial numbers, Date objects, or strings) to YYYY-MM-DD
 function parseExcelDate(value: any): string {
-  if (!value) {
-    return new Date().toISOString().split('T')[0]
+  if (value === null || value === undefined || value === '') {
+    return ''
   }
 
   // If it's already a JS Date
@@ -213,35 +216,43 @@ function parseExcelDate(value: any): string {
     return `${year}-${month}-${day}`
   }
 
-  // Try Date.parse
+  // Try Date.parse if looks like a date string
   const parsed = new Date(str)
-  if (!isNaN(parsed.getTime())) {
+  if (!isNaN(parsed.getTime()) && !/^\d+$/.test(str)) {
     const y = parsed.getFullYear()
     const m = String(parsed.getMonth() + 1).padStart(2, '0')
     const d = String(parsed.getDate()).padStart(2, '0')
     return `${y}-${m}-${d}`
   }
 
-  return new Date().toISOString().split('T')[0]
+  return ''
 }
 
-// Parse numeric values (support Brazilian format R$ 1.234,56 or -123.45)
+// Parse numeric values (support Brazilian format R$ 1.234,56, 1234.56, negative parentheses, etc)
 function parseExcelAmount(value: any): number {
   if (typeof value === 'number') return Math.abs(value)
-  if (!value) return 0
+  if (value === null || value === undefined || value === '') return 0
 
   let str = String(value).trim()
   // Remove currency symbol, spaces, non-numeric except . , and -
   str = str.replace(/[R$\s]/gi, '')
 
-  // If format is like "1.234,56"
+  // Se estiver entre parênteses como "(150,00)"
+  if (str.startsWith('(') && str.endsWith(')')) {
+    str = str.slice(1, -1)
+  }
+
+  // If format is like "1.234,56" or "1,234.56"
   if (str.includes(',') && str.includes('.')) {
     if (str.indexOf('.') < str.indexOf(',')) {
+      // Formato brasileiro com milhar ponto e decimal vírgula: 1.234,56 -> 1234.56
       str = str.replace(/\./g, '').replace(',', '.')
     } else {
+      // Formato americano com milhar vírgula e decimal ponto: 1,234.56 -> 1234.56
       str = str.replace(/,/g, '')
     }
   } else if (str.includes(',')) {
+    // Formato brasileiro padrão: "1234,56" -> "1234.56"
     str = str.replace(',', '.')
   }
 
@@ -684,9 +695,9 @@ export default function Importar() {
     setImportSummary(null)
     setParsedRows([])
 
-    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+    if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
       setErrorBanner(
-        'Formato de arquivo inválido. Por favor, envie uma planilha Excel (.xlsx ou .xls).',
+        'Formato de arquivo inválido. Por favor, envie uma planilha Excel (.xlsx ou .xls) ou arquivo CSV (.csv).',
       )
       return
     }
@@ -697,11 +708,14 @@ export default function Importar() {
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer)
+        const isCsv = file.name.toLowerCase().endsWith('.csv')
         const wb = XLSX.read(data, {
           type: 'array',
           cellDates: true,
           cellNF: false,
           cellText: false,
+          raw: !isCsv,
+          codepage: isCsv ? 65001 : undefined, // UTF-8
         })
         setWorkbook(wb)
         setSheetNames(wb.SheetNames)
@@ -746,22 +760,45 @@ export default function Importar() {
     const rows: ParsedRow[] = []
 
     jsonRows.forEach((row, index) => {
-      // Find columns by flexible names
+      // Find columns by flexible names (ignores accents, case, spaces, symbols)
       const getVal = (...keys: string[]) => {
+        const rowKeys = Object.keys(row)
         for (const k of keys) {
-          const matchKey = Object.keys(row).find((rk) => normalizeText(rk) === normalizeText(k))
+          const normTarget = normalizeText(k)
+          // 1. Busca correspondência exata normalizada
+          const matchKey = rowKeys.find((rk) => normalizeText(rk) === normTarget)
           if (matchKey && row[matchKey] !== undefined && row[matchKey] !== '') {
             return row[matchKey]
+          }
+          // 2. Busca correspondência contida (ex: "data do lançamento" ou "valor r$")
+          const looseKey = rowKeys.find((rk) => {
+            const norm = normalizeText(rk)
+            return norm.includes(normTarget) || normTarget.includes(norm)
+          })
+          if (looseKey && row[looseKey] !== undefined && row[looseKey] !== '') {
+            return row[looseKey]
           }
         }
         return ''
       }
 
-      // Column candidates
-      const dateVal = getVal('Data', 'Date', 'Dt', 'Dia', 'Data Lançamento', 'Data do Lançamento')
+      // Column candidates com ampla tolerância a variações de digitação e termos
+      const dateVal = getVal(
+        'Data',
+        'Date',
+        'Dt',
+        'Dia',
+        'Data Lançamento',
+        'Data do Lançamento',
+        'Data Lancamento',
+        'Data da Transacao',
+        'Data Transação',
+      )
       const descVal = getVal(
         'Descrição',
         'Descricao',
+        'Descriçao',
+        'Descricao do Lancamento',
         'Desc',
         'Histórico',
         'Historico',
@@ -770,43 +807,68 @@ export default function Importar() {
         'Titulo',
         'Lançamento',
         'Lancamento',
+        'Item',
+        'Detalhe',
+        'Estabelecimento',
       )
       const amountVal = getVal(
         'Valor',
         'Valor (R$)',
+        'Valor R$',
         'Quantia',
         'Total',
         'Amount',
         'Preço',
         'Preco',
+        'Valor da Parcela',
+        'Valor Total',
       )
       const accountVal = getVal(
         'Meio de pagamento',
-        'Conta',
         'Meio Pagamento',
+        'Tipo de Pagamento',
+        'Tipo Pagamento',
         'Forma de Pagamento',
+        'Forma Pagamento',
+        'Conta',
         'Cartão',
         'Cartao',
         'Banco',
         'Origem',
         'Payment Method',
+        'Conta / Cartão',
+        'Cartão de Crédito',
       )
       const catVal = getVal(
         'Categoria',
-        'Tipo',
         'Category',
+        'Subcategoria',
+        'Sub-categoria',
         'Classificação',
         'Classificacao',
         'Grupo',
-        'Subcategoria',
       )
-      const typeVal = getVal('Tipo Lançamento', 'Tipo Transação', 'Natureza', 'D/C', 'Operação')
+      const typeVal = getVal(
+        'Tipo',
+        'Tipo Lançamento',
+        'Tipo Lancamento',
+        'Tipo Transação',
+        'Tipo Transacao',
+        'Natureza',
+        'D/C',
+        'Operação',
+        'Operacao',
+        'Entrada/Saída',
+      )
       const budgetVal = getVal(
         'Orçamento',
         'Orcamento',
         'Budget',
         'Centro de Custo',
         'Centro de Custo / Orçamento',
+        'Macro Categoria',
+        'Categoria Macro',
+        'Pessoa / Orçamento',
       )
       const parcelasVal = getVal(
         'Parcelas',
@@ -814,7 +876,10 @@ export default function Importar() {
         'Qtd Parcelas',
         'Plano',
         'Nº Parcela',
+        'No Parcela',
+        'Num Parcela',
         'Parcelamento',
+        'Qtd de Parcelas',
       )
       const recurrenceVal = getVal(
         'Recorrência',
@@ -823,6 +888,8 @@ export default function Importar() {
         'Frequencia',
         'Periodicidade',
         'Repetição',
+        'Repeticao',
+        'Recorrente',
       )
 
       const description = String(descVal || 'Sem descrição').trim()
@@ -1596,7 +1663,20 @@ export default function Importar() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              downloadTemplateXlsx(dbAccounts, dbCategories, dbSubcategories)
+              toast.success('Modelo de planilha (.xlsx) baixado com sucesso!')
+            }}
+            className="rounded-xl h-10 gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm"
+          >
+            <Download className="w-4 h-4 text-indigo-600" />
+            <span className="font-semibold">Baixar Modelo (.xlsx)</span>
+          </Button>
+
           <Link to={`/controle/${currentCompany?.id}/lancamentos`}>
             <Button variant="outline" className="rounded-xl h-10 gap-2">
               <Receipt className="w-4 h-4" />
@@ -1632,7 +1712,7 @@ export default function Importar() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".xlsx, .xls"
+          accept=".xlsx, .xls, .csv"
           onChange={handleFileInput}
           className="hidden"
         />
@@ -1642,24 +1722,142 @@ export default function Importar() {
         </div>
 
         <h3 className="text-lg font-bold text-slate-800 mb-1">
-          {fileName ? fileName : 'Arraste e solte seu arquivo Excel aqui'}
+          {fileName ? fileName : 'Arraste e solte seu arquivo Excel ou CSV aqui'}
         </h3>
         <p className="text-sm text-slate-500 max-w-md mx-auto mb-5">
-          Suporte completo para arquivos <strong className="text-slate-700">.xlsx</strong> com
-          múltiplas abas, parcelamento e meios de pagamento.
+          Suporte completo para arquivos <strong className="text-slate-700">.xlsx</strong> e{' '}
+          <strong className="text-slate-700">.csv</strong> com múltiplas abas, parcelamento e meios
+          de pagamento.
         </p>
 
-        <Button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            fileInputRef.current?.click()
-          }}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-11 px-6 shadow-md shadow-indigo-600/20"
-        >
-          <FileSpreadsheet className="w-4 h-4 mr-2" />
-          {fileName ? 'Trocar de Arquivo' : 'Selecionar Arquivo .xlsx'}
-        </Button>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              fileInputRef.current?.click()
+            }}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-11 px-6 shadow-md shadow-indigo-600/20 font-semibold"
+          >
+            <FileSpreadsheet className="w-4 h-4 mr-2" />
+            {fileName ? 'Trocar de Arquivo' : 'Selecionar Arquivo (.xlsx / .csv)'}
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={(e) => {
+              e.stopPropagation()
+              downloadTemplateXlsx(dbAccounts, dbCategories, dbSubcategories)
+              toast.success('Modelo de planilha (.xlsx) baixado com sucesso!')
+            }}
+            className="rounded-xl h-11 px-5 border-slate-300 hover:bg-slate-100 hover:border-slate-400 text-slate-700 font-semibold gap-2"
+          >
+            <Download className="w-4 h-4 text-indigo-600" />
+            <span>Baixar Modelo de Planilha</span>
+          </Button>
+        </div>
+
+        {/* Formats notice & secondary template link */}
+        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            Formato Exato Esperado
+          </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              downloadTemplateXlsx(dbAccounts, dbCategories, dbSubcategories)
+              toast.success('Modelo .xlsx baixado!')
+            }}
+            className="text-indigo-600 hover:text-indigo-800 font-medium hover:underline inline-flex items-center gap-1"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Baixar .xlsx (com abas JAN e Instruções)</span>
+          </button>
+          <span className="text-slate-300">•</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              downloadTemplateCsv(dbAccounts, dbCategories, dbSubcategories)
+              toast.success('Modelo .csv baixado!')
+            }}
+            className="text-slate-600 hover:text-slate-800 font-medium hover:underline inline-flex items-center gap-1"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            <span>Baixar versão .csv</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Card explicativo com dicas do modelo */}
+      <div className="bg-slate-50/80 rounded-2xl border border-slate-200/80 p-4 sm:p-5 text-xs text-slate-600 space-y-3">
+        <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 font-bold text-slate-800 text-sm">
+            <HelpCircle className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span>Como preencher a planilha para importar perfeitamente</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => downloadTemplateXlsx(dbAccounts, dbCategories, dbSubcategories)}
+              className="h-8 text-xs font-semibold rounded-lg border-indigo-200 text-indigo-700 hover:bg-indigo-50 gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Baixar Modelo .xlsx</span>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => downloadTemplateCsv(dbAccounts, dbCategories, dbSubcategories)}
+              className="h-8 text-xs font-semibold rounded-lg text-slate-600 hover:bg-slate-200/60 gap-1.5"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Baixar .csv</span>
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+          <div className="bg-white p-3 rounded-xl border border-slate-200/70">
+            <p className="font-semibold text-slate-800 mb-1">📅 Coluna Data</p>
+            <p className="text-slate-500">
+              Aceita{' '}
+              <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">18/01/2026</code> ou{' '}
+              <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">2026-01-18</code> ou
+              datas do Excel.
+            </p>
+          </div>
+
+          <div className="bg-white p-3 rounded-xl border border-slate-200/70">
+            <p className="font-semibold text-slate-800 mb-1">💳 Meio de Pagamento</p>
+            <p className="text-slate-500">
+              Nome de uma conta ativa:{' '}
+              {dbAccounts.length > 0
+                ? dbAccounts
+                    .slice(0, 3)
+                    .map((a) => a.name)
+                    .join(', ')
+                : 'Neon Fabrício, Santander Fabrício Crédito'}
+              .
+            </p>
+          </div>
+
+          <div className="bg-white p-3 rounded-xl border border-slate-200/70">
+            <p className="font-semibold text-slate-800 mb-1">🔢 Parcelas & Recorrência</p>
+            <p className="text-slate-500">
+              Parcelado use{' '}
+              <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">02/10</code> na
+              coluna Parcelas. Recorrente use{' '}
+              <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">Mensal</code>.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* 2. Sheet Selector & Summary stats when workbook is loaded */}
