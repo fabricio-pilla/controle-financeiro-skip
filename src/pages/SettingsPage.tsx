@@ -170,8 +170,8 @@ export default function SettingsPage() {
     setIsDeletingAll(true)
     setDeleteAllProgress(null)
     const BATCH_SIZE = 5
-    const BATCH_DELAY_MS = 150
-    const INTER_ITEM_DELAY_MS = 30
+    const BATCH_DELAY_MS = 400
+    const INTER_ITEM_DELAY_MS = 50
 
     try {
       // 1. Obter todas as transações do controle ativo com retry
@@ -181,13 +181,15 @@ export default function SettingsPage() {
             filter: `control_id="${currentCompany.id}"`,
             fields: 'id',
           }),
-        3,
-        500,
+        5,
+        1000,
         'Limpeza-Total-Listagem',
+        10000,
       )
 
       setDeleteAllProgress({ current: 0, total: records.length })
 
+      let failedDeletions = 0
       // 2. Excluir lançamentos em lotes espaçados e com retry exponencial em 429
       for (let i = 0; i < records.length; i++) {
         const rec = records[i]
@@ -198,12 +200,18 @@ export default function SettingsPage() {
             await sleep(INTER_ITEM_DELAY_MS)
           }
         }
-        await executeWithRetry(
-          () => pb.collection('transactions').delete(rec.id),
-          3,
-          500,
-          'Limpeza-Total-Delete',
-        )
+        try {
+          await executeWithRetry(
+            () => pb.collection('transactions').delete(rec.id),
+            5,
+            1000,
+            'Limpeza-Total-Delete',
+            10000,
+          )
+        } catch (itemErr) {
+          console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+          failedDeletions++
+        }
         setDeleteAllProgress({ current: i + 1, total: records.length })
       }
 
@@ -214,27 +222,41 @@ export default function SettingsPage() {
             filter: `control_id="${currentCompany.id}"`,
             fields: 'id',
           }),
-        3,
-        500,
+        5,
+        1000,
         'Limpeza-Total-Contas',
+        10000,
       )
 
+      let failedAccounts = 0
       for (let i = 0; i < accountsList.length; i++) {
         const acc = accountsList[i]
         if (i > 0) {
           await sleep(INTER_ITEM_DELAY_MS)
         }
-        await executeWithRetry(
-          () => pb.collection('accounts').update(acc.id, { balance: 0 }),
-          3,
-          500,
-          'Limpeza-Total-ZerarConta',
-        )
+        try {
+          await executeWithRetry(
+            () => pb.collection('accounts').update(acc.id, { balance: 0 }),
+            5,
+            1000,
+            'Limpeza-Total-ZerarConta',
+            10000,
+          )
+        } catch (accErr) {
+          console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+          failedAccounts++
+        }
       }
 
       // 4. Recarregar dados do controle para atualizar dashboard e contas imediatamente
       await reloadCompanyData()
-      toast.success('Todos os lançamentos foram removidos e os saldos das contas foram zerados.')
+      if (failedDeletions > 0 || failedAccounts > 0) {
+        toast.warning(
+          `Limpeza concluída com avisos: ${failedDeletions} lançamentos e ${failedAccounts} contas não puderam ser atualizados.`,
+        )
+      } else {
+        toast.success('Todos os lançamentos foram removidos e os saldos das contas foram zerados.')
+      }
       setDeleteAllModalOpen(false)
       setDeleteAllConfirmText('')
     } catch (err: any) {
@@ -254,8 +276,8 @@ export default function SettingsPage() {
     setIsDeletingMonth(true)
     setDeleteMonthProgress(null)
     const BATCH_SIZE = 5
-    const BATCH_DELAY_MS = 150
-    const INTER_ITEM_DELAY_MS = 30
+    const BATCH_DELAY_MS = 400
+    const INTER_ITEM_DELAY_MS = 50
 
     try {
       const padMonth = String(selectedMonth).padStart(2, '0')
@@ -271,13 +293,15 @@ export default function SettingsPage() {
             filter: `control_id="${currentCompany.id}" && date>="${startDate}" && date<="${endDate}"`,
             fields: 'id',
           }),
-        3,
-        500,
+        5,
+        1000,
         'Limpeza-Mes-Listagem',
+        10000,
       )
 
       setDeleteMonthProgress({ current: 0, total: records.length })
 
+      let failedDeletions = 0
       // 2. Excluir lançamentos em lotes espaçados e com retry exponencial em 429
       for (let i = 0; i < records.length; i++) {
         const rec = records[i]
@@ -288,12 +312,18 @@ export default function SettingsPage() {
             await sleep(INTER_ITEM_DELAY_MS)
           }
         }
-        await executeWithRetry(
-          () => pb.collection('transactions').delete(rec.id),
-          3,
-          500,
-          'Limpeza-Mes-Delete',
-        )
+        try {
+          await executeWithRetry(
+            () => pb.collection('transactions').delete(rec.id),
+            5,
+            1000,
+            'Limpeza-Mes-Delete',
+            10000,
+          )
+        } catch (itemErr) {
+          console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+          failedDeletions++
+        }
         setDeleteMonthProgress({ current: i + 1, total: records.length })
       }
 
@@ -304,31 +334,45 @@ export default function SettingsPage() {
             filter: `control_id="${currentCompany.id}"`,
             fields: 'id',
           }),
-        3,
-        500,
+        5,
+        1000,
         'Limpeza-Mes-Contas',
+        10000,
       )
 
+      let failedAccounts = 0
       for (let i = 0; i < accountsList.length; i++) {
         const acc = accountsList[i]
         if (i > 0) {
           await sleep(INTER_ITEM_DELAY_MS)
         }
-        await executeWithRetry(
-          () => pb.collection('accounts').update(acc.id, { balance: 0 }),
-          3,
-          500,
-          'Limpeza-Mes-ZerarConta',
-        )
+        try {
+          await executeWithRetry(
+            () => pb.collection('accounts').update(acc.id, { balance: 0 }),
+            5,
+            1000,
+            'Limpeza-Mes-ZerarConta',
+            10000,
+          )
+        } catch (accErr) {
+          console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+          failedAccounts++
+        }
       }
 
       // 4. Recarregar dados do controle para atualizar dashboard e contas imediatamente
       await reloadCompanyData()
       const monthObj = MONTHS.find((m) => m.value === selectedMonth)
       const monthLabel = monthObj ? monthObj.label : `${selectedMonth}`
-      toast.success(
-        `Lançamentos de ${monthLabel}/${selectedYear} foram removidos e os saldos das contas foram zerados.`,
-      )
+      if (failedDeletions > 0 || failedAccounts > 0) {
+        toast.warning(
+          `Limpeza de ${monthLabel}/${selectedYear} concluída com avisos: ${failedDeletions} lançamentos e ${failedAccounts} contas não puderam ser atualizados.`,
+        )
+      } else {
+        toast.success(
+          `Lançamentos de ${monthLabel}/${selectedYear} foram removidos e os saldos das contas foram zerados.`,
+        )
+      }
       setDeleteMonthModalOpen(false)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao remover lançamentos do mês e zerar contas.')

@@ -20,9 +20,10 @@ export interface RetryOptions {
 
 export const executeWithRetry = async <T>(
   fn: () => Promise<T>,
-  maxRetries = 3,
-  baseDelayMs = 500,
+  maxRetries = 5,
+  baseDelayMs = 1000,
   tag = 'API',
+  maxDelayMs = 10000,
 ): Promise<T> => {
   let attempt = 0
   while (true) {
@@ -31,7 +32,8 @@ export const executeWithRetry = async <T>(
     } catch (error: any) {
       if (is429Error(error) && attempt < maxRetries) {
         attempt++
-        const delay = baseDelayMs * Math.pow(2, attempt - 1)
+        const calculatedDelay = baseDelayMs * Math.pow(2, attempt - 1)
+        const delay = Math.min(calculatedDelay, maxDelayMs)
         console.warn(
           `[${tag}] 429 detectado. Retentando em ${delay}ms (tentativa ${attempt}/${maxRetries})...`,
         )

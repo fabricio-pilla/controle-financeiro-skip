@@ -951,7 +951,7 @@ export default function Importar() {
 
     // Helpers for rate limiting and backoff retry on 429 (Too Many Requests)
     const executeWithRetry = <T,>(fn: () => Promise<T>) =>
-      executeSharedRetry(fn, 3, 500, 'Importar')
+      executeSharedRetry(fn, 5, 1000, 'Importar', 10000)
 
     // Cache of subcategories so we can dynamically auto-create if missing
     const subcatsCache: Subcategory[] = [...freshSubcategories]
@@ -983,8 +983,8 @@ export default function Importar() {
     }
 
     const BATCH_SIZE = 5
-    const BATCH_DELAY_MS = 150
-    const INTER_ROW_DELAY_MS = 30
+    const BATCH_DELAY_MS = 400
+    const INTER_ROW_DELAY_MS = 50
 
     for (let i = 0; i < parsedRows.length; i++) {
       const row = parsedRows[i]
@@ -1243,7 +1243,16 @@ export default function Importar() {
       } catch (err: any) {
         console.error(`Erro ao importar linha ${row.rowIndex}:`, err)
         summary.errorsCount++
-        const errorMessage = err?.message || 'Falha ao gravar no banco de dados.'
+        const isRateLimit =
+          err?.status === 429 ||
+          err?.statusCode === 429 ||
+          err?.response?.status === 429 ||
+          err?.message?.includes('429')
+
+        const errorMessage = isRateLimit
+          ? 'Limite de requisições do servidor — tente novamente'
+          : err?.message || 'Falha ao gravar no banco de dados.'
+
         summary.details.push({
           row: row.rowIndex,
           description: row.description,
@@ -1257,7 +1266,9 @@ export default function Importar() {
           amount: row.amount,
           accountRaw: row.accountRaw,
           categoryRaw: row.categoryRaw,
-          reason: `Erro da API PocketBase: ${errorMessage}`,
+          reason: isRateLimit
+            ? 'Limite de requisições do servidor — tente novamente'
+            : `Erro da API PocketBase: ${errorMessage}`,
           type: 'error',
           rawDetails: row.raw,
         })
