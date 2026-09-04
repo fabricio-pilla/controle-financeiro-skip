@@ -23,6 +23,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { Progress } from '@/components/ui/progress'
+import { sleep, executeWithRetry } from '@/lib/pocketbase/retry'
 import {
   Dialog,
   DialogContent,
@@ -80,11 +82,19 @@ export default function SettingsPage() {
   const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false)
   const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('')
   const [isDeletingAll, setIsDeletingAll] = useState(false)
+  const [deleteAllProgress, setDeleteAllProgress] = useState<{
+    current: number
+    total: number
+  } | null>(null)
 
   const [deleteMonthModalOpen, setDeleteMonthModalOpen] = useState(false)
   const [selectedMonth, setSelectedMonth] = useState<number>(1)
   const [selectedYear, setSelectedYear] = useState<number>(2026)
   const [isDeletingMonth, setIsDeletingMonth] = useState(false)
+  const [deleteMonthProgress, setDeleteMonthProgress] = useState<{
+    current: number
+    total: number
+  } | null>(null)
 
   React.useEffect(() => {
     if (currentCompany) {
@@ -158,28 +168,71 @@ export default function SettingsPage() {
     }
 
     setIsDeletingAll(true)
+    setDeleteAllProgress(null)
+    const BATCH_SIZE = 5
+    const BATCH_DELAY_MS = 150
+    const INTER_ITEM_DELAY_MS = 30
+
     try {
-      // 1. Excluir todas as transações do controle ativo
-      const records = await pb.collection('transactions').getFullList({
-        filter: `control_id="${currentCompany.id}"`,
-        fields: 'id',
-      })
+      // 1. Obter todas as transações do controle ativo com retry
+      const records = await executeWithRetry(
+        () =>
+          pb.collection('transactions').getFullList({
+            filter: `control_id="${currentCompany.id}"`,
+            fields: 'id',
+          }),
+        3,
+        500,
+        'Limpeza-Total-Listagem',
+      )
 
-      for (const rec of records) {
-        await pb.collection('transactions').delete(rec.id)
+      setDeleteAllProgress({ current: 0, total: records.length })
+
+      // 2. Excluir lançamentos em lotes espaçados e com retry exponencial em 429
+      for (let i = 0; i < records.length; i++) {
+        const rec = records[i]
+        if (i > 0) {
+          if (i % BATCH_SIZE === 0) {
+            await sleep(BATCH_DELAY_MS)
+          } else {
+            await sleep(INTER_ITEM_DELAY_MS)
+          }
+        }
+        await executeWithRetry(
+          () => pb.collection('transactions').delete(rec.id),
+          3,
+          500,
+          'Limpeza-Total-Delete',
+        )
+        setDeleteAllProgress({ current: i + 1, total: records.length })
       }
 
-      // 2. Zerar o saldo de todas as contas do controle ativo
-      const accountsList = await pb.collection('accounts').getFullList({
-        filter: `control_id="${currentCompany.id}"`,
-        fields: 'id',
-      })
+      // 3. Zerar o saldo de todas as contas do controle ativo
+      const accountsList = await executeWithRetry(
+        () =>
+          pb.collection('accounts').getFullList({
+            filter: `control_id="${currentCompany.id}"`,
+            fields: 'id',
+          }),
+        3,
+        500,
+        'Limpeza-Total-Contas',
+      )
 
-      for (const acc of accountsList) {
-        await pb.collection('accounts').update(acc.id, { balance: 0 })
+      for (let i = 0; i < accountsList.length; i++) {
+        const acc = accountsList[i]
+        if (i > 0) {
+          await sleep(INTER_ITEM_DELAY_MS)
+        }
+        await executeWithRetry(
+          () => pb.collection('accounts').update(acc.id, { balance: 0 }),
+          3,
+          500,
+          'Limpeza-Total-ZerarConta',
+        )
       }
 
-      // 3. Recarregar dados do controle para atualizar dashboard e contas imediatamente
+      // 4. Recarregar dados do controle para atualizar dashboard e contas imediatamente
       await reloadCompanyData()
       toast.success('Todos os lançamentos foram removidos e os saldos das contas foram zerados.')
       setDeleteAllModalOpen(false)
@@ -188,6 +241,7 @@ export default function SettingsPage() {
       toast.error(err?.message || 'Erro ao remover lançamentos e zerar contas.')
     } finally {
       setIsDeletingAll(false)
+      setDeleteAllProgress(null)
     }
   }
 
@@ -198,6 +252,11 @@ export default function SettingsPage() {
     }
 
     setIsDeletingMonth(true)
+    setDeleteMonthProgress(null)
+    const BATCH_SIZE = 5
+    const BATCH_DELAY_MS = 150
+    const INTER_ITEM_DELAY_MS = 30
+
     try {
       const padMonth = String(selectedMonth).padStart(2, '0')
       const lastDay = new Date(selectedYear, selectedMonth, 0).getDate()
@@ -205,27 +264,65 @@ export default function SettingsPage() {
       const startDate = `${selectedYear}-${padMonth}-01`
       const endDate = `${selectedYear}-${padMonth}-${padLastDay}`
 
-      // 1. Excluir lançamentos do mês selecionado
-      const records = await pb.collection('transactions').getFullList({
-        filter: `control_id="${currentCompany.id}" && date>="${startDate}" && date<="${endDate}"`,
-        fields: 'id',
-      })
+      // 1. Obter lançamentos do mês selecionado com retry
+      const records = await executeWithRetry(
+        () =>
+          pb.collection('transactions').getFullList({
+            filter: `control_id="${currentCompany.id}" && date>="${startDate}" && date<="${endDate}"`,
+            fields: 'id',
+          }),
+        3,
+        500,
+        'Limpeza-Mes-Listagem',
+      )
 
-      for (const rec of records) {
-        await pb.collection('transactions').delete(rec.id)
+      setDeleteMonthProgress({ current: 0, total: records.length })
+
+      // 2. Excluir lançamentos em lotes espaçados e com retry exponencial em 429
+      for (let i = 0; i < records.length; i++) {
+        const rec = records[i]
+        if (i > 0) {
+          if (i % BATCH_SIZE === 0) {
+            await sleep(BATCH_DELAY_MS)
+          } else {
+            await sleep(INTER_ITEM_DELAY_MS)
+          }
+        }
+        await executeWithRetry(
+          () => pb.collection('transactions').delete(rec.id),
+          3,
+          500,
+          'Limpeza-Mes-Delete',
+        )
+        setDeleteMonthProgress({ current: i + 1, total: records.length })
       }
 
-      // 2. Zerar o saldo de todas as contas do controle ativo
-      const accountsList = await pb.collection('accounts').getFullList({
-        filter: `control_id="${currentCompany.id}"`,
-        fields: 'id',
-      })
+      // 3. Zerar o saldo de todas as contas do controle ativo
+      const accountsList = await executeWithRetry(
+        () =>
+          pb.collection('accounts').getFullList({
+            filter: `control_id="${currentCompany.id}"`,
+            fields: 'id',
+          }),
+        3,
+        500,
+        'Limpeza-Mes-Contas',
+      )
 
-      for (const acc of accountsList) {
-        await pb.collection('accounts').update(acc.id, { balance: 0 })
+      for (let i = 0; i < accountsList.length; i++) {
+        const acc = accountsList[i]
+        if (i > 0) {
+          await sleep(INTER_ITEM_DELAY_MS)
+        }
+        await executeWithRetry(
+          () => pb.collection('accounts').update(acc.id, { balance: 0 }),
+          3,
+          500,
+          'Limpeza-Mes-ZerarConta',
+        )
       }
 
-      // 3. Recarregar dados do controle para atualizar dashboard e contas imediatamente
+      // 4. Recarregar dados do controle para atualizar dashboard e contas imediatamente
       await reloadCompanyData()
       const monthObj = MONTHS.find((m) => m.value === selectedMonth)
       const monthLabel = monthObj ? monthObj.label : `${selectedMonth}`
@@ -237,6 +334,7 @@ export default function SettingsPage() {
       toast.error(err?.message || 'Erro ao remover lançamentos do mês e zerar contas.')
     } finally {
       setIsDeletingMonth(false)
+      setDeleteMonthProgress(null)
     }
   }
 
@@ -632,8 +730,28 @@ export default function SettingsPage() {
               placeholder="EXCLUIR TUDO"
               value={deleteAllConfirmText}
               onChange={(e) => setDeleteAllConfirmText(e.target.value)}
+              disabled={isDeletingAll}
               className="rounded-xl h-11 border-rose-300 focus-visible:ring-rose-500 font-medium"
             />
+
+            {isDeletingAll && deleteAllProgress && (
+              <div className="space-y-2 pt-2 bg-rose-50/50 p-3 rounded-xl border border-rose-100">
+                <div className="flex items-center justify-between text-xs font-semibold text-rose-700">
+                  <span>Excluindo lançamentos com taxa controlada...</span>
+                  <span>
+                    {deleteAllProgress.current} de {deleteAllProgress.total}
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    deleteAllProgress.total > 0
+                      ? (deleteAllProgress.current / deleteAllProgress.total) * 100
+                      : 0
+                  }
+                  className="h-2"
+                />
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2">
@@ -701,6 +819,25 @@ export default function SettingsPage() {
               Esta ação removerá os lançamentos deste mês e ano e definirá o saldo de todas as
               contas como R$ 0,00.
             </p>
+
+            {isDeletingMonth && deleteMonthProgress && (
+              <div className="space-y-2 pt-2 bg-rose-50/50 p-3 rounded-xl border border-rose-100">
+                <div className="flex items-center justify-between text-xs font-semibold text-rose-700">
+                  <span>Excluindo lançamentos com taxa controlada...</span>
+                  <span>
+                    {deleteMonthProgress.current} de {deleteMonthProgress.total}
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    deleteMonthProgress.total > 0
+                      ? (deleteMonthProgress.current / deleteMonthProgress.total) * 100
+                      : 0
+                  }
+                  className="h-2"
+                />
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2">

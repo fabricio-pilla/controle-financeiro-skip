@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
+import { sleep, executeWithRetry as executeSharedRetry } from '@/lib/pocketbase/retry'
 
 // 11 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
@@ -949,40 +950,8 @@ export default function Importar() {
     }
 
     // Helpers for rate limiting and backoff retry on 429 (Too Many Requests)
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-    const is429Error = (error: any): boolean => {
-      return (
-        error?.status === 429 ||
-        error?.statusCode === 429 ||
-        error?.response?.status === 429 ||
-        error?.message?.includes('429')
-      )
-    }
-
-    const executeWithRetry = async <T,>(
-      fn: () => Promise<T>,
-      maxRetries = 3,
-      baseDelayMs = 500,
-    ): Promise<T> => {
-      let attempt = 0
-      while (true) {
-        try {
-          return await fn()
-        } catch (error: any) {
-          if (is429Error(error) && attempt < maxRetries) {
-            attempt++
-            const delay = baseDelayMs * Math.pow(2, attempt - 1)
-            console.warn(
-              `[Importar] 429 detectado. Retentando em ${delay}ms (tentativa ${attempt}/${maxRetries})...`,
-            )
-            await sleep(delay)
-            continue
-          }
-          throw error
-        }
-      }
-    }
+    const executeWithRetry = <T,>(fn: () => Promise<T>) =>
+      executeSharedRetry(fn, 3, 500, 'Importar')
 
     // Cache of subcategories so we can dynamically auto-create if missing
     const subcatsCache: Subcategory[] = [...freshSubcategories]
