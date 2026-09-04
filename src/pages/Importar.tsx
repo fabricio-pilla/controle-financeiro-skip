@@ -982,27 +982,54 @@ export default function Importar() {
 
     // Ensure we have real category & subcategory IDs and fetch all existing transactions
     // for this control BEFORE starting import to detect duplicates in-memory without 429 errors.
-    const [freshCategories, freshSubcategories, existingTransactions] = await Promise.all([
-      pb.collection('categories').getFullList<Category>({
-        filter: `control_id="${currentCompany.id}"`,
-      }),
-      pb.collection('subcategories').getFullList<Subcategory>({
-        filter: `control_id="${currentCompany.id}"`,
-      }),
-      executeWithRetry(() =>
-        pb.collection('transactions').getFullList<any>({
-          filter: `control_id="${currentCompany.id}"`,
-          fields:
-            'id,date,description,amount,installment_number,installment_total,installments_total',
+    let freshCategories: Category[] = []
+    let freshSubcategories: Subcategory[] = []
+    let existingTransactions: any[] = []
+
+    try {
+      const results = await Promise.all([
+        executeWithRetry(() =>
+          pb.collection('categories').getFullList<Category>({
+            filter: `control_id="${currentCompany.id}"`,
+          }),
+        ).catch((err) => {
+          console.warn('Não foi possível pré-carregar categorias:', err)
+          return dbCategories
         }),
-      ).catch((err) => {
-        console.warn(
-          'Não foi possível pré-carregar transações existentes para verificação de duplicidade:',
-          err,
-        )
-        return [] as any[]
-      }),
-    ])
+        executeWithRetry(() =>
+          pb.collection('subcategories').getFullList<Subcategory>({
+            filter: `control_id="${currentCompany.id}"`,
+          }),
+        ).catch((err) => {
+          console.warn('Não foi possível pré-carregar subcategorias:', err)
+          return dbSubcategories
+        }),
+        executeWithRetry(() =>
+          pb.collection('transactions').getFullList<any>({
+            filter: `control_id="${currentCompany.id}"`,
+            fields:
+              'id,date,description,amount,installment_number,installment_total,installments_total',
+          }),
+        ).catch((err) => {
+          console.warn(
+            'Não foi possível pré-carregar transações existentes para verificação de duplicidade:',
+            err,
+          )
+          return [] as any[]
+        }),
+      ])
+      freshCategories = results[0]
+      freshSubcategories = results[1]
+      existingTransactions = results[2]
+    } catch (preloadErr) {
+      console.warn(
+        'Erro ao pré-carregar dados para importação, usando dados locais em cache:',
+        preloadErr,
+      )
+      freshCategories = dbCategories
+      freshSubcategories = dbSubcategories
+      existingTransactions = []
+    }
 
     // Mapa em memória das transações já existentes no banco para deduplicação O(1)
     // Chave: `${date}|${amountRoundedCentavos}|${normDesc}`
@@ -1445,7 +1472,11 @@ export default function Importar() {
     setImportSummary(summary)
     setIsImporting(false)
     // Reload global company state to reflect new data across Dashboard and Transactions
-    await reloadCompanyData()
+    try {
+      await reloadCompanyData()
+    } catch (reloadErr) {
+      console.warn('Erro não bloqueante ao atualizar dados da empresa pós-importação:', reloadErr)
+    }
   }
 
   const validRowsCount = parsedRows.filter((r) => r.isValid).length
