@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T13:36:16.594Z",
+  "generatedAt": "2026-09-05T15:27:44.220Z",
   "collections": [
     {
       "name": "users",
@@ -318,6 +318,12 @@
         {
           "name": "is_primary",
           "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "closing_day",
+          "type": "number",
           "required": false,
           "system": false
         }
@@ -741,6 +747,12 @@
           "required": false,
           "system": false,
           "collectionRef": "subcategories"
+        },
+        {
+          "name": "payment_date",
+          "type": "date",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

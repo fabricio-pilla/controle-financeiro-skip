@@ -26,6 +26,8 @@ import { parseNaturalLanguageTransaction } from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
 import { toast } from 'sonner'
 import { formatCurrency } from '@/lib/formatters'
+import { calculatePaymentDate } from '@/lib/invoice-helper'
+import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import {
   Loader2,
   ArrowUpRight,
@@ -39,6 +41,7 @@ import {
   Repeat,
   CheckCircle2,
   AlertCircle,
+  Mic,
 } from 'lucide-react'
 
 interface AiTransactionModalProps {
@@ -93,12 +96,33 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const [description, setDescription] = useState('')
   const [amountStr, setAmountStr] = useState('')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0])
   const [accountId, setAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [subcategoryId, setSubcategoryId] = useState('')
   const [isRecurring, setIsRecurring] = useState(false)
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('mensal')
   const [installmentsTotal, setInstallmentsTotal] = useState(1)
+
+  // Assistente de voz (Web Speech API)
+  const {
+    isListening,
+    isSupported: isSpeechSupported,
+    startListening,
+    stopListening,
+    toggleListening,
+    errorMessage: speechError,
+  } = useSpeechRecognition({
+    lang: 'pt-BR',
+    continuous: true,
+    interimResults: true,
+    onResult: (transcriptText) => {
+      setText(transcriptText)
+    },
+    onError: (err) => {
+      toast.error(err)
+    },
+  })
 
   // Reset when modal opens/closes
   React.useEffect(() => {
@@ -109,13 +133,19 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setType('despesa')
       setDescription('')
       setAmountStr('')
-      setDate(defaultDateForAccount(primaryAccount))
+      const today = new Date().toISOString().split('T')[0]
+      setDate(today)
+      setPaymentDate(calculatePaymentDate(today, primaryAccount))
       setAccountId(primaryAccount?.id || '')
       setCategoryId('')
       setSubcategoryId('')
       setIsRecurring(false)
       setRecurrenceType('mensal')
       setInstallmentsTotal(1)
+    } else {
+      if (isListening) {
+        stopListening()
+      }
     }
   }, [open, accounts, primaryAccount])
 
@@ -182,13 +212,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         const resolvedAccId = resolveAccountId(result.account_id)
         setAccountId(resolvedAccId)
 
-        // If date was explicitly matched in text use it, else if credit card with due_day adapt or keep
-        if (result.confidence.date) {
-          setDate(result.date)
-        } else {
-          const accObj = accounts.find((a) => a.id === resolvedAccId) || null
-          setDate(defaultDateForAccount(accObj))
-        }
+        // Se a data de compra veio do parser ou padrão hoje:
+        const chosenPurchaseDate = result.confidence.date
+          ? result.date
+          : new Date().toISOString().split('T')[0]
+        setDate(chosenPurchaseDate)
+
+        // Calcula a data de pagamento conforme fechamento/vencimento do cartão
+        const accObj = accounts.find((a) => a.id === resolvedAccId) || null
+        const calculatedPayDate = calculatePaymentDate(chosenPurchaseDate, accObj)
+        setPaymentDate(calculatedPayDate)
 
         setInstallmentsTotal(result.installments_total)
         setIsRecurring(Boolean(result.is_recurring))
@@ -265,6 +298,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         category_id: categoryId,
         subcategory_id: subcategoryId || undefined,
         date,
+        payment_date: paymentDate || date,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
         installments_total: installmentsTotal,
@@ -300,18 +334,77 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         </DialogHeader>
 
         <form onSubmit={handleConfirm} className="space-y-4 pt-2">
-          {/* Text input */}
+          {/* Text input + Voice Assistant */}
           <div className="space-y-1.5">
-            <Label htmlFor="ai-text" className="text-sm font-medium text-slate-700">
-              Descreva seu lançamento
-            </Label>
-            <Textarea
-              id="ai-text"
-              placeholder="Ex: 'Fabricio Entrada Salario 8000,00 recorrente' ou 'Almoço no restaurante 89,90 no crédito'"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              className="rounded-xl min-h-[90px] resize-none"
-            />
+            <div className="flex items-center justify-between">
+              <Label htmlFor="ai-text" className="text-sm font-medium text-slate-700">
+                Descreva seu lançamento
+              </Label>
+
+              {/* Botão de Microfone / Assistente de Voz */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isSpeechSupported) {
+                    toast.error(
+                      'Seu navegador não suporta reconhecimento de voz — use Chrome ou Edge.',
+                    )
+                    return
+                  }
+                  toggleListening()
+                }}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all shadow-sm ${
+                  isListening
+                    ? 'bg-rose-500 text-white animate-pulse ring-2 ring-rose-300'
+                    : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+                }`}
+                title={
+                  !isSpeechSupported
+                    ? 'Seu navegador não suporta reconhecimento de voz — use Chrome ou Edge'
+                    : isListening
+                      ? 'Clique para parar de gravar'
+                      : 'Falar por voz (Web Speech API)'
+                }
+              >
+                {isListening ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                    <Mic className="w-3.5 h-3.5" />
+                    Ouvindo...
+                  </>
+                ) : (
+                  <>
+                    <Mic className="w-3.5 h-3.5 text-indigo-600" />
+                    Assistente de Voz
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="relative">
+              <Textarea
+                id="ai-text"
+                placeholder={
+                  isListening
+                    ? 'Ouvindo sua voz... Fale normalmente seu lançamento.'
+                    : "Ex: 'Notebook 3500 no crédito em 10x' ou 'Almoço 45 no cartão santander'"
+                }
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                className={`rounded-xl min-h-[90px] resize-none transition-colors ${
+                  isListening ? 'border-rose-400 bg-rose-50/20 ring-1 ring-rose-400' : ''
+                }`}
+              />
+            </div>
+
+            {speechError && <p className="text-xs text-rose-600 font-medium">{speechError}</p>}
+
+            {!isSpeechSupported && (
+              <p className="text-[11px] text-amber-600">
+                Seu navegador não suporta reconhecimento de voz — use Chrome ou Edge.
+              </p>
+            )}
+
             <div className="flex flex-wrap gap-1.5 pt-1">
               {EXAMPLES.slice(0, 4).map((ex) => (
                 <button
@@ -408,44 +501,73 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                 />
               </div>
 
-              {/* Amount & Date */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="ai-amount"
-                    className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
-                  >
-                    <Wallet className="w-3.5 h-3.5 text-slate-500" />
-                    Valor (R$) *
-                  </Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">
-                      R$
-                    </span>
-                    <Input
-                      id="ai-amount"
-                      type="number"
-                      step="0.01"
-                      value={amountStr}
-                      onChange={(e) => setAmountStr(e.target.value)}
-                      className="rounded-xl h-11 pl-10 font-bold tabular-nums"
-                      required
-                    />
-                  </div>
+              {/* Amount */}
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="ai-amount"
+                  className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
+                >
+                  <Wallet className="w-3.5 h-3.5 text-slate-500" />
+                  Valor (R$) *
+                </Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">
+                    R$
+                  </span>
+                  <Input
+                    id="ai-amount"
+                    type="number"
+                    step="0.01"
+                    value={amountStr}
+                    onChange={(e) => setAmountStr(e.target.value)}
+                    className="rounded-xl h-11 pl-10 font-bold tabular-nums"
+                    required
+                  />
                 </div>
+              </div>
+
+              {/* Data da Compra & Data de Pagamento */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="ai-date"
                     className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
                   >
                     <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                    Data *
+                    Data da Compra *
                   </Label>
                   <Input
                     id="ai-date"
                     type="date"
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
+                    onChange={(e) => {
+                      const newDate = e.target.value
+                      setDate(newDate)
+                      const acc = accounts.find((a) => a.id === accountId) || null
+                      if (acc && acc.type === 'credito') {
+                        setPaymentDate(calculatePaymentDate(newDate, acc))
+                      } else {
+                        setPaymentDate(newDate)
+                      }
+                    }}
+                    className="rounded-xl h-11"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="ai-payment-date"
+                    className="text-sm font-medium text-slate-700 flex items-center gap-1.5"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                    Data de Pagamento *
+                  </Label>
+                  <Input
+                    id="ai-payment-date"
+                    type="date"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
                     className="rounded-xl h-11"
                     required
                   />
@@ -462,7 +584,14 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                     <Wallet className="w-3.5 h-3.5 text-slate-500" />
                     Conta *
                   </Label>
-                  <Select value={accountId} onValueChange={setAccountId}>
+                  <Select
+                    value={accountId}
+                    onValueChange={(val) => {
+                      setAccountId(val)
+                      const acc = accounts.find((a) => a.id === val) || null
+                      setPaymentDate(calculatePaymentDate(date, acc))
+                    }}
+                  >
                     <SelectTrigger id="ai-account" className="rounded-xl h-11">
                       <SelectValue placeholder="Selecione a conta..." />
                     </SelectTrigger>

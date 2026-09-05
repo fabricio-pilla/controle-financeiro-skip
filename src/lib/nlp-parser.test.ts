@@ -184,6 +184,10 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
       res.category_id === 'cat-raffaela',
       `Test 1: category should resolve to Raffaela, got ${res.category_id}`,
     )
+    assert(
+      res.description.toLowerCase() === 'almoco' || res.description.toLowerCase() === 'almoço',
+      `Test 1: description should be only the product ("Almoço"), got "${res.description}"`,
+    )
   }
 
   // Test 1b: User's reported case when Raffaela DOES have an "Alimentação" subcategory
@@ -236,6 +240,10 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     assert(res.recurrence_type === 'mensal', `Test 2: recurrence type should be mensal`)
     assert(res.category_id === 'cat-fabricio', `Test 2: category should be Fabrício`)
     assert(res.subcategory_id === 'sub-salario-fab', `Test 2: subcategory should be Salário`)
+    assert(
+      res.description.toLowerCase() === 'salario' || res.description.toLowerCase() === 'salário',
+      `Test 2: description should be "Salário", got "${res.description}"`,
+    )
   }
 
   // Test 3: Phrase without account -> falls back to primary account
@@ -280,6 +288,10 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     )
     assert(res.amount === 200, `Test 5: amount should be 200, got ${res.amount}`)
     assert(res.category_id === 'cat-raffaela', `Test 5: category should be Raffaela`)
+    assert(
+      res.description === 'Raffaela',
+      `Test 5: description should fallback to category Raffaela, got "${res.description}"`,
+    )
   }
 
   return { passed, failed, errors }

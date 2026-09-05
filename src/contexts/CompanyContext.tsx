@@ -71,6 +71,7 @@ interface CompanyContextType {
     color: string
     bank?: string
     due_day?: number
+    closing_day?: number
     is_primary?: boolean
   }) => Promise<Account>
   updateAccount: (
@@ -114,6 +115,7 @@ interface CompanyContextType {
     amount: number
     type: TransactionType
     date: string
+    payment_date?: string
     is_recurring?: boolean
     recurrence_type?: any
     notes?: string
@@ -290,6 +292,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       limit?: number
       color: string
       bank?: string
+      due_day?: number
+      closing_day?: number
+      is_primary?: boolean
     }) => {
       if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const acc = await skipCloud.createAccount(currentCompany.id, data)
@@ -388,6 +393,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       amount: number
       type: TransactionType
       date: string
+      payment_date?: string
       is_recurring?: boolean
       recurrence_type?: any
       notes?: string

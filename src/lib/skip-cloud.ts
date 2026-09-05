@@ -312,6 +312,10 @@ function mapAccount(r: any): Account {
       r.due_day !== undefined && r.due_day !== null && r.due_day !== ''
         ? Number(r.due_day)
         : undefined,
+    closing_day:
+      r.closing_day !== undefined && r.closing_day !== null && r.closing_day !== ''
+        ? Number(r.closing_day)
+        : undefined,
     is_primary: Boolean(r.is_primary),
     created_at: r.created || new Date().toISOString(),
   }
@@ -361,6 +365,9 @@ function mapTransaction(
     ? mapSubcategory(r.expand.subcategory_id, categoriesCache)
     : subcategoriesCache?.[r.subcategory_id]
   const user = r.expand?.user_id ? mapUser(r.expand.user_id) : usersCache?.[r.user_id]
+  const dateStr = r.date ? String(r.date).split(/[T\s]/)[0] : new Date().toISOString().split('T')[0]
+  const paymentDateStr = r.payment_date ? String(r.payment_date).split(/[T\s]/)[0] : undefined
+
   return {
     id: r.id,
     control_id: r.control_id || '',
@@ -371,7 +378,8 @@ function mapTransaction(
     description: r.description || '',
     amount: Number(r.amount) || 0,
     type: (r.type as TransactionType) || 'despesa',
-    date: r.date ? String(r.date).split(/[T\s]/)[0] : new Date().toISOString().split('T')[0],
+    date: dateStr,
+    payment_date: paymentDateStr || dateStr,
     paid: r.paid !== undefined ? Boolean(r.paid) : true,
     is_recurring:
       r.is_recurring !== undefined
@@ -822,6 +830,7 @@ class SkipCloudService {
       color: string
       bank?: string
       due_day?: number
+      closing_day?: number
       is_primary?: boolean
     },
   ): Promise<Account> {
@@ -851,6 +860,10 @@ class SkipCloudService {
         payload.due_day =
           data.due_day !== undefined && data.due_day !== null
             ? Math.min(31, Math.max(1, Math.floor(Number(data.due_day) || 1)))
+            : 0
+        payload.closing_day =
+          data.closing_day !== undefined && data.closing_day !== null
+            ? Math.min(31, Math.max(1, Math.floor(Number(data.closing_day) || 1)))
             : 0
       }
       const r = await pb.collection('accounts').create(payload)
@@ -892,6 +905,10 @@ class SkipCloudService {
         if (data.due_day !== undefined) {
           const v = Math.floor(Number(data.due_day) || 0)
           payload.due_day = v > 0 ? Math.min(31, Math.max(1, v)) : 0
+        }
+        if (data.closing_day !== undefined) {
+          const v = Math.floor(Number(data.closing_day) || 0)
+          payload.closing_day = v > 0 ? Math.min(31, Math.max(1, v)) : 0
         }
       }
       const r = await pb.collection('accounts').update(accountId, payload)
@@ -1136,6 +1153,7 @@ class SkipCloudService {
       amount: number
       type: TransactionType
       date: string
+      payment_date?: string
       is_recurring?: boolean
       recurrence_type?: any
       notes?: string
@@ -1155,6 +1173,8 @@ class SkipCloudService {
     }
 
     try {
+      const basePaymentDate = data.payment_date || data.date
+
       if (installmentsTotal > 1) {
         const totalAmount = Number(data.amount)
         const baseAmount = Math.round((totalAmount / installmentsTotal) * 100) / 100
@@ -1177,6 +1197,7 @@ class SkipCloudService {
             subcategory_id: data.subcategory_id || '',
             account_id: data.account_id,
             date: addMonths(baseDate, i - 1),
+            payment_date: addMonths(basePaymentDate, i - 1),
             paid: true,
             is_recurring: Boolean(data.is_recurring),
             recurrence_type: data.recurrence_type || '',
@@ -1210,6 +1231,7 @@ class SkipCloudService {
         subcategory_id: data.subcategory_id || '',
         account_id: data.account_id,
         date: data.date,
+        payment_date: basePaymentDate,
         paid: true,
         is_recurring: Boolean(data.is_recurring),
         recurrence_type: data.recurrence_type || '',
@@ -1263,6 +1285,7 @@ class SkipCloudService {
       if (data.amount !== undefined) payload.amount = Number(data.amount)
       if (data.type !== undefined) payload.type = data.type
       if (data.date !== undefined) payload.date = data.date
+      if (data.payment_date !== undefined) payload.payment_date = data.payment_date
       if (data.notes !== undefined) payload.notes = data.notes || ''
       if (data.is_recurring !== undefined) {
         payload.is_recurring = data.is_recurring

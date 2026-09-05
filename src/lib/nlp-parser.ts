@@ -1125,10 +1125,13 @@ function buildDescription(
   installments: number,
   categoryName?: string,
   subcategoryName?: string,
+  accounts: Account[] = [],
+  categories: Category[] = [],
 ): string {
   let desc = text.trim()
   // Remove currency symbols
   desc = desc.replace(/r\$\s?/gi, '')
+
   // Remove amount mentions
   if (amount !== null) {
     const candidates = new Set<string>()
@@ -1146,70 +1149,113 @@ function buildDescription(
     // Also candidate for "45,0" when amount is 45
     candidates.add(`${Math.floor(amount)},0`)
     candidates.forEach((cand) => {
-      desc = desc.split(cand).join('')
+      desc = desc.split(cand).join(' ')
     })
   }
 
   // Remove recurrence keywords
   RECURRING_KEYWORDS.forEach((kw) => {
     const reg = new RegExp(`\\b${kw}\\b`, 'gi')
-    desc = desc.replace(reg, '')
+    desc = desc.replace(reg, ' ')
   })
   WEEKLY_KEYWORDS.forEach((kw) => {
     const reg = new RegExp(`\\b${kw}\\b`, 'gi')
-    desc = desc.replace(reg, '')
+    desc = desc.replace(reg, ' ')
   })
   YEARLY_KEYWORDS.forEach((kw) => {
     const reg = new RegExp(`\\b${kw}\\b`, 'gi')
-    desc = desc.replace(reg, '')
+    desc = desc.replace(reg, ' ')
   })
 
   // Remove installment phrases
-  desc = desc.replace(/parcelado\s+em\s+\d{1,2}\s*(vezes)?/gi, '')
-  desc = desc.replace(/em\s+\d{1,2}\s+vezes/gi, '')
-  desc = desc.replace(/\d{1,2}\s*[xX]\s/gi, '')
-  desc = desc.replace(/\d{1,2}\s*[xX]$/gi, '')
-  desc = desc.replace(/\b\d{1,2}x\b/gi, '')
+  desc = desc.replace(/parcelado\s+em\s+\d{1,2}\s*(vezes)?/gi, ' ')
+  desc = desc.replace(/em\s+\d{1,2}\s+vezes/gi, ' ')
+  desc = desc.replace(/\d{1,2}\s*[xX]\s/gi, ' ')
+  desc = desc.replace(/\d{1,2}\s*[xX]$/gi, ' ')
+  desc = desc.replace(/\b\d{1,2}x\b/gi, ' ')
 
   // Remove date phrases
-  desc = desc.replace(/\bhoje\b/gi, '')
-  desc = desc.replace(/\bontem\b/gi, '')
-  desc = desc.replace(/\banteontem\b/gi, '')
-  desc = desc.replace(/\bsemana passada\b/gi, '')
-  desc = desc.replace(/\bdia\s+\d{1,2}\b/gi, '')
+  desc = desc.replace(/\bhoje\b/gi, ' ')
+  desc = desc.replace(/\bontem\b/gi, ' ')
+  desc = desc.replace(/\banteontem\b/gi, ' ')
+  desc = desc.replace(/\bsemana passada\b/gi, ' ')
+  desc = desc.replace(/\bdia\s+\d{1,2}\b/gi, ' ')
 
-  // Remove type/action verbs at the start for a cleaner description
+  // Remove type/action verbs
   desc = desc.replace(
-    /^(paguei|gastei|comprei|pagar|pago|recebi|ganhei|vendi|entrada|receita|despesa|saida|saída)\s+/i,
-    '',
+    /\b(paguei|gastei|comprei|pagar|pago|recebi|ganhei|vendi|entrada|receita|despesa|saida|saída)\b/gi,
+    ' ',
   )
 
-  // Remove leftover account-type filler words near the end (e.g., "no credito santander", "no santander", "no credito")
+  // Remove account names and bank tokens
+  accounts.forEach((acc) => {
+    if (acc.name) {
+      const escaped = acc.name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
+      desc = desc.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), ' ')
+    }
+    if (acc.bank) {
+      const tokens = acc.bank.split(/[\s/&]+/).filter((t) => t.length > 2)
+      tokens.forEach((t) => {
+        const escaped = t.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
+        desc = desc.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), ' ')
+      })
+    }
+  })
+
+  // Known bank names
+  const knownBanksRegex =
+    /\b(santander|neon|nubank|itau|itaú|bradesco|inter|c6|caixa|flash|original|next|safra|btg|xp|sicoob|sicredi)\b/gi
+  desc = desc.replace(knownBanksRegex, ' ')
+
+  // Remove payment method/channel phrases
   desc = desc.replace(
-    /\b(no|na|em|com|pelo|pela)\s+(cart[aã]o de cr[eé]dito|cart[aã]o de d[eé]bito|cr[eé]dito|d[eé]bito|pix|dinheiro|carteira)(\s+(nubank|itau|ita[uú]|bradesco|santander|caixa|inter|c6|xp|btg|original|next|neon|flash))?\b/gi,
-    '',
+    /\b(cart[aã]o de cr[eé]dito|cart[aã]o de d[eé]bito|cart[aã]o cr[eé]dito|cart[aã]o d[eé]bito|cart[aã]o)\b/gi,
+    ' ',
   )
   desc = desc.replace(
-    /\b(no|na|em|com|pelo|pela)\s+(nubank|itau|ita[uú]|bradesco|santander|caixa|inter|c6|xp|btg|original|next|neon|flash)(\s+(cart[aã]o de cr[eé]dito|cart[aã]o de d[eé]bito|cr[eé]dito|d[eé]bito|pix|dinheiro|carteira))?\b/gi,
-    '',
+    /\b(cr[eé]dito|d[eé]bito|pix|dinheiro|carteira|transfer[eê]ncia|ted|doc|boleto)\b/gi,
+    ' ',
   )
-  // Also remove standalone "no credito", "no debito", "no santander" etc.
+
+  // Remove prepositions and articles left over: no, na, nos, nas, em, de, do, da, dos, das, pelo, pela, pelos, pelas, com, para, pro, pra
   desc = desc.replace(
-    /\b(no|na)\s+(cr[eé]dito|d[eé]bito)\s+(santander|neon|nubank|itau|bradesco)?\b/gi,
-    '',
+    /\b(no|na|nos|nas|em|de|do|da|dos|das|pelo|pela|pelos|pelas|com|para|pro|pra)\b/gi,
+    ' ',
   )
+
+  // If a personal category name was matched (e.g. Raffaela, Fabrício, Matheus, Helena, Emanuel),
+  // remove the person name from the product description if there is other product content in phrase.
+  // E.g.: "almoço raffaela" -> "Almoço"
+  const personCatNames = [
+    'fabricio',
+    'fabrício',
+    'raffaela',
+    'rafaela',
+    'helena',
+    'emanuel',
+    'matheus',
+  ]
+  personCatNames.forEach((pn) => {
+    const reg = new RegExp(`\\b${pn}\\b`, 'gi')
+    // Only strip person name if there are other meaningful words
+    const stripped = desc.replace(reg, ' ').replace(/\s+/g, ' ').trim()
+    if (stripped.length >= 3) {
+      desc = stripped
+    }
+  })
 
   // Tidy punctuation and whitespace
-  desc = desc.replace(/\s+/g, ' ').replace(/\s+,/g, ',').replace(/,\s*$/g, '').trim()
+  desc = desc.replace(/[^\w\sÀ-ÿ-]/gi, ' ')
+  desc = desc.replace(/\s+/g, ' ').trim()
 
-  // If text is empty or just generic, form an intelligent description from Category / Subcategory
+  // Regra do usuário:
+  // "Na descrição do lançamento gerado, colocar APENAS o nome do produto (a coisa comprada, ex: 'Almoço', 'Notebook').
+  // Se não houver nome de produto na frase, usar a Subcategoria ou, na falta, a Categoria."
   if (!desc || desc.length <= 1) {
-    if (categoryName && subcategoryName) {
-      desc = `${subcategoryName} (${categoryName})`
-    } else if (subcategoryName) {
-      desc = subcategoryName
-    } else if (categoryName) {
-      desc = categoryName
+    if (subcategoryName && subcategoryName.trim()) {
+      desc = subcategoryName.trim()
+    } else if (categoryName && categoryName.trim()) {
+      desc = categoryName.trim()
     } else {
       desc = 'Lançamento'
     }
@@ -1254,6 +1300,8 @@ export function parseNaturalLanguageTransaction(
     installments,
     category?.name,
     subcategory?.name,
+    accounts,
+    categories,
   )
 
   return {

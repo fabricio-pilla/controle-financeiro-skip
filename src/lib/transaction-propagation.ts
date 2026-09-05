@@ -11,6 +11,7 @@ export interface UpdateTransactionPayload {
   category_id: string
   subcategory_id?: string
   date: string
+  payment_date?: string
   is_recurring: boolean
   recurrence_type?: RecurrenceType
   notes?: string
@@ -65,6 +66,7 @@ export async function updateTransactionWithPropagation({
       category_id: formData.category_id,
       subcategory_id: formData.subcategory_id || '',
       date: formData.date,
+      payment_date: formData.payment_date || formData.date,
       notes: formData.notes?.trim() || '',
       is_recurring: formData.is_recurring,
       recurrence_type: formData.is_recurring ? formData.recurrence_type : undefined,
@@ -164,6 +166,14 @@ async function handleInstallmentPropagation({
       itemDate = addMonths(formData.date, diffMonths)
     }
 
+    let itemPaymentDate = item.payment_date || itemDate
+    if (item.id === transaction.id) {
+      itemPaymentDate = formData.payment_date || formData.date
+    } else {
+      const diffMonths = (item.installment_number || 1) - currentNum
+      itemPaymentDate = addMonths(formData.payment_date || formData.date, diffMonths)
+    }
+
     await skipCloud.updateTransaction(item.id, {
       description: desc,
       amount: formData.amount,
@@ -172,6 +182,7 @@ async function handleInstallmentPropagation({
       category_id: formData.category_id,
       subcategory_id: formData.subcategory_id || '',
       date: itemDate,
+      payment_date: itemPaymentDate,
       notes: formData.notes?.trim() || '',
       installment_number: itemNum,
       installments_total: newTotal,
@@ -216,6 +227,7 @@ async function handleInstallmentPropagation({
           subcategory_id: formData.subcategory_id || '',
           account_id: formData.account_id,
           date: parcelDate,
+          payment_date: addMonths(formData.payment_date || formData.date, diffMonths),
           paid: false, // Future created parcels default to pending
           is_recurring: false,
           recurrence_type: '',
@@ -281,6 +293,10 @@ async function handleRecurringPropagation({
     // If it's the specific transaction being edited, use formData.date
     // Otherwise keep the original date of the occurrence (only update amount, description, cat, account, etc.)
     const targetDate = item.id === transaction.id ? formData.date : item.date
+    const targetPaymentDate =
+      item.id === transaction.id
+        ? formData.payment_date || formData.date
+        : item.payment_date || item.date
 
     await skipCloud.updateTransaction(item.id, {
       description: formData.description.trim(),
@@ -290,6 +306,7 @@ async function handleRecurringPropagation({
       category_id: formData.category_id,
       subcategory_id: formData.subcategory_id || '',
       date: targetDate,
+      payment_date: targetPaymentDate,
       notes: formData.notes?.trim() || '',
       is_recurring: formData.is_recurring,
       recurrence_type: formData.is_recurring ? formData.recurrence_type : undefined,

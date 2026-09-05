@@ -33,6 +33,7 @@ import {
   Repeat,
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/formatters'
+import { calculatePaymentDate } from '@/lib/invoice-helper'
 import { RecurrencePropagationModal, PropagationChoice } from './RecurrencePropagationModal'
 import {
   updateTransactionWithPropagation,
@@ -114,18 +115,6 @@ export function TransactionModal({
     () => accounts.find((a) => a.is_primary) || accounts[0] || null,
     [accounts],
   )
-  const defaultDateForAccount = (acc: Account | null): string => {
-    if (!acc) return new Date().toISOString().split('T')[0]
-    const today = new Date()
-    if (acc.type === 'credito' && acc.due_day) {
-      const y = today.getFullYear()
-      const m = String(today.getMonth() + 1).padStart(2, '0')
-      const lastDay = new Date(y, today.getMonth() + 1, 0).getDate()
-      const day = Math.min(acc.due_day, lastDay)
-      return `${y}-${m}-${String(day).padStart(2, '0')}`
-    }
-    return today.toISOString().split('T')[0]
-  }
 
   const [type, setType] = useState<TransactionType>(transaction?.type || defaultType)
   const [description, setDescription] = useState(transaction?.description || '')
@@ -134,6 +123,9 @@ export function TransactionModal({
   const [categoryId, setCategoryId] = useState(transaction?.category_id || '')
   const [subcategoryId, setSubcategoryId] = useState(transaction?.subcategory_id || '')
   const [date, setDate] = useState(transaction?.date || new Date().toISOString().split('T')[0])
+  const [paymentDate, setPaymentDate] = useState(
+    transaction?.payment_date || transaction?.date || new Date().toISOString().split('T')[0],
+  )
   const [isRecurring, setIsRecurring] = useState(transaction?.is_recurring || false)
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(
     transaction?.recurrence_type || 'mensal',
@@ -154,17 +146,21 @@ export function TransactionModal({
       setCategoryId(transaction.category_id)
       setSubcategoryId(transaction.subcategory_id || '')
       setDate(transaction.date)
+      setPaymentDate(transaction.payment_date || transaction.date)
       setIsRecurring(Boolean(transaction.is_recurring))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
       setNotes(transaction.notes || '')
       setInstallmentsTotal(resolvedInstallmentsTotal)
     } else {
+      const today = new Date().toISOString().split('T')[0]
+      const acc = primaryAccount
       setType(defaultType)
       setDescription('')
       setAmountStr('')
-      setAccountId(primaryAccount?.id || '')
+      setAccountId(acc?.id || '')
       setSubcategoryId('')
-      setDate(defaultDateForAccount(primaryAccount))
+      setDate(today)
+      setPaymentDate(calculatePaymentDate(today, acc))
       setIsRecurring(false)
       setNotes('')
       setInstallmentsTotal(1)
@@ -263,6 +259,7 @@ export function TransactionModal({
       category_id: categoryId,
       subcategory_id: subcategoryId || undefined,
       date,
+      payment_date: paymentDate || date,
       is_recurring: isRecurring,
       recurrence_type: isRecurring ? recurrenceType : undefined,
       notes: notes.trim(),
@@ -300,6 +297,7 @@ export function TransactionModal({
         category_id: categoryId,
         subcategory_id: subcategoryId || undefined,
         date,
+        payment_date: paymentDate || date,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
         notes,
@@ -407,38 +405,62 @@ export function TransactionModal({
             />
           </div>
 
-          {/* Amount and Date */}
+          {/* Amount */}
+          <div className="space-y-1.5">
+            <Label htmlFor="tx-amount" className="text-sm font-medium text-slate-700">
+              Valor (R$) *
+            </Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">
+                R$
+              </span>
+              <Input
+                id="tx-amount"
+                type="number"
+                step="0.01"
+                placeholder="0,00"
+                value={amountStr}
+                onChange={(e) => setAmountStr(e.target.value)}
+                className="rounded-xl h-11 pl-10 font-bold tabular-nums"
+                required
+              />
+            </div>
+          </div>
+
+          {/* Two Dates: Data da Compra & Data de Pagamento */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="tx-amount" className="text-sm font-medium text-slate-700">
-                Valor (R$) *
-              </Label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">
-                  R$
-                </span>
-                <Input
-                  id="tx-amount"
-                  type="number"
-                  step="0.01"
-                  placeholder="0,00"
-                  value={amountStr}
-                  onChange={(e) => setAmountStr(e.target.value)}
-                  className="rounded-xl h-11 pl-10 font-bold tabular-nums"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
               <Label htmlFor="tx-date" className="text-sm font-medium text-slate-700">
-                Data do Lançamento *
+                Data da Compra *
               </Label>
               <Input
                 id="tx-date"
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  const newDate = e.target.value
+                  setDate(newDate)
+                  const acc = accounts.find((a) => a.id === accountId) || null
+                  if (acc && acc.type === 'credito') {
+                    setPaymentDate(calculatePaymentDate(newDate, acc))
+                  } else {
+                    setPaymentDate(newDate)
+                  }
+                }}
+                className="rounded-xl h-11"
+                required
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="tx-payment-date" className="text-sm font-medium text-slate-700">
+                Data de Pagamento *
+              </Label>
+              <Input
+                id="tx-payment-date"
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
                 className="rounded-xl h-11"
                 required
               />
@@ -460,9 +482,8 @@ export function TransactionModal({
                 onValueChange={(val) => {
                   setAccountId(val)
                   const acc = accounts.find((a) => a.id === val) || null
-                  if (!isEditing) {
-                    setDate(defaultDateForAccount(acc))
-                  }
+                  // Recalcular data de pagamento automaticamente
+                  setPaymentDate(calculatePaymentDate(date, acc))
                 }}
               >
                 <SelectTrigger id="tx-account" className="rounded-xl h-11">

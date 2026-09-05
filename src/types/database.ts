@@ -45,6 +45,7 @@ export interface Account {
   color: string
   bank?: string
   due_day?: number // dia do mês do vencimento da fatura (cartões de crédito, 1-31)
+  closing_day?: number // dia do mês do fechamento da fatura (cartões de crédito, 1-31)
   is_primary?: boolean // conta principal/padrão do controle
   created_at: string
 }
@@ -82,7 +83,8 @@ export interface Transaction {
   description: string
   amount: number
   type: TransactionType
-  date: string // YYYY-MM-DD
+  date: string // YYYY-MM-DD (Data da Compra)
+  payment_date?: string // YYYY-MM-DD (Data de Pagamento / Vencimento na fatura)
   is_recurring?: boolean
   recurring?: boolean
   paid?: boolean

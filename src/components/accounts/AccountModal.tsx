@@ -52,6 +52,9 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
   const [dueDay, setDueDay] = useState(
     account?.type === 'credito' && account?.due_day ? String(account.due_day) : '',
   )
+  const [closingDay, setClosingDay] = useState(
+    account?.type === 'credito' && account?.closing_day ? String(account.closing_day) : '',
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   React.useEffect(() => {
@@ -64,6 +67,9 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
       setColor(account.color)
       setIsPrimary(Boolean(account.is_primary))
       setDueDay(account.type === 'credito' && account.due_day ? String(account.due_day) : '')
+      setClosingDay(
+        account.type === 'credito' && account.closing_day ? String(account.closing_day) : '',
+      )
     } else {
       setName('')
       setType('banco')
@@ -73,6 +79,7 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
       setColor(PALETTE_COLORS[0])
       setIsPrimary(false)
       setDueDay('')
+      setClosingDay('')
     }
   }, [account])
 
@@ -96,6 +103,7 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
           bank,
           color,
           due_day: type === 'credito' && dueDay ? parseInt(dueDay, 10) : undefined,
+          closing_day: type === 'credito' && closingDay ? parseInt(closingDay, 10) : undefined,
           is_primary: isPrimary,
         })
         toast.success('Conta atualizada com sucesso!')
@@ -108,6 +116,7 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
           bank,
           color,
           due_day: type === 'credito' && dueDay ? parseInt(dueDay, 10) : undefined,
+          closing_day: type === 'credito' && closingDay ? parseInt(closingDay, 10) : undefined,
           is_primary: isPrimary,
         })
         toast.success('Conta criada com sucesso!')
@@ -181,24 +190,46 @@ export function AccountModal({ open, onOpenChange, account }: AccountModalProps)
           </div>
 
           {type === 'credito' && (
-            <div className="space-y-1.5 animate-fade-in">
-              <Label htmlFor="acc-due-day" className="text-sm font-medium text-slate-700">
-                Dia do Vencimento da Fatura
-              </Label>
-              <Input
-                id="acc-due-day"
-                type="number"
-                min={1}
-                max={31}
-                step={1}
-                placeholder="Ex: 10 (vence todo dia 10)"
-                value={dueDay}
-                onChange={(e) => setDueDay(e.target.value)}
-                className="rounded-xl h-11 font-bold tabular-nums"
-              />
-              <p className="text-[11px] text-slate-400">
-                Usado para preencher automaticamente a data das despesas lançadas neste cartão.
-              </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fade-in">
+              <div className="space-y-1.5">
+                <Label htmlFor="acc-closing-day" className="text-sm font-medium text-slate-700">
+                  Dia do Fechamento da Fatura
+                </Label>
+                <Input
+                  id="acc-closing-day"
+                  type="number"
+                  min={1}
+                  max={31}
+                  step={1}
+                  placeholder="Ex: 10 (fecha todo dia 10)"
+                  value={closingDay}
+                  onChange={(e) => setClosingDay(e.target.value)}
+                  className="rounded-xl h-11 font-bold tabular-nums"
+                />
+                <p className="text-[11px] text-slate-400">
+                  Compras a partir deste dia caem na fatura do mês seguinte.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="acc-due-day" className="text-sm font-medium text-slate-700">
+                  Dia do Vencimento da Fatura
+                </Label>
+                <Input
+                  id="acc-due-day"
+                  type="number"
+                  min={1}
+                  max={31}
+                  step={1}
+                  placeholder="Ex: 18 (vence todo dia 18)"
+                  value={dueDay}
+                  onChange={(e) => setDueDay(e.target.value)}
+                  className="rounded-xl h-11 font-bold tabular-nums"
+                />
+                <p className="text-[11px] text-slate-400">
+                  Data em que a fatura é debitada / paga.
+                </p>
+              </div>
             </div>
           )}
 

@@ -242,6 +242,7 @@ export default function AccountsPage() {
                       </h2>
                       <p className="text-xs text-slate-400 mt-0.5">
                         {getAccountTypeLabel(acc.type)}
+                        {isCredit && acc.closing_day ? ` • fecha dia ${acc.closing_day}` : ''}
                         {isCredit && acc.due_day ? ` • vence dia ${acc.due_day}` : ''}
                       </p>
                     </div>

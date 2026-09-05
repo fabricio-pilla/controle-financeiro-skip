@@ -863,8 +863,17 @@ export default function TransactionsPage() {
                   </td>
 
                   {/* Date */}
-                  <td className="py-3.5 px-3 text-xs font-medium text-slate-500 whitespace-nowrap">
-                    {formatDateBR(tx.date)}
+                  <td className="py-3.5 px-3 text-xs whitespace-nowrap">
+                    <div className="font-semibold text-slate-700">{formatDateBR(tx.date)}</div>
+                    {tx.payment_date && tx.payment_date !== tx.date && (
+                      <div
+                        className="text-[11px] text-indigo-600 font-medium flex items-center gap-1 mt-0.5"
+                        title="Data de pagamento / vencimento na fatura"
+                      >
+                        <span className="text-slate-400">pgto:</span>
+                        <span>{formatDateBR(tx.payment_date)}</span>
+                      </div>
+                    )}
                   </td>
 
                   {/* Description */}
@@ -1074,6 +1083,11 @@ export default function TransactionsPage() {
                     </div>
                     <div className="flex items-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
                       <span>{formatDateBR(tx.date)}</span>
+                      {tx.payment_date && tx.payment_date !== tx.date && (
+                        <span className="text-indigo-600 font-semibold text-[11px] bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200">
+                          Pgto: {formatDateBR(tx.payment_date)}
+                        </span>
+                      )}
                       <span>•</span>
                       <span className="truncate">{tx.account?.name || 'Conta'}</span>
                       {tx.category && (
