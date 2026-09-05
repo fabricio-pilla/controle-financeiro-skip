@@ -94,7 +94,7 @@ interface UnimportedRowItem {
   accountRaw: string
   categoryRaw: string
   reason: string
-  type: 'skipped' | 'duplicate' | 'error'
+  type: 'skipped' | 'error'
   rawDetails?: Record<string, any>
 }
 
@@ -102,13 +102,12 @@ interface ImportSummary {
   totalRows: number
   importedCount: number
   skippedCount: number
-  duplicatesCount: number
   errorsCount: number
   createdTransactions: number
   details: {
     row: number
     description: string
-    status: 'imported' | 'skipped' | 'duplicate' | 'error'
+    status: 'imported' | 'skipped' | 'error'
     message: string
   }[]
   unimportedRows: UnimportedRowItem[]
@@ -122,48 +121,6 @@ function normalizeText(text: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
-}
-
-/**
- * Normaliza a descrição para detecção pragmática de duplicidade:
- * - Remove acentos e converte para minúsculas
- * - Remove padrões comuns de parcelamento como (01/05), (1/5), 1/5, parcela 1 de 5, (Total: ...)
- * - Remove pontuações supérfluas e colapsa múltiplos espaços
- */
-function normalizeDescriptionForDedup(desc: string): string {
-  let normalized = normalizeText(desc)
-  if (!normalized) return ''
-
-  // Remove parênteses com totais: ex "(total: r$ 150,00)" ou "(total: 150)"
-  normalized = normalized.replace(/\(total:[^)]*\)/gi, ' ')
-  // Remove parênteses com parcelas: ex "(01/05)", "(1/5)", "(23/36)"
-  normalized = normalized.replace(/\(\s*\d{1,2}\s*[/|\\]\s*\d{1,2}\s*\)/gi, ' ')
-  // Remove parcelas soltas: ex " 01/05 ", " 1/5 "
-  normalized = normalized.replace(/\b\d{1,2}\s*[/|\\]\s*\d{1,2}\b/gi, ' ')
-  // Remove "parcela X de Y" ou "parcela X/Y"
-  normalized = normalized.replace(/parcela\s*\d{1,2}\s*(de|[/|\\])\s*\d{1,2}/gi, ' ')
-  // Remove pontuações residuais
-  normalized = normalized.replace(/[-_.,;:()/[\]]/g, ' ')
-  // Colapsa espaços
-  return normalized.replace(/\s+/g, ' ').trim()
-}
-
-/**
- * Extrai a data no formato YYYY-MM-DD a partir de strings ISO (como "2026-01-10 00:00:00.000Z")
- * ou objetos Date.
- */
-function extractIsoDateOnly(val: any): string {
-  if (!val) return ''
-  if (val instanceof Date) {
-    const y = val.getFullYear()
-    const m = String(val.getMonth() + 1).padStart(2, '0')
-    const d = String(val.getDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }
-  const str = String(val).trim()
-  const m = str.match(/^(\d{4}-\d{2}-\d{2})/)
-  if (m) return m[1]
-  return parseExcelDate(val)
 }
 
 // Convert Excel dates (serial numbers, Date objects, or strings) to YYYY-MM-DD
@@ -1034,7 +991,6 @@ export default function Importar() {
       totalRows: parsedRows.length,
       importedCount: 0,
       skippedCount: 0,
-      duplicatesCount: 0,
       errorsCount: 0,
       createdTransactions: 0,
       details: [],
@@ -1047,11 +1003,9 @@ export default function Importar() {
     const executeWithRetry = <T,>(fn: () => Promise<T>) =>
       executeSharedRetry(fn, 5, 1000, 'Importar', 10000)
 
-    // Ensure we have real category & subcategory IDs and fetch all existing transactions
-    // for this control BEFORE starting import to detect duplicates in-memory without 429 errors.
+    // Ensure we have real category & subcategory IDs for this control BEFORE starting import
     let freshCategories: Category[] = []
     let freshSubcategories: Subcategory[] = []
-    let existingTransactions: any[] = []
 
     try {
       const results = await Promise.all([
@@ -1071,23 +1025,9 @@ export default function Importar() {
           console.warn('Não foi possível pré-carregar subcategorias:', err)
           return dbSubcategories
         }),
-        executeWithRetry(() =>
-          pb.collection('transactions').getFullList<any>({
-            filter: `control_id="${currentCompany.id}"`,
-            fields:
-              'id,date,description,amount,installment_number,installment_total,installments_total',
-          }),
-        ).catch((err) => {
-          console.warn(
-            'Não foi possível pré-carregar transações existentes para verificação de duplicidade:',
-            err,
-          )
-          return [] as any[]
-        }),
       ])
       freshCategories = results[0]
       freshSubcategories = results[1]
-      existingTransactions = results[2]
     } catch (preloadErr) {
       console.warn(
         'Erro ao pré-carregar dados para importação, usando dados locais em cache:',
@@ -1095,58 +1035,6 @@ export default function Importar() {
       )
       freshCategories = dbCategories
       freshSubcategories = dbSubcategories
-      existingTransactions = []
-    }
-
-    // Mapa em memória das transações já existentes no banco para deduplicação O(1)
-    // Chave: `${date}|${amountRoundedCentavos}|${normDesc}`
-    interface ExistingTxItem {
-      id: string
-      date: string
-      amount: number
-      description: string
-      normDesc: string
-      installmentNumber: number | null
-      installmentTotal: number | null
-    }
-
-    const existingTxMap = new Map<string, ExistingTxItem[]>()
-
-    const registerExistingTx = (tx: any) => {
-      if (!tx) return
-      const dateStr = extractIsoDateOnly(tx.date)
-      if (!dateStr) return
-      const amountNum = Math.abs(Number(tx.amount) || 0)
-      const cents = Math.round(amountNum * 100)
-      const normDesc = normalizeDescriptionForDedup(tx.description || '')
-      const key = `${dateStr}|${cents}|${normDesc}`
-
-      const instNum =
-        tx.installment_number !== undefined && tx.installment_number !== null
-          ? Number(tx.installment_number)
-          : null
-      const instTot =
-        tx.installment_total !== undefined && tx.installment_total !== null
-          ? Number(tx.installment_total)
-          : tx.installments_total !== undefined && tx.installments_total !== null
-            ? Number(tx.installments_total)
-            : null
-
-      const list = existingTxMap.get(key) || []
-      list.push({
-        id: tx.id,
-        date: dateStr,
-        amount: amountNum,
-        description: tx.description || '',
-        normDesc,
-        installmentNumber: instNum,
-        installmentTotal: instTot,
-      })
-      existingTxMap.set(key, list)
-    }
-
-    for (const tx of existingTransactions) {
-      registerExistingTx(tx)
     }
 
     const getCatId = (name: string, _type: 'despesa' | 'receita'): string => {
@@ -1226,56 +1114,6 @@ export default function Importar() {
         continue
       }
 
-      // Check if row is a duplicate of a transaction already in the database
-      const rowNormDesc = normalizeDescriptionForDedup(row.description)
-      const rowCents = Math.round(Math.abs(row.amount) * 100)
-      const dedupKey = `${row.dateFormatted}|${rowCents}|${rowNormDesc}`
-      const existingCandidates = existingTxMap.get(dedupKey)
-
-      if (existingCandidates && existingCandidates.length > 0) {
-        // If row is an installment, verify if matching installment number or any match
-        const isInstallmentRow =
-          row.totalInstallments &&
-          row.totalInstallments > 1 &&
-          row.installmentNumber !== null &&
-          row.installmentNumber > 0
-
-        let matchFound = false
-        if (isInstallmentRow) {
-          matchFound = existingCandidates.some(
-            (c) =>
-              c.installmentNumber === row.installmentNumber ||
-              c.installmentNumber === null ||
-              c.installmentNumber === undefined,
-          )
-        } else {
-          matchFound = true
-        }
-
-        if (matchFound) {
-          summary.duplicatesCount++
-          const reason = 'Lançamento já existente no banco de dados (mesma data, descrição e valor)'
-          summary.details.push({
-            row: row.rowIndex,
-            description: row.description,
-            status: 'duplicate',
-            message: reason,
-          })
-          summary.unimportedRows.push({
-            rowIndex: row.rowIndex,
-            dateFormatted: row.dateFormatted,
-            description: row.description || 'Sem descrição',
-            amount: row.amount,
-            accountRaw: row.accountRaw,
-            categoryRaw: row.categoryRaw,
-            reason,
-            type: 'duplicate',
-            rawDetails: row.raw,
-          })
-          continue
-        }
-      }
-
       try {
         const categoryId =
           row.matchedCategoryId || getCatId(row.matchedCategoryName, row.matchedCategoryType)
@@ -1319,7 +1157,6 @@ export default function Importar() {
           const parentRecord = await executeWithRetry(() =>
             pb.collection('transactions').create(parentPayload),
           )
-          registerExistingTx(parentRecord)
           summary.createdTransactions++
 
           // 2. Create the current individual installment (e.g. 23/36) with sheet date
@@ -1342,10 +1179,7 @@ export default function Importar() {
             notes: `Importado de planilha: parcela ${currentInst}/${totalInst}`,
           }
 
-          const createdCurrentInst = await executeWithRetry(() =>
-            pb.collection('transactions').create(currentInstPayload),
-          )
-          registerExistingTx(createdCurrentInst)
+          await executeWithRetry(() => pb.collection('transactions').create(currentInstPayload))
           summary.createdTransactions++
 
           // Adjust account balance for the created installment
@@ -1409,7 +1243,6 @@ export default function Importar() {
 
             if (inst !== 1) payload.parent_transaction_id = parentId
             const rec = await executeWithRetry(() => pb.collection('transactions').create(payload))
-            registerExistingTx(rec)
             summary.createdTransactions++
 
             if (inst === 1) {
@@ -1469,10 +1302,7 @@ export default function Importar() {
               : 'Importado de planilha',
           }
 
-          const createdSingle = await executeWithRetry(() =>
-            pb.collection('transactions').create(singlePayload),
-          )
-          registerExistingTx(createdSingle)
+          await executeWithRetry(() => pb.collection('transactions').create(singlePayload))
           summary.createdTransactions++
 
           // Adjust balance
@@ -1556,8 +1386,7 @@ export default function Importar() {
     if (!importSummary) return []
     return importSummary.unimportedRows.filter((item) => {
       // Status filter
-      if (unimportedFilter === 'skipped' && item.type !== 'skipped' && item.type !== 'duplicate')
-        return false
+      if (unimportedFilter === 'skipped' && item.type !== 'skipped') return false
       if (unimportedFilter === 'error' && item.type !== 'error') return false
 
       // Text search
@@ -1583,13 +1412,13 @@ export default function Importar() {
         'Linha;Data;Descrição;Valor;Conta/Meio;Categoria;Motivo;Tipo Falha',
         ...importSummary.unimportedRows.map(
           (r) =>
-            `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'duplicate' ? 'Duplicada (Já existente)' : r.type === 'skipped' ? 'Pulada (Dados/Conta)' : 'Erro API'}`,
+            `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada (Dados/Conta)' : 'Erro API'}`,
         ),
       ].join('\n')
     } else {
       content = [
         `RELATÓRIO DE LINHAS NÃO IMPORTADAS - PLANILHA: ${fileName || 'Excel'} (Aba: ${selectedSheet})`,
-        `Total Não Importadas: ${importSummary.unimportedRows.length} de ${importSummary.totalRows} (${importSummary.duplicatesCount} duplicadas, ${importSummary.skippedCount} dados inválidos, ${importSummary.errorsCount} erros)`,
+        `Total Não Importadas: ${importSummary.unimportedRows.length} de ${importSummary.totalRows} (${importSummary.skippedCount} dados inválidos, ${importSummary.errorsCount} erros)`,
         `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
         '--------------------------------------------------------------------------------',
         ...importSummary.unimportedRows.map(
@@ -1624,7 +1453,7 @@ export default function Importar() {
     const rows = importSummary.unimportedRows
       .map(
         (r) =>
-          `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'duplicate' ? 'Duplicada' : r.type === 'skipped' ? 'Pulada' : 'Erro API'}`,
+          `${r.rowIndex};${r.dateFormatted};"${r.description.replace(/"/g, '""')}";${r.amount};"${r.accountRaw.replace(/"/g, '""')}";"${r.categoryRaw.replace(/"/g, '""')}";"${r.reason.replace(/"/g, '""')}";${r.type === 'skipped' ? 'Pulada' : 'Erro API'}`,
       )
       .join('\n')
 
@@ -2201,7 +2030,7 @@ export default function Importar() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
               <div className="bg-slate-800/80 rounded-xl p-3 border border-slate-700">
                 <span className="text-[11px] text-slate-400 font-medium">Linhas da Aba</span>
                 <p className="text-xl font-bold text-white mt-0.5">{importSummary.totalRows}</p>
@@ -2210,14 +2039,6 @@ export default function Importar() {
                 <span className="text-[11px] text-emerald-400 font-medium">Importadas</span>
                 <p className="text-xl font-bold text-emerald-300 mt-0.5">
                   {importSummary.importedCount}
-                </p>
-              </div>
-              <div className="bg-sky-950/40 rounded-xl p-3 border border-sky-800/60">
-                <span className="text-[11px] text-sky-400 font-medium">
-                  Já Existentes (Puladas)
-                </span>
-                <p className="text-xl font-bold text-sky-300 mt-0.5">
-                  {importSummary.duplicatesCount}
                 </p>
               </div>
               <div className="bg-amber-950/40 rounded-xl p-3 border border-amber-800/60">
@@ -2323,7 +2144,7 @@ export default function Importar() {
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    Não Importadas ({importSummary.duplicatesCount + importSummary.skippedCount})
+                    Dados Inválidos ({importSummary.skippedCount})
                   </button>
                   <button
                     type="button"
@@ -2406,19 +2227,12 @@ export default function Importar() {
                                 >
                                   Erro API
                                 </Badge>
-                              ) : item.type === 'duplicate' ? (
-                                <Badge
-                                  variant="secondary"
-                                  className="text-[10px] font-bold bg-sky-100 text-sky-800 hover:bg-sky-100 border-sky-200 uppercase tracking-wider"
-                                >
-                                  Já Existente
-                                </Badge>
                               ) : (
                                 <Badge
                                   variant="secondary"
                                   className="text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-200 uppercase tracking-wider"
                                 >
-                                  Pulada
+                                  Dados Inválidos
                                 </Badge>
                               )}
                             </td>
@@ -2471,19 +2285,14 @@ export default function Importar() {
                   className={`p-3 flex items-start justify-between gap-3 ${
                     item.status === 'imported'
                       ? 'hover:bg-slate-50'
-                      : item.status === 'duplicate'
-                        ? 'bg-sky-50/30 hover:bg-sky-50/60'
-                        : item.status === 'skipped'
-                          ? 'bg-amber-50/30 hover:bg-amber-50/60'
-                          : 'bg-rose-50/30 hover:bg-rose-50/60'
+                      : item.status === 'skipped'
+                        ? 'bg-amber-50/30 hover:bg-amber-50/60'
+                        : 'bg-rose-50/30 hover:bg-rose-50/60'
                   }`}
                 >
                   <div className="flex items-start gap-2.5">
                     {item.status === 'imported' && (
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                    )}
-                    {item.status === 'duplicate' && (
-                      <Info className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
                     )}
                     {item.status === 'skipped' && (
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -2503,20 +2312,16 @@ export default function Importar() {
                     className={`px-2 py-0.5 rounded font-bold text-[10px] shrink-0 uppercase tracking-wider ${
                       item.status === 'imported'
                         ? 'bg-emerald-100 text-emerald-800'
-                        : item.status === 'duplicate'
-                          ? 'bg-sky-100 text-sky-800 border border-sky-200'
-                          : item.status === 'skipped'
-                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                            : 'bg-rose-100 text-rose-800 border border-rose-200'
+                        : item.status === 'skipped'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                          : 'bg-rose-100 text-rose-800 border border-rose-200'
                     }`}
                   >
                     {item.status === 'imported'
                       ? 'Importado'
-                      : item.status === 'duplicate'
-                        ? 'Já Existente'
-                        : item.status === 'skipped'
-                          ? 'Pulado'
-                          : 'Erro'}
+                      : item.status === 'skipped'
+                        ? 'Pulado'
+                        : 'Erro'}
                   </span>
                 </div>
               ))}

@@ -47,7 +47,6 @@ export default function TransactionsPage() {
     transactions,
     accounts,
     categories,
-    subcategories,
     deleteTransaction,
     setTransactionsPaidStatus,
     canManageTransactions,
@@ -56,10 +55,12 @@ export default function TransactionsPage() {
   // State
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | TransactionType>('all')
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState<
+    'all' | 'a_vista' | 'parcelado' | 'recorrente'
+  >('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'pending'>('all')
   const [accountFilter, setAccountFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [subcategoryFilter, setSubcategoryFilter] = useState<string>('all')
   const [monthFilter, setMonthFilter] = useState<string>('all') // 'all' or 'YYYY-MM'
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 10
@@ -143,12 +144,28 @@ export default function TransactionsPage() {
       if (accountFilter !== 'all' && tx.account_id !== accountFilter) return false
       // Category
       if (categoryFilter !== 'all' && tx.category_id !== categoryFilter) return false
-      // Subcategory
-      if (subcategoryFilter !== 'all') {
-        if (subcategoryFilter === '__none__') {
-          if (tx.subcategory_id && tx.subcategory_id.trim() !== '') return false
-        } else if (tx.subcategory_id !== subcategoryFilter) {
-          return false
+
+      // Payment Type Filter (À vista, Parcelado, Recorrente)
+      // Parcelado: installments_total > 1 (ou installment info presente com total > 1 ou parent_transaction_id)
+      // Recorrente: is_recurring/recurring true ou recurrence_type preenchido
+      // À vista: o restante
+      if (paymentTypeFilter !== 'all') {
+        const isInstallment =
+          (tx.installments_total !== undefined && tx.installments_total > 1) ||
+          Boolean(tx.parent_transaction_id)
+
+        const isRecurring = Boolean(
+          tx.is_recurring ||
+          tx.recurring ||
+          (tx.recurrence_type && tx.recurrence_type.trim() !== ''),
+        )
+
+        if (paymentTypeFilter === 'parcelado') {
+          if (!isInstallment) return false
+        } else if (paymentTypeFilter === 'recorrente') {
+          if (!isRecurring) return false
+        } else if (paymentTypeFilter === 'a_vista') {
+          if (isInstallment || isRecurring) return false
         }
       }
 
@@ -158,10 +175,10 @@ export default function TransactionsPage() {
     transactions,
     searchTerm,
     typeFilter,
+    paymentTypeFilter,
     statusFilter,
     accountFilter,
     categoryFilter,
-    subcategoryFilter,
     monthFilter,
   ])
 
@@ -211,15 +228,6 @@ export default function TransactionsPage() {
       a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
     )
   }, [categories])
-
-  // Subcategories filtered by currently selected category and sorted alphabetically
-  const availableSubcategories = useMemo(() => {
-    const list =
-      categoryFilter !== 'all'
-        ? subcategories.filter((s) => s.category_id === categoryFilter)
-        : subcategories
-    return [...list].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
-  }, [subcategories, categoryFilter])
 
   // Summary of filtered items including Paid vs Pending stats
   const summaryTotals = useMemo(() => {
@@ -443,7 +451,6 @@ export default function TransactionsPage() {
             value={categoryFilter}
             onValueChange={(v) => {
               setCategoryFilter(v)
-              setSubcategoryFilter('all')
               setCurrentPage(1)
             }}
           >
@@ -460,25 +467,22 @@ export default function TransactionsPage() {
             </SelectContent>
           </Select>
 
-          {/* Subcategory Filter */}
+          {/* Payment Type Filter (Tipo de Pagamento) */}
           <Select
-            value={subcategoryFilter}
-            onValueChange={(v) => {
-              setSubcategoryFilter(v)
+            value={paymentTypeFilter}
+            onValueChange={(v: any) => {
+              setPaymentTypeFilter(v)
               setCurrentPage(1)
             }}
           >
             <SelectTrigger className="rounded-xl h-10 text-sm">
-              <SelectValue placeholder="Subcategoria" />
+              <SelectValue placeholder="Tipo de pagamento" />
             </SelectTrigger>
             <SelectContent className="rounded-xl">
-              <SelectItem value="all">Todas as Subcategorias</SelectItem>
-              {availableSubcategories.map((sub) => (
-                <SelectItem key={sub.id} value={sub.id}>
-                  {sub.name}
-                </SelectItem>
-              ))}
-              <SelectItem value="__none__">Sem subcategoria</SelectItem>
+              <SelectItem value="all">Todos os tipos de pagamento</SelectItem>
+              <SelectItem value="a_vista">À vista</SelectItem>
+              <SelectItem value="parcelado">Parcelado</SelectItem>
+              <SelectItem value="recorrente">Recorrente</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -882,17 +886,18 @@ export default function TransactionsPage() {
                         </span>
                       )}
                       {Boolean(
-                        tx.parent_transaction_id ||
-                        (tx.installment_number && tx.installment_number > 0) ||
-                        (tx.installments_total && tx.installments_total > 1),
+                        (tx.installments_total && tx.installments_total > 1) ||
+                        (tx.parent_transaction_id &&
+                          tx.installments_total &&
+                          tx.installments_total > 1),
                       ) && (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
-                          title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total || '?'}`}
+                          title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total}`}
                         >
                           <Package className="w-3 h-3 text-amber-600" />
                           <span>
-                            {tx.installment_number || 1}/{tx.installments_total || '?'}
+                            {tx.installment_number || 1}/{tx.installments_total}
                           </span>
                         </span>
                       )}
@@ -1051,9 +1056,10 @@ export default function TransactionsPage() {
                         </span>
                       )}
                       {Boolean(
-                        tx.parent_transaction_id ||
-                        (tx.installment_number && tx.installment_number > 0) ||
-                        (tx.installments_total && tx.installments_total > 1),
+                        (tx.installments_total && tx.installments_total > 1) ||
+                        (tx.parent_transaction_id &&
+                          tx.installments_total &&
+                          tx.installments_total > 1),
                       ) && (
                         <span
                           className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
@@ -1061,7 +1067,7 @@ export default function TransactionsPage() {
                         >
                           <Package className="w-2.5 h-2.5 text-amber-600" />
                           <span>
-                            {tx.installment_number || 1}/{tx.installments_total || '?'}
+                            {tx.installment_number || 1}/{tx.installments_total}
                           </span>
                         </span>
                       )}

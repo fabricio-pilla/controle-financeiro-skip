@@ -503,17 +503,14 @@ export default function Dashboard() {
                               </span>
                             </span>
                           )}
-                          {Boolean(
-                            tx.parent_transaction_id ||
-                            (tx.installment_number && tx.installment_number > 0),
-                          ) && (
+                          {Boolean(tx.installments_total && tx.installments_total > 1) && (
                             <span
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
-                              title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total || '?'}`}
+                              title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total}`}
                             >
                               <Package className="w-2.5 h-2.5 text-amber-600" />
                               <span>
-                                {tx.installment_number || 1}/{tx.installments_total || '?'}
+                                {tx.installment_number || 1}/{tx.installments_total}
                               </span>
                             </span>
                           )}
