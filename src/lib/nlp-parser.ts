@@ -142,7 +142,66 @@ interface CategoryRule {
   type: TransactionType
 }
 
+const CLOTHING_KEYWORDS = [
+  'tenis',
+  'tênis',
+  'sapato',
+  'sapatos',
+  'sandalia',
+  'sandália',
+  'chinelo',
+  'bota',
+  'roupa',
+  'roupas',
+  'camisa',
+  'camiseta',
+  'calca',
+  'calça',
+  'bermuda',
+  'short',
+  'shorts',
+  'jaqueta',
+  'casaco',
+  'moletom',
+  'vestido',
+  'saia',
+  'meia',
+  'meias',
+  'cueca',
+  'calcinha',
+  'sutia',
+  'sutiã',
+  'bones',
+  'bone',
+  'boné',
+  'relogio',
+  'relógio',
+  'bolsa',
+  'mochila',
+  'carteira',
+  'cinto',
+  'oculos',
+  'óculos',
+  'acessorio',
+  'acessórios',
+  'acessorios',
+  'zara',
+  'renner',
+  'riachuelo',
+  'c&a',
+  'cea',
+  'centauro',
+  'nike',
+  'adidas',
+]
+
 const CATEGORY_RULES: CategoryRule[] = [
+  // Roupas e Acessórios / Vestuário
+  {
+    category: 'Roupas e Acessórios',
+    type: 'despesa',
+    keywords: CLOTHING_KEYWORDS,
+  },
   // Alimentação
   {
     category: 'Alimentação',
@@ -449,6 +508,14 @@ const EXPENSE_KEYWORDS = [
   'débito',
   'saida',
   'saída',
+  'credito',
+  'crédito',
+  'cartao de credito',
+  'cartão de crédito',
+  'cartao credito',
+  'cartão crédito',
+  'no credito',
+  'no crédito',
 ]
 
 const INCOME_KEYWORDS = [
@@ -598,49 +665,60 @@ function extractType(
   category?: Category | null,
   subcategory?: Subcategory | null,
 ): { type: TransactionType; matched: boolean } {
-  // Explicit words for income/expense
+  // Explicit words for income
   const hasIncomeKw = INCOME_KEYWORDS.some((kw) => {
-    const regex = new RegExp(`\\b${stripAccents(kw)}\\b`, 'i')
-    return regex.test(normalized)
-  })
-  const hasExpenseKw = EXPENSE_KEYWORDS.some((kw) => {
-    const regex = new RegExp(`\\b${stripAccents(kw)}\\b`, 'i')
-    return regex.test(normalized)
-  })
-
-  // Expense keywords (almoço, mercado, paguei...) indicam despesa — checar ANTES de nomes de pessoas
-  const hasExpenseWord = EXPENSE_KEYWORDS.some((kw) =>
-    new RegExp(`\\b${stripAccents(kw)}\\b`, 'i').test(normalized),
-  )
-  if (hasExpenseWord && !hasIncomeKw) {
-    return { type: 'despesa', matched: true }
-  }
-
-  // Consumption words from expense category rules (almoço, mercado, supermercado, restaurante,
-  // janta, lanche, padaria, farmácia...) indicam despesa — checar ANTES do fallback de categoria,
-  // mas nunca sobrepor uma palavra explícita de renda.
-  const hasConsumptionWord = CONSUMPTION_KEYWORDS.some((kw) => {
-    const normKw = stripAccents(kw)
-    const escaped = normKw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const escaped = stripAccents(kw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     return new RegExp(`\\b${escaped}\\b`, 'i').test(normalized)
   })
-  if (hasConsumptionWord && !hasIncomeKw) {
-    return { type: 'despesa', matched: true }
-  }
 
-  // Explicit 'entrada' vs 'saida' / 'despesa'
-  if (/\b(entrada|entradas|receita|receitas|ganhei|recebi)\b/.test(normalized)) {
+  // Explicit words for expense
+  const hasExpenseKw = EXPENSE_KEYWORDS.some((kw) => {
+    const escaped = stripAccents(kw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`\\b${escaped}\\b`, 'i').test(normalized)
+  })
+
+  // Words indicating credit card / payment method that signify purchase / despesa
+  const hasCreditWord = /\b(cr[eé]dito|cart[aã]o de cr[eé]dito|cart[aã]o cr[eé]dito)\b/i.test(
+    normalized,
+  )
+
+  // Priority 1: Explicit words of income in text ("entrada", "recebi", "salário", "faturamento", etc.)
+  // (e.g. "Fabricio Entrada Salario 8000,00 recorrente")
+  const hasStrongIncomeWord =
+    /\b(entrada|entradas|salario|salário|recebi|ganhei|recebimento|faturamento|rendimento|plr|pro-labore|pro labore|honorarios?|comissao|comissão|freela|freelance)\b/i.test(
+      normalized,
+    )
+  if (hasStrongIncomeWord) {
     return { type: 'receita', matched: true }
   }
-  if (/\b(saida|saidas|saída|saídas|despesa|despesas|paguei|gastei|comprei)\b/.test(normalized)) {
+  if (hasIncomeKw && !hasExpenseKw && !hasCreditWord) {
+    return { type: 'receita', matched: true }
+  }
+
+  // Priority 2: Explicit words of expense ("paguei", "compra", "credito", "cartao de credito", "no credito", "debito", "saida"...)
+  // Requirement: "A palavra 'credito' (e variações: 'crédito', 'credito', 'cartão de crédito', 'no credito') no texto interpretado deve forçar o tipo como DESPESA"
+  if (hasExpenseKw || hasCreditWord) {
     return { type: 'despesa', matched: true }
   }
 
-  // Check if text has income keywords
-  if (hasIncomeKw && !hasExpenseKw) return { type: 'receita', matched: true }
-  if (hasExpenseKw && !hasIncomeKw) return { type: 'despesa', matched: true }
+  // Priority 3: Consumption words (almoço, mercado, restaurante, janta, farmácia, tênis, etc.)
+  const hasConsumptionWord =
+    CONSUMPTION_KEYWORDS.some((kw) => {
+      const normKw = stripAccents(kw)
+      const escaped = normKw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return new RegExp(`\\b${escaped}\\b`, 'i').test(normalized)
+    }) ||
+    CLOTHING_KEYWORDS.some((kw) => {
+      const normKw = stripAccents(kw)
+      const escaped = normKw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return new RegExp(`\\b${escaped}\\b`, 'i').test(normalized)
+    })
 
-  // Check subcategory hint (e.g. Salário, PLR, Vendas, IRPF -> receita)
+  if (hasConsumptionWord) {
+    return { type: 'despesa', matched: true }
+  }
+
+  // Subcategory hint (e.g. Salário, PLR, Vendas, IRPF -> receita)
   if (subcategory) {
     const subNorm = stripAccents(subcategory.name)
     if (INCOME_SUBCATEGORIES.some((s) => subNorm === s || subNorm.includes(s))) {
@@ -648,15 +726,8 @@ function extractType(
     }
   }
 
-  // If the user's text mentioned a consumption word (like "almoço", "lanche", "restaurante", "mercado"),
-  // it is ALWAYS a despesa, even if the category is configured as 'receita' in DB!
-  if (hasConsumptionWord && !hasIncomeKw) {
-    return { type: 'despesa', matched: true }
-  }
-
-  // Category fallback
+  // Priority 4: Category fallback
   if (category) {
-    // If category is strictly 'receita', default to receita only if not overridden by consumption
     if (category.type === 'receita') return { type: 'receita', matched: true }
     return { type: category.type, matched: false }
   }
@@ -798,6 +869,21 @@ export function extractCategoryAndSubcategory(
         }
       }
     }
+    // 4. Semantic matching for clothes/shoes under person category (e.g. "Roupas e Acessórios")
+    if (CLOTHING_KEYWORDS.some((kw) => matchesPhraseOrWord(normalized, kw))) {
+      const clothingSub = personSubs.find((s) => {
+        const sNorm = stripAccents(s.name)
+        return sNorm.includes('roupa') || sNorm.includes('vestuario') || sNorm.includes('acessorio')
+      })
+      if (clothingSub) {
+        return {
+          category: personCat,
+          subcategory: clothingSub,
+          categoryMatched: true,
+          subcategoryMatched: true,
+        }
+      }
+    }
   }
 
   // Step 3: Check dictionary rules
@@ -878,7 +964,37 @@ export function extractCategoryAndSubcategory(
     const matchedKeyword = rule.keywords.find((kw) => matchesPhraseOrWord(normalized, kw))
     if (matchedKeyword) {
       // Look for a subcategory whose name or category matches
-      // First check if any subcategory contains or relates to this keyword
+      // First check if personCat has a matching subcategory for this keyword or rule
+      if (personCat) {
+        const personSubs = subcategories.filter((s) => s.category_id === personCat.id)
+        const subInPerson = personSubs.find((s) => {
+          const sNorm = stripAccents(s.name)
+          return (
+            sNorm.includes(matchedKeyword) ||
+            matchedKeyword.includes(sNorm) ||
+            (rule.category === 'Roupas e Acessórios' &&
+              (sNorm.includes('roupa') ||
+                sNorm.includes('acessorio') ||
+                sNorm.includes('vestuario'))) ||
+            (rule.category === 'Alimentação' &&
+              (sNorm.includes('alimentac') ||
+                sNorm.includes('refeic') ||
+                sNorm.includes('restaurante'))) ||
+            (rule.category === 'Saúde' &&
+              (sNorm.includes('medicament') || sNorm.includes('saude') || sNorm.includes('farmac')))
+          )
+        })
+        if (subInPerson) {
+          return {
+            category: personCat,
+            subcategory: subInPerson,
+            categoryMatched: true,
+            subcategoryMatched: true,
+          }
+        }
+      }
+
+      // Check if any subcategory contains or relates to this keyword
       const subMatch = subcategories.find((s) => {
         const sNorm = stripAccents(s.name)
         return (
@@ -889,17 +1005,13 @@ export function extractCategoryAndSubcategory(
           (matchedKeyword === 'jantar' &&
             (sNorm.includes('restaurante') || sNorm.includes('alimentac'))) ||
           (matchedKeyword === 'ifood' &&
-            (sNorm.includes('delivery') || sNorm.includes('restaurante')))
+            (sNorm.includes('delivery') || sNorm.includes('restaurante'))) ||
+          (rule.category === 'Roupas e Acessórios' &&
+            (sNorm.includes('roupa') || sNorm.includes('acessorio') || sNorm.includes('vestuario')))
         )
       })
       if (subMatch) {
         const parent = categories.find((c) => c.id === subMatch.category_id)
-        // If a person category was mentioned, and this subcategory belongs to another category (e.g. Família),
-        // let's check: if person category is mentioned, does person category take precedence?
-        // If user said "almoço raffaela", and Raffaela has NO Alimentação subcategory, but Família has "Restaurantes / Delivery",
-        // Rafaela is personCat. If Rafaela is a category, returning Rafaela or Família?
-        // User asked: "categoria Raffaela, subcategoria Alimentação (se existir)"
-        // So if personCat was found, we should prefer personCat!
         if (personCat) {
           return {
             category: personCat,
@@ -1047,13 +1159,25 @@ function extractAccount(
   // Check which bank keywords are mentioned in normalized string
   for (const bankName of Array.from(knownBanks)) {
     if (matchesPhraseOrWord(normalized, bankName)) {
-      const bankAccounts = accounts.filter((a) => {
+      let bankAccounts = accounts.filter((a) => {
         const aName = stripAccents(a.name.toLowerCase())
         const aBank = stripAccents((a.bank || '').toLowerCase())
         return aName.includes(bankName) || aBank.includes(bankName)
       })
 
       if (bankAccounts.length > 0) {
+        // If a person is mentioned in the text (e.g. "fabricio", "raffaela"), filter to that person's accounts first if possible
+        const personTokens = ['fabricio', 'raffaela', 'rafaela', 'helena', 'emanuel', 'matheus']
+        const mentionedPerson = personTokens.find((p) => matchesPhraseOrWord(normalized, p))
+        if (mentionedPerson) {
+          const personBankAccounts = bankAccounts.filter((a) =>
+            stripAccents(a.name.toLowerCase()).includes(mentionedPerson),
+          )
+          if (personBankAccounts.length > 0) {
+            bankAccounts = personBankAccounts
+          }
+        }
+
         if (isCreditoKw) {
           const credAcc = bankAccounts.find(
             (a) => a.type === 'credito' || stripAccents(a.name.toLowerCase()).includes('credito'),
@@ -1189,6 +1313,7 @@ function buildDescription(
   // Remove installment phrases
   desc = desc.replace(/parcelado\s+em\s+\d{1,2}\s*(vezes)?/gi, ' ')
   desc = desc.replace(/em\s+\d{1,2}\s+vezes/gi, ' ')
+  desc = desc.replace(/em\s+\d{1,2}\s*[xX]/gi, ' ')
   desc = desc.replace(/\d{1,2}\s*[xX]\s/gi, ' ')
   desc = desc.replace(/\d{1,2}\s*[xX]$/gi, ' ')
   desc = desc.replace(/\b\d{1,2}x\b/gi, ' ')

@@ -2,6 +2,7 @@ import {
   parseNaturalLanguageTransaction,
   isCategoryAllowedForType,
   isHybridCategory,
+  stripAccents,
 } from './nlp-parser'
 import type { Account, Category, Subcategory } from '@/types/database'
 
@@ -159,6 +160,13 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
       category_id: 'cat-transporte',
       control_id: 'c1',
       name: 'Combustível',
+      created_at: '',
+    },
+    {
+      id: 'sub-roupas-fab',
+      category_id: 'cat-fabricio',
+      control_id: 'c1',
+      name: 'Roupas e Acessórios',
       created_at: '',
     },
   ]
@@ -342,6 +350,73 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
       !isCategoryAllowedForType(catMoradia, 'receita'),
       'Test 6: Moradia should NOT be allowed for receita',
     )
+  }
+
+  // Test 8: Exact user example: "tenis fabricio 600 credito em 6x"
+  // Should resolve:
+  // - type: despesa (forced by 'credito', even though Fabricio is hybrid/receita)
+  // - category: Fabrício
+  // - subcategory: Roupas e Acessórios (matched via clothing keyword 'tenis')
+  // - amount: 600
+  // - installments_total: 6
+  // - description: Tênis (clean product name)
+  {
+    const res = parseNaturalLanguageTransaction(
+      'tenis fabricio 600 credito em 6x',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(res.type === 'despesa', `Test 8: type should be despesa, got ${res.type}`)
+    assert(res.amount === 600, `Test 8: amount should be 600, got ${res.amount}`)
+    assert(
+      res.category_id === 'cat-fabricio',
+      `Test 8: category should be Fabrício, got ${res.category_id}`,
+    )
+    assert(
+      res.subcategory_id === 'sub-roupas-fab',
+      `Test 8: subcategory should be Roupas e Acessórios, got ${res.subcategory_id}`,
+    )
+    assert(
+      res.installments_total === 6,
+      `Test 8: installments_total should be 6, got ${res.installments_total}`,
+    )
+    assert(
+      stripAccents(res.description.toLowerCase()) === 'tenis',
+      `Test 8: description should be product "Tenis", got "${res.description}"`,
+    )
+  }
+
+  // Test 9: "compra 200 no credito" without category
+  // Should resolve:
+  // - type: despesa
+  // - amount: 200
+  // - category_id: undefined (no category mentioned)
+  {
+    const res = parseNaturalLanguageTransaction(
+      'compra 200 no credito',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(res.type === 'despesa', `Test 9: type should be despesa, got ${res.type}`)
+    assert(res.amount === 200, `Test 9: amount should be 200, got ${res.amount}`)
+    assert(
+      res.category_id === undefined,
+      `Test 9: category should be undefined, got ${res.category_id}`,
+    )
+  }
+
+  // Test 10: "credito" never results in receita even with hybrid or income category
+  {
+    const res = parseNaturalLanguageTransaction(
+      'investimento 500 no credito',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(res.type === 'despesa', `Test 10: type should be despesa, got ${res.type}`)
+    assert(res.amount === 500, `Test 10: amount should be 500, got ${res.amount}`)
   }
 
   // Test 7: Parser suggests only categories compatible with detected type
