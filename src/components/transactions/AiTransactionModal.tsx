@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select'
 import { useCompany } from '@/contexts/CompanyContext'
 import { TransactionType, RecurrenceType, Account } from '@/types/database'
-import { parseNaturalLanguageTransaction } from '@/lib/nlp-parser'
+import { parseNaturalLanguageTransaction, isCategoryAllowedForType } from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
 import { toast } from 'sonner'
 import { formatCurrency } from '@/lib/formatters'
@@ -151,26 +151,9 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
 
   const filteredCategories = useMemo(() => {
     return categories
-      .filter((c) => {
-        // Always include currently selected category
-        if (c.id === categoryId) return true
-        // Matching type
-        if (c.type === type) return true
-        // Allow personal categories (Fabrício, Raffaela, Helena, Emanuel, Matheus) and Investimento across both
-        const normName = c.name.toLowerCase().trim()
-        return (
-          normName === 'fabrício' ||
-          normName === 'fabricio' ||
-          normName === 'raffaela' ||
-          normName === 'rafaela' ||
-          normName === 'helena' ||
-          normName === 'emanuel' ||
-          normName === 'matheus' ||
-          normName === 'investimento'
-        )
-      })
+      .filter((c) => isCategoryAllowedForType(c, type))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
-  }, [categories, type, categoryId])
+  }, [categories, type])
 
   const filteredSubcategories = useMemo(
     () =>
@@ -180,15 +163,27 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
     [subcategories, categoryId],
   )
 
-  React.useEffect(() => {
-    if (filteredCategories.length > 0) {
-      const exists = filteredCategories.some((c) => c.id === categoryId)
-      if (!exists && !hasInterpreted) {
-        setCategoryId(filteredCategories[0].id)
+  // Ao mudar o Tipo no modal, revalidar: se a categoria não pertencer ao novo tipo, limpar categoria e subcategoria
+  const handleTypeChange = (newType: TransactionType) => {
+    setType(newType)
+    if (categoryId) {
+      const currentCat = categories.find((c) => c.id === categoryId)
+      if (!currentCat || !isCategoryAllowedForType(currentCat, newType)) {
+        setCategoryId('')
         setSubcategoryId('')
       }
     }
-  }, [type, filteredCategories, categoryId, hasInterpreted])
+  }
+
+  React.useEffect(() => {
+    if (categoryId) {
+      const currentCat = categories.find((c) => c.id === categoryId)
+      if (!currentCat || !isCategoryAllowedForType(currentCat, type)) {
+        setCategoryId('')
+        setSubcategoryId('')
+      }
+    }
+  }, [type, categories, categoryId])
 
   const handleInterpret = () => {
     if (!text.trim()) {
@@ -227,18 +222,22 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         setIsRecurring(Boolean(result.is_recurring))
         setRecurrenceType(result.recurrence_type || 'mensal')
 
-        // Category matching
+        // Category matching - ensure compatible with result.type
         let finalCatId = ''
         if (result.category_id) {
-          finalCatId = result.category_id
-        } else {
+          const catObj = categories.find((c) => c.id === result.category_id)
+          if (catObj && isCategoryAllowedForType(catObj, result.type)) {
+            finalCatId = result.category_id
+          }
+        }
+        if (!finalCatId) {
+          const compatibleList = categories.filter((c) => isCategoryAllowedForType(c, result.type))
           const fallback =
-            categories.find(
+            compatibleList.find(
               (c) =>
-                c.type === result.type &&
-                (c.name.toLowerCase().includes('outros') || c.name.toLowerCase().includes('geral')),
+                c.name.toLowerCase().includes('outros') || c.name.toLowerCase().includes('geral'),
             ) ||
-            categories.find((c) => c.type === result.type) ||
+            compatibleList[0] ||
             null
           finalCatId = fallback?.id || ''
         }
@@ -463,7 +462,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
               <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
                 <button
                   type="button"
-                  onClick={() => setType('despesa')}
+                  onClick={() => handleTypeChange('despesa')}
                   className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                     type === 'despesa'
                       ? 'bg-rose-500 text-white shadow-sm'
@@ -475,7 +474,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                 </button>
                 <button
                   type="button"
-                  onClick={() => setType('receita')}
+                  onClick={() => handleTypeChange('receita')}
                   className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                     type === 'receita'
                       ? 'bg-emerald-500 text-white shadow-sm'

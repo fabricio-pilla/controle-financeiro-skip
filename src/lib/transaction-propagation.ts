@@ -1,6 +1,7 @@
 import { Transaction, TransactionType, RecurrenceType } from '@/types/database'
 import pb from '@/lib/pocketbase/client'
 import { skipCloud } from '@/lib/skip-cloud'
+import { executeWithRetry } from '@/lib/pocketbase/retry'
 import { PropagationChoice } from '@/components/transactions/RecurrencePropagationModal'
 
 export interface UpdateTransactionPayload {
@@ -30,8 +31,159 @@ function addMonths(dateStr: string, months: number): string {
 }
 
 // Clean title from "(X/Y)" suffix if present
-function cleanDescription(desc: string): string {
+export function cleanDescription(desc: string): string {
   return desc.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/i, '').trim()
+}
+
+/**
+ * Helper to check if a transaction is an installment
+ */
+export function isInstallmentTransaction(transaction: Transaction): boolean {
+  return Boolean(
+    transaction.parent_transaction_id ||
+    (transaction.installment_number && transaction.installment_number > 0) ||
+    (transaction.installments_total && transaction.installments_total > 1) ||
+    /\(\s*\d+\s*\/\s*\d+\s*\)/.test(transaction.description || ''),
+  )
+}
+
+/**
+ * Helper to check if a transaction is recurring
+ */
+export function isRecurringTransaction(transaction: Transaction): boolean {
+  return Boolean(
+    transaction.is_recurring ||
+    transaction.recurring ||
+    Boolean(transaction.recurrence_type && transaction.recurrence_type.length > 0),
+  )
+}
+
+/**
+ * Find sibling transactions belonging to an installment group
+ */
+export function findInstallmentGroup(
+  transaction: Transaction,
+  allTransactions: Transaction[],
+): Transaction[] {
+  const parentId = transaction.parent_transaction_id || transaction.id
+  const originalDesc = cleanDescription(transaction.description)
+
+  const group = allTransactions.filter(
+    (t) =>
+      (t.parent_transaction_id && t.parent_transaction_id === parentId) ||
+      t.id === parentId ||
+      (transaction.parent_transaction_id && t.id === transaction.parent_transaction_id) ||
+      (cleanDescription(t.description) === originalDesc &&
+        (t.installments_total || 0) > 1 &&
+        t.type === transaction.type),
+  )
+
+  group.sort((a, b) => {
+    const numA = a.installment_number || 0
+    const numB = b.installment_number || 0
+    if (numA !== numB) return numA - numB
+    return new Date(a.date).getTime() - new Date(b.date).getTime()
+  })
+
+  return group
+}
+
+/**
+ * Find transactions belonging to a recurring series
+ */
+export function findRecurringSeries(
+  transaction: Transaction,
+  allTransactions: Transaction[],
+): Transaction[] {
+  const originalDesc = transaction.description.trim()
+  const currentCatId = transaction.category_id
+  const currentType = transaction.type
+
+  const series = allTransactions.filter(
+    (t) =>
+      t.control_id === transaction.control_id &&
+      (t.is_recurring || t.recurring || Boolean(t.recurrence_type)) &&
+      t.type === currentType &&
+      (t.id === transaction.id ||
+        t.description.trim().toLowerCase() === originalDesc.toLowerCase() ||
+        (t.category_id === currentCatId &&
+          t.description.trim().toLowerCase() === originalDesc.toLowerCase())),
+  )
+
+  series.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+  return series
+}
+
+/**
+ * Handle deleting a transaction with propagation support for installments and recurring items.
+ */
+export async function deleteTransactionWithPropagation({
+  transaction,
+  allTransactions,
+  choice = 'single',
+}: {
+  transaction: Transaction
+  allTransactions: Transaction[]
+  choice?: PropagationChoice
+}): Promise<void> {
+  const isInstallment = isInstallmentTransaction(transaction)
+  const isRecurring = isRecurringTransaction(transaction)
+
+  // Standalone single transaction or user chose 'single'
+  if ((!isInstallment && !isRecurring) || choice === 'single') {
+    await executeWithRetry(() => skipCloud.deleteTransaction(transaction.id), 5, 1000, 'DELETE_TX')
+    return
+  }
+
+  // Handle INSTALLMENT deletion
+  if (isInstallment) {
+    const group = findInstallmentGroup(transaction, allTransactions)
+    const currentNum = transaction.installment_number || 1
+
+    let targetsToDelete: Transaction[] = []
+    if (choice === 'all') {
+      targetsToDelete = group.length > 0 ? group : [transaction]
+    } else if (choice === 'future') {
+      targetsToDelete = group.filter((t) => (t.installment_number || 0) >= currentNum)
+      if (targetsToDelete.length === 0) targetsToDelete = [transaction]
+    }
+
+    // Delete targets with retry
+    for (const item of targetsToDelete) {
+      await executeWithRetry(
+        () => skipCloud.deleteTransaction(item.id),
+        5,
+        1000,
+        'DELETE_INSTALLMENT',
+      )
+    }
+    return
+  }
+
+  // Handle RECURRING deletion
+  if (isRecurring) {
+    const series = findRecurringSeries(transaction, allTransactions)
+    const currentDate = new Date(transaction.date).getTime()
+
+    let targetsToDelete: Transaction[] = []
+    if (choice === 'all') {
+      targetsToDelete = series.length > 0 ? series : [transaction]
+    } else if (choice === 'future') {
+      targetsToDelete = series.filter((t) => new Date(t.date).getTime() >= currentDate)
+      if (targetsToDelete.length === 0) targetsToDelete = [transaction]
+    }
+
+    // Delete targets with retry
+    for (const item of targetsToDelete) {
+      await executeWithRetry(
+        () => skipCloud.deleteTransaction(item.id),
+        5,
+        1000,
+        'DELETE_RECURRING',
+      )
+    }
+    return
+  }
 }
 
 /**
@@ -116,24 +268,7 @@ async function handleInstallmentPropagation({
   const newBaseDesc = cleanDescription(formData.description)
 
   // Find all sibling transactions in this installment group
-  // They either share parent_transaction_id, or have parent_transaction_id === parentId, or match ID
-  const group = allTransactions.filter(
-    (t) =>
-      (t.parent_transaction_id && t.parent_transaction_id === parentId) ||
-      t.id === parentId ||
-      (transaction.parent_transaction_id && t.id === transaction.parent_transaction_id) ||
-      (cleanDescription(t.description) === originalDesc &&
-        (t.installments_total || 0) > 1 &&
-        t.type === transaction.type),
-  )
-
-  // Sort by installment_number asc, then date asc
-  group.sort((a, b) => {
-    const numA = a.installment_number || 0
-    const numB = b.installment_number || 0
-    if (numA !== numB) return numA - numB
-    return new Date(a.date).getTime() - new Date(b.date).getTime()
-  })
+  const group = findInstallmentGroup(transaction, allTransactions)
 
   // Determine which items to update based on choice
   const currentNum = transaction.installment_number || 1
@@ -268,17 +403,7 @@ async function handleRecurringPropagation({
   const currentType = transaction.type
 
   // Find all transactions that belong to this recurring series
-  // (same description, category, and is_recurring, in the same control)
-  const series = allTransactions.filter(
-    (t) =>
-      t.control_id === transaction.control_id &&
-      (t.is_recurring || t.recurring) &&
-      t.type === currentType &&
-      (t.id === transaction.id ||
-        t.description.trim().toLowerCase() === originalDesc.toLowerCase() ||
-        (t.category_id === currentCatId &&
-          t.description.trim().toLowerCase() === originalDesc.toLowerCase())),
-  )
+  const series = findRecurringSeries(transaction, allTransactions)
 
   let targetsToUpdate: Transaction[] = []
   if (choice === 'all') {

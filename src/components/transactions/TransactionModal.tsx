@@ -39,6 +39,7 @@ import {
   updateTransactionWithPropagation,
   UpdateTransactionPayload,
 } from '@/lib/transaction-propagation'
+import { isCategoryAllowedForType } from '@/lib/nlp-parser'
 
 interface TransactionModalProps {
   open: boolean
@@ -170,16 +171,7 @@ export function TransactionModal({
   // Filter categories by selected type (categories with type === type OR dual-flow categories: Fabrício, Raffaela, Investimento) sorted A-Z
   const filteredCategories = useMemo(() => {
     return categories
-      .filter((c) => {
-        if (c.type === type) return true
-        const normName = c.name.toLowerCase().trim()
-        return (
-          normName === 'fabrício' ||
-          normName === 'fabricio' ||
-          normName === 'raffaela' ||
-          normName === 'investimento'
-        )
-      })
+      .filter((c) => isCategoryAllowedForType(c, type))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
   }, [categories, type])
 
@@ -192,16 +184,28 @@ export function TransactionModal({
     [subcategories, categoryId],
   )
 
-  // Set default category if none or not in list
-  React.useEffect(() => {
-    if (filteredCategories.length > 0) {
-      const exists = filteredCategories.some((c) => c.id === categoryId)
-      if (!exists) {
-        setCategoryId(filteredCategories[0].id)
+  // Handlers for switching type
+  const handleTypeChange = (newType: TransactionType) => {
+    setType(newType)
+    if (categoryId) {
+      const currentCat = categories.find((c) => c.id === categoryId)
+      if (!currentCat || !isCategoryAllowedForType(currentCat, newType)) {
+        setCategoryId('')
         setSubcategoryId('')
       }
     }
-  }, [type, filteredCategories, categoryId])
+  }
+
+  // Validate category selection against current type
+  React.useEffect(() => {
+    if (categoryId) {
+      const currentCat = categories.find((c) => c.id === categoryId)
+      if (!currentCat || !isCategoryAllowedForType(currentCat, type)) {
+        setCategoryId('')
+        setSubcategoryId('')
+      }
+    }
+  }, [type, categories, categoryId])
 
   const executeUpdate = async (formData: UpdateTransactionPayload, choice?: PropagationChoice) => {
     if (!transaction) return
@@ -366,7 +370,7 @@ export function TransactionModal({
           <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
             <button
               type="button"
-              onClick={() => setType('despesa')}
+              onClick={() => handleTypeChange('despesa')}
               className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                 type === 'despesa'
                   ? 'bg-rose-500 text-white shadow-sm'
@@ -378,7 +382,7 @@ export function TransactionModal({
             </button>
             <button
               type="button"
-              onClick={() => setType('receita')}
+              onClick={() => handleTypeChange('receita')}
               className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                 type === 'receita'
                   ? 'bg-emerald-500 text-white shadow-sm'

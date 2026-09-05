@@ -1,4 +1,8 @@
-import { parseNaturalLanguageTransaction } from './nlp-parser'
+import {
+  parseNaturalLanguageTransaction,
+  isCategoryAllowedForType,
+  isHybridCategory,
+} from './nlp-parser'
 import type { Account, Category, Subcategory } from '@/types/database'
 
 export function runTests(): { passed: number; failed: number; errors: string[] } {
@@ -292,6 +296,84 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
       res.description === 'Raffaela',
       `Test 5: description should fallback to category Raffaela, got "${res.description}"`,
     )
+  }
+
+  // Test 6: Hybrid categories validation
+  // Fabrício, Raffaela and Investimento are available for BOTH 'receita' and 'despesa'
+  // Regular categories like Moradia, Pets, etc. only for 'despesa'
+  {
+    const catFab = mockCategories.find((c) => c.id === 'cat-fabricio')!
+    const catRaffa = mockCategories.find((c) => c.id === 'cat-raffaela')!
+    const catMoradia = mockCategories.find((c) => c.id === 'cat-moradia')!
+    const catInvestimento: Category = {
+      id: 'cat-investimento',
+      control_id: 'c1',
+      name: 'Investimento',
+      type: 'receita',
+      color: '#8B5CF6',
+      icon: 'TrendingUp',
+      created_at: '',
+    }
+
+    assert(isHybridCategory('Fabrício'), 'Test 6: Fabrício should be hybrid category')
+    assert(isHybridCategory('Raffaela'), 'Test 6: Raffaela should be hybrid category')
+    assert(isHybridCategory('Investimento'), 'Test 6: Investimento should be hybrid category')
+    assert(!isHybridCategory('Moradia'), 'Test 6: Moradia should NOT be hybrid category')
+
+    assert(
+      isCategoryAllowedForType(catFab, 'receita') && isCategoryAllowedForType(catFab, 'despesa'),
+      'Test 6: Fabrício should be allowed for both receita and despesa',
+    )
+    assert(
+      isCategoryAllowedForType(catRaffa, 'receita') &&
+        isCategoryAllowedForType(catRaffa, 'despesa'),
+      'Test 6: Raffaela should be allowed for both receita and despesa',
+    )
+    assert(
+      isCategoryAllowedForType(catInvestimento, 'receita') &&
+        isCategoryAllowedForType(catInvestimento, 'despesa'),
+      'Test 6: Investimento should be allowed for both receita and despesa',
+    )
+    assert(
+      isCategoryAllowedForType(catMoradia, 'despesa'),
+      'Test 6: Moradia should be allowed for despesa',
+    )
+    assert(
+      !isCategoryAllowedForType(catMoradia, 'receita'),
+      'Test 6: Moradia should NOT be allowed for receita',
+    )
+  }
+
+  // Test 7: Parser suggests only categories compatible with detected type
+  // Despesa test: "Paguei aluguel 1500" should detect Moradia (despesa)
+  {
+    const res = parseNaturalLanguageTransaction(
+      'Paguei aluguel 1500',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(res.type === 'despesa', 'Test 7: type should be despesa')
+    assert(res.category_id === 'cat-moradia', 'Test 7: category should be Moradia')
+  }
+
+  // Receita test: A despesa-only category (like Moradia or Transporte) must NOT be suggested when type is receita
+  {
+    const res = parseNaturalLanguageTransaction(
+      'Recebi 5000 de salário',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(res.type === 'receita', 'Test 7b: type should be receita')
+    // Result category should NOT be a despesa-only category
+    if (res.category_id) {
+      const matchedCat = mockCategories.find((c) => c.id === res.category_id)
+      assert(
+        matchedCat ? isCategoryAllowedForType(matchedCat, 'receita') : true,
+        'Test 7b: category must be allowed for receita',
+      )
+    }
   }
 
   return { passed, failed, errors }

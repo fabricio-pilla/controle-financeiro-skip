@@ -3,6 +3,15 @@ import { useCompany } from '@/contexts/CompanyContext'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
 import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import {
+  RecurrencePropagationModal,
+  PropagationChoice,
+} from '@/components/transactions/RecurrencePropagationModal'
+import {
+  isInstallmentTransaction,
+  isRecurringTransaction,
+  deleteTransactionWithPropagation,
+} from '@/lib/transaction-propagation'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Transaction, TransactionType } from '@/types/database'
@@ -80,7 +89,9 @@ export default function TransactionsPage() {
   const [aiModalOpen, setAiModalOpen] = useState(false)
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [deletePropagationOpen, setDeletePropagationOpen] = useState(false)
   const [txToDelete, setTxToDelete] = useState<Transaction | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Available unique month/year options from all transactions
   const availableMonths = useMemo(() => {
@@ -283,18 +294,56 @@ export default function TransactionsPage() {
 
   const handleDeletePrompt = (tx: Transaction) => {
     setTxToDelete(tx)
-    setConfirmDeleteOpen(true)
+    const isInst = isInstallmentTransaction(tx)
+    const isRec = isRecurringTransaction(tx)
+    if (isInst || isRec) {
+      setDeletePropagationOpen(true)
+    } else {
+      setConfirmDeleteOpen(true)
+    }
   }
 
   const confirmDelete = async () => {
     if (!txToDelete) return
+    setIsDeleting(true)
     try {
       await deleteTransaction(txToDelete.id)
       toast.success('Lançamento excluído com sucesso!')
-      setTxToDelete(null)
       setSelectedIds((prev) => prev.filter((id) => id !== txToDelete.id))
+      setTxToDelete(null)
+      setConfirmDeleteOpen(false)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao excluir lançamento.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const confirmPropagationDelete = async (choice: PropagationChoice) => {
+    if (!txToDelete) return
+    setIsDeleting(true)
+    try {
+      await deleteTransactionWithPropagation({
+        transaction: txToDelete,
+        allTransactions: transactions,
+        choice,
+      })
+      // Refresh context state
+      await deleteTransaction(txToDelete.id)
+      toast.success(
+        choice === 'all'
+          ? 'Todos os registros vinculados foram excluídos com sucesso!'
+          : choice === 'future'
+            ? 'Este e os próximos registros foram excluídos com sucesso!'
+            : 'Lançamento excluído com sucesso!',
+      )
+      setSelectedIds((prev) => prev.filter((id) => id !== txToDelete.id))
+      setTxToDelete(null)
+      setDeletePropagationOpen(false)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao excluir lançamentos.')
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -1210,7 +1259,7 @@ export default function TransactionsPage() {
       {/* AI Transaction Modal */}
       <AiTransactionModal open={aiModalOpen} onOpenChange={setAiModalOpen} />
 
-      {/* Confirm Delete Dialog */}
+      {/* Confirm Delete Dialog (lançamentos simples) */}
       <ConfirmDialog
         open={confirmDeleteOpen}
         onOpenChange={setConfirmDeleteOpen}
@@ -1218,10 +1267,25 @@ export default function TransactionsPage() {
         description={`Tem certeza que deseja excluir o lançamento "${txToDelete?.description}" no valor de ${formatCurrency(
           txToDelete?.amount || 0,
         )}? O saldo da conta vinculada será reajustado automaticamente.`}
-        confirmText="Excluir"
+        confirmText={isDeleting ? 'Excluindo...' : 'Excluir'}
         variant="danger"
         onConfirm={confirmDelete}
       />
+
+      {/* Recurrence & Installment Propagation Delete Dialog */}
+      {txToDelete && (
+        <RecurrencePropagationModal
+          open={deletePropagationOpen}
+          onOpenChange={setDeletePropagationOpen}
+          mode="delete"
+          isInstallment={isInstallmentTransaction(txToDelete)}
+          isRecurring={isRecurringTransaction(txToDelete)}
+          currentInstallment={txToDelete.installment_number || 1}
+          totalInstallments={txToDelete.installments_total || 1}
+          onConfirm={confirmPropagationDelete}
+          isSubmitting={isDeleting}
+        />
+      )}
     </div>
   )
 }

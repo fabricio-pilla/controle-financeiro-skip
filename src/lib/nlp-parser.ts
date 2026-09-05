@@ -682,10 +682,29 @@ interface CategorySubcategoryMatch {
   subcategoryMatched: boolean
 }
 
+export const HYBRID_CATEGORIES = ['fabricio', 'raffaela', 'investimento']
+
+export function isHybridCategory(categoryName: string): boolean {
+  const norm = stripAccents(categoryName.trim())
+  return (
+    norm === 'fabricio' ||
+    norm === 'raffaela' ||
+    norm === 'rafaela' ||
+    norm === 'investimento' ||
+    norm === 'investimentos'
+  )
+}
+
+export function isCategoryAllowedForType(category: Category, type: TransactionType): boolean {
+  if (category.type === type) return true
+  return isHybridCategory(category.name)
+}
+
 export function extractCategoryAndSubcategory(
   normalized: string,
   categories: Category[],
   subcategories: Subcategory[],
+  targetType?: TransactionType,
 ): CategorySubcategoryMatch {
   // Step 1: Check direct subcategory matches in the entire text
   // Sort subcategories by name length descending so multi-word names match first ("Plano de Saúde" before "Saúde")
@@ -1275,12 +1294,22 @@ export function parseNaturalLanguageTransaction(
 ): ParsedTransaction {
   const normalized = stripAccents(text.toLowerCase())
 
-  // 1. Extract category & subcategory simultaneously
-  const { category, subcategory, categoryMatched, subcategoryMatched } =
-    extractCategoryAndSubcategory(normalized, categories, subcategories)
+  // 1. Extract preliminary category & subcategory to help determine type
+  const preliminaryCatMatch = extractCategoryAndSubcategory(normalized, categories, subcategories)
 
   // 2. Extract Type (receita / despesa)
-  const typeResult = extractType(normalized, category, subcategory)
+  const typeResult = extractType(
+    normalized,
+    preliminaryCatMatch.category,
+    preliminaryCatMatch.subcategory,
+  )
+
+  // 3. Extract category & subcategory filtered by the detected type (only compatible categories)
+  const compatibleCategories = categories.filter((c) =>
+    isCategoryAllowedForType(c, typeResult.type),
+  )
+  const { category, subcategory, categoryMatched, subcategoryMatched } =
+    extractCategoryAndSubcategory(normalized, compatibleCategories, subcategories, typeResult.type)
 
   // 3. Extract Recurrence
   const recurrenceResult = extractRecurrence(normalized)

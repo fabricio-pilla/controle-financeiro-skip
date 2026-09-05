@@ -10,15 +10,17 @@ import {
 import { Button } from '@/components/ui/button'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Label } from '@/components/ui/label'
-import { Layers, FastForward, CheckCircle2, Repeat, Package } from 'lucide-react'
+import { Layers, FastForward, CheckCircle2, Repeat, Package, Trash2 } from 'lucide-react'
 
 export type PropagationChoice = 'all' | 'future' | 'single'
+export type PropagationMode = 'update' | 'delete'
 
 interface RecurrencePropagationModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   isInstallment: boolean
   isRecurring: boolean
+  mode?: PropagationMode
   currentInstallment?: number
   totalInstallments?: number
   onConfirm: (choice: PropagationChoice) => void
@@ -30,6 +32,7 @@ export function RecurrencePropagationModal({
   onOpenChange,
   isInstallment,
   isRecurring,
+  mode = 'update',
   currentInstallment,
   totalInstallments,
   onConfirm,
@@ -40,27 +43,47 @@ export function RecurrencePropagationModal({
   // Reset to default on open
   React.useEffect(() => {
     if (open) {
-      setChoice('future')
+      setChoice(mode === 'delete' ? 'single' : 'future')
     }
-  }, [open])
+  }, [open, mode])
 
-  const title = isInstallment ? 'Atualizar Lançamento Parcelado' : 'Atualizar Lançamento Recorrente'
+  const isDelete = mode === 'delete'
+
+  const title = isDelete
+    ? isInstallment
+      ? 'Excluir Lançamento Parcelado'
+      : 'Excluir Lançamento Recorrente'
+    : isInstallment
+      ? 'Atualizar Lançamento Parcelado'
+      : 'Atualizar Lançamento Recorrente'
 
   const description = isInstallment
     ? `Este lançamento faz parte de uma compra parcelada${
         currentInstallment && totalInstallments
           ? ` (parcela ${currentInstallment} de ${totalInstallments})`
           : ''
-      }. Como deseja aplicar as alterações?`
-    : 'Este lançamento é uma despesa ou receita recorrente. Como deseja aplicar as alterações?'
+      }. Como deseja aplicar a ${isDelete ? 'exclusão' : 'alteração'}?`
+    : `Este lançamento é uma despesa ou receita recorrente. Como deseja aplicar a ${
+        isDelete ? 'exclusão' : 'alteração'
+      }?`
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px] rounded-2xl">
         <DialogHeader>
           <div className="flex items-center gap-2 mb-1">
-            <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-              {isInstallment ? <Package className="w-5 h-5" /> : <Repeat className="w-5 h-5" />}
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                isDelete ? 'bg-rose-50 text-rose-600' : 'bg-indigo-50 text-indigo-600'
+              }`}
+            >
+              {isDelete ? (
+                <Trash2 className="w-5 h-5" />
+              ) : isInstallment ? (
+                <Package className="w-5 h-5" />
+              ) : (
+                <Repeat className="w-5 h-5" />
+              )}
             </div>
             <DialogTitle className="text-lg font-bold text-slate-900">{title}</DialogTitle>
           </div>
@@ -75,25 +98,31 @@ export function RecurrencePropagationModal({
             onValueChange={(val) => setChoice(val as PropagationChoice)}
             className="space-y-2.5"
           >
-            {/* Opção 1: Todos */}
+            {/* Opção 3 / 1 conforme escopo: Somente esse registro */}
             <Label
-              htmlFor="choice-all"
+              htmlFor="choice-single"
               className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
-                choice === 'all'
-                  ? 'border-indigo-600 bg-indigo-50/50 text-indigo-950 shadow-sm'
+                choice === 'single'
+                  ? isDelete
+                    ? 'border-rose-600 bg-rose-50/50 text-rose-950 shadow-sm'
+                    : 'border-indigo-600 bg-indigo-50/50 text-indigo-950 shadow-sm'
                   : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
               }`}
             >
-              <RadioGroupItem value="all" id="choice-all" className="mt-0.5" />
+              <RadioGroupItem value="single" id="choice-single" className="mt-0.5" />
               <div className="flex-1 space-y-0.5">
                 <div className="flex items-center gap-1.5 font-semibold text-sm">
-                  <Layers className="w-4 h-4 text-indigo-600" />
-                  <span>Atualizar todos os registros</span>
+                  <CheckCircle2
+                    className={`w-4 h-4 ${isDelete ? 'text-rose-600' : 'text-indigo-600'}`}
+                  />
+                  <span>
+                    {isDelete ? 'Somente esse registro' : 'Atualizar somente esse registro'}
+                  </span>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed font-normal">
-                  {isInstallment
-                    ? 'Altera a parcela atual e todas as outras parcelas desta compra (passadas e futuras).'
-                    : 'Altera o registro atual e todas as outras ocorrências desta recorrência (passadas e futuras).'}
+                  {isDelete
+                    ? 'Exclui exclusivamente este lançamento, mantendo todos os outros intactos.'
+                    : 'Altera exclusivamente este registro, sem modificar nenhum outro lançamento.'}
                 </p>
               </div>
             </Label>
@@ -103,41 +132,57 @@ export function RecurrencePropagationModal({
               htmlFor="choice-future"
               className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
                 choice === 'future'
-                  ? 'border-indigo-600 bg-indigo-50/50 text-indigo-950 shadow-sm'
+                  ? isDelete
+                    ? 'border-rose-600 bg-rose-50/50 text-rose-950 shadow-sm'
+                    : 'border-indigo-600 bg-indigo-50/50 text-indigo-950 shadow-sm'
                   : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
               }`}
             >
               <RadioGroupItem value="future" id="choice-future" className="mt-0.5" />
               <div className="flex-1 space-y-0.5">
                 <div className="flex items-center gap-1.5 font-semibold text-sm">
-                  <FastForward className="w-4 h-4 text-indigo-600" />
-                  <span>Atualizar esse e os próximos</span>
+                  <FastForward
+                    className={`w-4 h-4 ${isDelete ? 'text-rose-600' : 'text-indigo-600'}`}
+                  />
+                  <span>{isDelete ? 'Esse e os próximos' : 'Atualizar esse e os próximos'}</span>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed font-normal">
-                  {isInstallment
-                    ? 'Altera a parcela atual e todas as parcelas futuras, mantendo as parcelas anteriores intactas.'
-                    : 'Altera o lançamento atual e todas as ocorrências a partir desta data, mantendo o histórico anterior.'}
+                  {isDelete
+                    ? isInstallment
+                      ? 'Exclui a parcela atual e todas as parcelas subsequentes desta compra, mantendo as parcelas anteriores.'
+                      : 'Exclui este lançamento e todas as ocorrências futuras desta recorrência, mantendo o histórico anterior.'
+                    : isInstallment
+                      ? 'Altera a parcela atual e todas as parcelas futuras, mantendo as parcelas anteriores intactas.'
+                      : 'Altera o lançamento atual e todas as ocorrências a partir desta data, mantendo o histórico anterior.'}
                 </p>
               </div>
             </Label>
 
-            {/* Opção 3: Somente esse */}
+            {/* Opção 1: Todos os registros */}
             <Label
-              htmlFor="choice-single"
+              htmlFor="choice-all"
               className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
-                choice === 'single'
-                  ? 'border-indigo-600 bg-indigo-50/50 text-indigo-950 shadow-sm'
+                choice === 'all'
+                  ? isDelete
+                    ? 'border-rose-600 bg-rose-50/50 text-rose-950 shadow-sm'
+                    : 'border-indigo-600 bg-indigo-50/50 text-indigo-950 shadow-sm'
                   : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
               }`}
             >
-              <RadioGroupItem value="single" id="choice-single" className="mt-0.5" />
+              <RadioGroupItem value="all" id="choice-all" className="mt-0.5" />
               <div className="flex-1 space-y-0.5">
                 <div className="flex items-center gap-1.5 font-semibold text-sm">
-                  <CheckCircle2 className="w-4 h-4 text-indigo-600" />
-                  <span>Atualizar somente esse registro</span>
+                  <Layers className={`w-4 h-4 ${isDelete ? 'text-rose-600' : 'text-indigo-600'}`} />
+                  <span>{isDelete ? 'Todos os registros' : 'Atualizar todos os registros'}</span>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed font-normal">
-                  Altera exclusivamente este registro, sem modificar nenhum outro lançamento.
+                  {isDelete
+                    ? isInstallment
+                      ? 'Exclui todas as parcelas desta compra (passadas e futuras).'
+                      : 'Exclui o grupo inteiro de recorrência (todas as ocorrências passadas e futuras).'
+                    : isInstallment
+                      ? 'Altera a parcela atual e todas as outras parcelas desta compra (passadas e futuras).'
+                      : 'Altera o registro atual e todas as outras ocorrências desta recorrência (passadas e futuras).'}
                 </p>
               </div>
             </Label>
@@ -158,9 +203,17 @@ export function RecurrencePropagationModal({
             type="button"
             disabled={isSubmitting}
             onClick={() => onConfirm(choice)}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-10 px-5 font-semibold shadow-sm"
+            className={`text-white rounded-xl h-10 px-5 font-semibold shadow-sm ${
+              isDelete ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'
+            }`}
           >
-            {isSubmitting ? 'Aplicando...' : 'Confirmar Atualização'}
+            {isSubmitting
+              ? isDelete
+                ? 'Excluindo...'
+                : 'Aplicando...'
+              : isDelete
+                ? 'Confirmar Exclusão'
+                : 'Confirmar Atualização'}
           </Button>
         </DialogFooter>
       </DialogContent>
