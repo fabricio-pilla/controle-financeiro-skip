@@ -22,7 +22,7 @@ import pb from '@/lib/pocketbase/client'
 export const DEFAULT_CATEGORIES = [
   {
     name: 'Fabrício',
-    type: 'receita' as const,
+    type: 'despesa' as const,
     color: '#6366F1',
     icon: 'User',
     subcategories: [
@@ -69,7 +69,7 @@ export const DEFAULT_CATEGORIES = [
   },
   {
     name: 'Raffaela',
-    type: 'receita' as const,
+    type: 'despesa' as const,
     color: '#EC4899',
     icon: 'User',
     subcategories: [
