@@ -69,24 +69,42 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     },
   ]
 
-  // Fixture categories matching real app structure
+  // Fixture categories matching real app structure (separate Despesa and Receita categories)
   const mockCategories: Category[] = [
     {
-      id: 'cat-fabricio',
+      id: 'cat-despesa-fabricio',
       control_id: 'c1',
-      name: 'Fabrício',
+      name: 'Despesa Fabrício',
       type: 'despesa',
       color: '#6366F1',
       icon: 'User',
       created_at: '',
     },
     {
-      id: 'cat-raffaela',
+      id: 'cat-receita-fabricio',
       control_id: 'c1',
-      name: 'Raffaela',
+      name: 'Receita Fabrício',
+      type: 'receita',
+      color: '#6366F1',
+      icon: 'TrendingUp',
+      created_at: '',
+    },
+    {
+      id: 'cat-despesa-raffaela',
+      control_id: 'c1',
+      name: 'Despesa Raffaela',
       type: 'despesa',
       color: '#EC4899',
       icon: 'User',
+      created_at: '',
+    },
+    {
+      id: 'cat-receita-raffaela',
+      control_id: 'c1',
+      name: 'Receita Raffaela',
+      type: 'receita',
+      color: '#EC4899',
+      icon: 'TrendingUp',
       created_at: '',
     },
     {
@@ -122,21 +140,21 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
   const mockSubcategories: Subcategory[] = [
     {
       id: 'sub-salario-fab',
-      category_id: 'cat-fabricio',
+      category_id: 'cat-receita-fabricio',
       control_id: 'c1',
       name: 'Salário',
       created_at: '',
     },
     {
       id: 'sub-outros-fab',
-      category_id: 'cat-fabricio',
+      category_id: 'cat-receita-fabricio',
       control_id: 'c1',
       name: 'Outros',
       created_at: '',
     },
     {
       id: 'sub-salario-raffa',
-      category_id: 'cat-raffaela',
+      category_id: 'cat-receita-raffaela',
       control_id: 'c1',
       name: 'Salário',
       created_at: '',
@@ -164,7 +182,7 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     },
     {
       id: 'sub-roupas-fab',
-      category_id: 'cat-fabricio',
+      category_id: 'cat-despesa-fabricio',
       control_id: 'c1',
       name: 'Roupas e Acessórios',
       created_at: '',
@@ -193,8 +211,8 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
       `Test 1: account_id should be acc-santander-credito, got ${res.account_id}`,
     )
     assert(
-      res.category_id === 'cat-raffaela',
-      `Test 1: category should resolve to Raffaela, got ${res.category_id}`,
+      res.category_id === 'cat-despesa-raffaela',
+      `Test 1: category should resolve to Despesa Raffaela, got ${res.category_id}`,
     )
     assert(
       res.description.toLowerCase() === 'almoco' || res.description.toLowerCase() === 'almoço',
@@ -206,7 +224,7 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
   {
     const subAlimRaffa: Subcategory = {
       id: 'sub-alim-raffa',
-      category_id: 'cat-raffaela',
+      category_id: 'cat-despesa-raffaela',
       control_id: 'c1',
       name: 'Alimentação',
       created_at: '',
@@ -224,7 +242,10 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
       res.account_id === 'acc-santander-credito',
       `Test 1b: account should be Santander Fabrício Crédito`,
     )
-    assert(res.category_id === 'cat-raffaela', `Test 1b: category should be Raffaela`)
+    assert(
+      res.category_id === 'cat-despesa-raffaela',
+      `Test 1b: category should be Despesa Raffaela`,
+    )
     assert(
       res.subcategory_id === 'sub-alim-raffa',
       `Test 1b: subcategory should be Alimentação when it exists, got ${res.subcategory_id}`,
@@ -237,7 +258,7 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
   // - amount: 8000
   // - is_recurring: true
   // - recurrence_type: mensal
-  // - category: Fabrício
+  // - category: Receita Fabrício
   // - subcategory: Salário
   {
     const res = parseNaturalLanguageTransaction(
@@ -250,7 +271,10 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     assert(res.type === 'receita', `Test 2: type should be receita, got ${res.type}`)
     assert(res.is_recurring === true, `Test 2: should be recurring`)
     assert(res.recurrence_type === 'mensal', `Test 2: recurrence type should be mensal`)
-    assert(res.category_id === 'cat-fabricio', `Test 2: category should be Fabrício`)
+    assert(
+      res.category_id === 'cat-receita-fabricio',
+      `Test 2: category should be Receita Fabrício`,
+    )
     assert(res.subcategory_id === 'sub-salario-fab', `Test 2: subcategory should be Salário`)
     assert(
       res.description.toLowerCase() === 'salario' || res.description.toLowerCase() === 'salário',
@@ -299,63 +323,61 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
       mockSubcategories,
     )
     assert(res.amount === 200, `Test 5: amount should be 200, got ${res.amount}`)
-    assert(res.category_id === 'cat-raffaela', `Test 5: category should be Raffaela`)
     assert(
-      res.description === 'Raffaela',
-      `Test 5: description should fallback to category Raffaela, got "${res.description}"`,
+      res.category_id === 'cat-despesa-raffaela',
+      `Test 5: category should be Despesa Raffaela`,
+    )
+    assert(
+      res.description === 'Despesa Raffaela' || res.description === 'Raffaela',
+      `Test 5: description should fallback to category name, got "${res.description}"`,
     )
   }
 
-  // Test 6: Hybrid categories validation
-  // Fabrício, Raffaela and Investimento are available for BOTH 'receita' and 'despesa'
-  // Regular categories like Moradia, Pets, etc. only for 'despesa'
+  // Test 6: Strict categories separation (NO hybrid categories)
+  // Despesa categories are only allowed for despesa, Receita only for receita
   {
-    const catFab = mockCategories.find((c) => c.id === 'cat-fabricio')!
-    const catRaffa = mockCategories.find((c) => c.id === 'cat-raffaela')!
+    const catDespFab = mockCategories.find((c) => c.id === 'cat-despesa-fabricio')!
+    const catRecFab = mockCategories.find((c) => c.id === 'cat-receita-fabricio')!
+    const catDespRaffa = mockCategories.find((c) => c.id === 'cat-despesa-raffaela')!
+    const catRecRaffa = mockCategories.find((c) => c.id === 'cat-receita-raffaela')!
     const catMoradia = mockCategories.find((c) => c.id === 'cat-moradia')!
-    const catInvestimento: Category = {
-      id: 'cat-investimento',
-      control_id: 'c1',
-      name: 'Investimento',
-      type: 'receita',
-      color: '#8B5CF6',
-      icon: 'TrendingUp',
-      created_at: '',
-    }
 
-    assert(isHybridCategory('Fabrício'), 'Test 6: Fabrício should be hybrid category')
-    assert(isHybridCategory('Raffaela'), 'Test 6: Raffaela should be hybrid category')
-    assert(isHybridCategory('Investimento'), 'Test 6: Investimento should be hybrid category')
+    assert(!isHybridCategory('Fabrício'), 'Test 6: Fabrício should NOT be hybrid category')
+    assert(!isHybridCategory('Raffaela'), 'Test 6: Raffaela should NOT be hybrid category')
+    assert(!isHybridCategory('Investimento'), 'Test 6: Investimento should NOT be hybrid category')
     assert(!isHybridCategory('Moradia'), 'Test 6: Moradia should NOT be hybrid category')
 
     assert(
-      isCategoryAllowedForType(catFab, 'receita') && isCategoryAllowedForType(catFab, 'despesa'),
-      'Test 6: Fabrício should be allowed for both receita and despesa',
+      isCategoryAllowedForType(catDespFab, 'despesa') &&
+        !isCategoryAllowedForType(catDespFab, 'receita'),
+      'Test 6: Despesa Fabrício should be allowed ONLY for despesa',
     )
     assert(
-      isCategoryAllowedForType(catRaffa, 'receita') &&
-        isCategoryAllowedForType(catRaffa, 'despesa'),
-      'Test 6: Raffaela should be allowed for both receita and despesa',
+      isCategoryAllowedForType(catRecFab, 'receita') &&
+        !isCategoryAllowedForType(catRecFab, 'despesa'),
+      'Test 6: Receita Fabrício should be allowed ONLY for receita',
     )
     assert(
-      isCategoryAllowedForType(catInvestimento, 'receita') &&
-        isCategoryAllowedForType(catInvestimento, 'despesa'),
-      'Test 6: Investimento should be allowed for both receita and despesa',
+      isCategoryAllowedForType(catDespRaffa, 'despesa') &&
+        !isCategoryAllowedForType(catDespRaffa, 'receita'),
+      'Test 6: Despesa Raffaela should be allowed ONLY for despesa',
     )
     assert(
-      isCategoryAllowedForType(catMoradia, 'despesa'),
-      'Test 6: Moradia should be allowed for despesa',
+      isCategoryAllowedForType(catRecRaffa, 'receita') &&
+        !isCategoryAllowedForType(catRecRaffa, 'despesa'),
+      'Test 6: Receita Raffaela should be allowed ONLY for receita',
     )
     assert(
-      !isCategoryAllowedForType(catMoradia, 'receita'),
-      'Test 6: Moradia should NOT be allowed for receita',
+      isCategoryAllowedForType(catMoradia, 'despesa') &&
+        !isCategoryAllowedForType(catMoradia, 'receita'),
+      'Test 6: Moradia should be allowed ONLY for despesa',
     )
   }
 
   // Test 8: Exact user example: "tenis fabricio 600 credito em 6x"
   // Should resolve:
-  // - type: despesa (forced by 'credito', even though Fabricio is hybrid/receita)
-  // - category: Fabrício
+  // - type: despesa (forced by 'credito')
+  // - category: Despesa Fabrício
   // - subcategory: Roupas e Acessórios (matched via clothing keyword 'tenis')
   // - amount: 600
   // - installments_total: 6
@@ -370,8 +392,8 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     assert(res.type === 'despesa', `Test 8: type should be despesa, got ${res.type}`)
     assert(res.amount === 600, `Test 8: amount should be 600, got ${res.amount}`)
     assert(
-      res.category_id === 'cat-fabricio',
-      `Test 8: category should be Fabrício, got ${res.category_id}`,
+      res.category_id === 'cat-despesa-fabricio',
+      `Test 8: category should be Despesa Fabrício, got ${res.category_id}`,
     )
     assert(
       res.subcategory_id === 'sub-roupas-fab',

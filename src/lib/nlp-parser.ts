@@ -753,22 +753,14 @@ interface CategorySubcategoryMatch {
   subcategoryMatched: boolean
 }
 
-export const HYBRID_CATEGORIES = ['fabricio', 'raffaela', 'investimento']
+export const HYBRID_CATEGORIES: string[] = []
 
-export function isHybridCategory(categoryName: string): boolean {
-  const norm = stripAccents(categoryName.trim())
-  return (
-    norm === 'fabricio' ||
-    norm === 'raffaela' ||
-    norm === 'rafaela' ||
-    norm === 'investimento' ||
-    norm === 'investimentos'
-  )
+export function isHybridCategory(_categoryName: string): boolean {
+  return false
 }
 
 export function isCategoryAllowedForType(category: Category, type: TransactionType): boolean {
-  if (category.type === type) return true
-  return isHybridCategory(category.name)
+  return category.type === type
 }
 
 export function extractCategoryAndSubcategory(
@@ -798,8 +790,20 @@ export function extractCategoryAndSubcategory(
     }
   }
 
-  // Check if a person category was explicitly mentioned (e.g. "Raffaela", "Fabrício", "Helena", "Emanuel", "Matheus")
-  const personCat = directCatMatches.find((c) => {
+  // Check if a person was explicitly mentioned in the text
+  const personNames = [
+    { key: 'raffaela', aliases: ['raffaela', 'rafaela', 'raffa', 'rafa'] },
+    { key: 'fabricio', aliases: ['fabricio'] },
+    { key: 'emanuel', aliases: ['emanuel'] },
+    { key: 'helena', aliases: ['helena'] },
+    { key: 'matheus', aliases: ['matheus'] },
+  ]
+  const mentionedPersonKey = personNames.find((p) =>
+    p.aliases.some((alias) => matchesPhraseOrWord(normalized, alias)),
+  )?.key
+
+  // If a person is mentioned, find the best matching category from directCatMatches or from the provided categories
+  let personCat = directCatMatches.find((c) => {
     const n = stripAccents(c.name)
     return (
       n === 'raffaela' ||
@@ -809,9 +813,23 @@ export function extractCategoryAndSubcategory(
       n === 'fabricio' ||
       n === 'emanuel' ||
       n === 'helena' ||
-      n === 'matheus'
+      n === 'matheus' ||
+      (mentionedPersonKey && n.includes(mentionedPersonKey))
     )
   })
+
+  if (!personCat && mentionedPersonKey) {
+    // If targetType is defined (e.g. 'receita' or 'despesa'), prefer category of that type
+    const personCandidates = categories.filter((c) => {
+      const n = stripAccents(c.name)
+      return n.includes(mentionedPersonKey)
+    })
+    if (targetType) {
+      personCat = personCandidates.find((c) => c.type === targetType) || personCandidates[0]
+    } else {
+      personCat = personCandidates[0]
+    }
+  }
 
   // If a person category is mentioned, check if that person has a subcategory matching the action or words
   if (personCat) {
@@ -1419,20 +1437,21 @@ export function parseNaturalLanguageTransaction(
 ): ParsedTransaction {
   const normalized = stripAccents(text.toLowerCase())
 
-  // 1. Extract preliminary category & subcategory to help determine type
-  const preliminaryCatMatch = extractCategoryAndSubcategory(normalized, categories, subcategories)
+  // 1. First extract Type (receita / despesa) from text cues
+  let typeResult = extractType(normalized)
 
-  // 2. Extract Type (receita / despesa)
-  const typeResult = extractType(
-    normalized,
-    preliminaryCatMatch.category,
-    preliminaryCatMatch.subcategory,
-  )
+  // 2. If type was not conclusively matched by text keywords, do a preliminary category/subcategory match to check cues
+  if (!typeResult.matched) {
+    const preliminaryCatMatch = extractCategoryAndSubcategory(normalized, categories, subcategories)
+    typeResult = extractType(
+      normalized,
+      preliminaryCatMatch.category,
+      preliminaryCatMatch.subcategory,
+    )
+  }
 
-  // 3. Extract category & subcategory filtered by the detected type (only compatible categories)
-  const compatibleCategories = categories.filter((c) =>
-    isCategoryAllowedForType(c, typeResult.type),
-  )
+  // 3. Extract category & subcategory strictly filtered by the detected type
+  const compatibleCategories = categories.filter((c) => c.type === typeResult.type)
   const { category, subcategory, categoryMatched, subcategoryMatched } =
     extractCategoryAndSubcategory(normalized, compatibleCategories, subcategories, typeResult.type)
 
