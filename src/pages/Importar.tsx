@@ -40,7 +40,11 @@ import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
 import { sleep, executeWithRetry as executeSharedRetry } from '@/lib/pocketbase/retry'
-import { downloadTemplateXlsx, downloadTemplateCsv } from '@/lib/import-template'
+import {
+  downloadTemplateXlsx,
+  downloadTemplateCsv,
+  exportTransactionsToXlsx,
+} from '@/lib/import-template'
 
 // 11 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
@@ -587,6 +591,7 @@ export default function Importar() {
   const [dbCategories, setDbCategories] = useState<Category[]>([])
   const [dbSubcategories, setDbSubcategories] = useState<Subcategory[]>([])
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
 
   // Parsed data & execution state
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([])
@@ -645,6 +650,74 @@ export default function Importar() {
       fetchControlMetadata(currentCompany.id)
     }
   }, [currentCompany?.id])
+
+  // Handler para exportar todas as transações do controle ativo para .xlsx
+  const handleExportTransactions = async () => {
+    if (!currentCompany?.id) {
+      toast.error('Nenhum controle selecionado.')
+      return
+    }
+
+    setIsExporting(true)
+    const toastId = toast.loading('Buscando transações do controle para exportação...')
+
+    try {
+      // Carregar todas as transações com expansões completas
+      const records = await pb.collection('transactions').getFullList<any>({
+        filter: `control_id = "${currentCompany.id}"`,
+        sort: 'date',
+        expand: 'account_id,category_id,subcategory_id',
+      })
+
+      if (records.length === 0) {
+        toast.dismiss(toastId)
+        toast.info('Nenhuma transação encontrada no controle para exportação.')
+        return
+      }
+
+      // Mapear registros com as expansões
+      const formatted = records.map((r) => ({
+        date: r.date,
+        description: r.description,
+        amount: Number(r.amount) || 0,
+        type: r.type as 'receita' | 'despesa',
+        account: r.expand?.account_id ? { name: r.expand.account_id.name } : undefined,
+        category: r.expand?.category_id ? { name: r.expand.category_id.name } : undefined,
+        subcategory: r.expand?.subcategory_id ? { name: r.expand.subcategory_id.name } : undefined,
+        installment_number: r.installment_number,
+        installments_total: r.installments_total,
+        installment_total: r.installment_total,
+        is_recurring: r.is_recurring,
+        recurring: r.recurring,
+        recurrence_type: r.recurrence_type,
+        recurrence_period: r.recurrence_period,
+        paid: r.paid,
+      }))
+
+      const now = new Date()
+      const yyyy = now.getFullYear()
+      const mm = String(now.getMonth() + 1).padStart(2, '0')
+      const dd = String(now.getDate()).padStart(2, '0')
+      const safeName = (currentCompany.name || 'controle')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-')
+
+      const fileName = `lancamentos-${safeName}-${yyyy}${mm}${dd}.xlsx`
+
+      exportTransactionsToXlsx(formatted, fileName)
+      toast.dismiss(toastId)
+      toast.success(
+        `Planilha exportada com sucesso! ${records.length} transações salvas em ${fileName}.`,
+      )
+    } catch (err: any) {
+      toast.dismiss(toastId)
+      console.error('Erro ao exportar transações:', err)
+      toast.error(err?.message || 'Erro ao exportar transações para planilha.')
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   // Handle uploaded file
   const processFile = (file: File) => {
@@ -739,6 +812,15 @@ export default function Importar() {
         return ''
       }
 
+      const paidVal = getVal(
+        'Pago',
+        'Status',
+        'Quitado',
+        'Liquidado',
+        'Pago?',
+        'Status de Pagamento',
+        'Paid',
+      )
       // Column candidates com ampla tolerância a variações de digitação e termos
       const dateVal = getVal(
         'Data',
@@ -907,6 +989,24 @@ export default function Importar() {
         isValid = false
         skipReason = 'Valor zerado ou inválido'
       }
+      // Interpretar campo Pago se informado (Sim/Não, Pago/Pendente, True/False)
+      let parsedPaid = true
+      if (paidVal !== '') {
+        const normPaid = normalizeText(String(paidVal))
+        if (
+          normPaid === 'nao' ||
+          normPaid === 'não' ||
+          normPaid === 'pendente' ||
+          normPaid === 'falso' ||
+          normPaid === 'false' ||
+          normPaid === '0' ||
+          normPaid === 'a pagar' ||
+          normPaid === 'a receber'
+        ) {
+          parsedPaid = false
+        }
+      }
+
       rows.push({
         rowIndex: index + 2, // Excel 1-based index (header is 1)
         raw: row,
@@ -932,7 +1032,8 @@ export default function Importar() {
         isParentInstallment: isCreditInstallment,
         isValid,
         skipReason,
-      })
+        isPaid: parsedPaid,
+      } as any)
     })
 
     setParsedRows(rows)
@@ -1280,6 +1381,9 @@ export default function Importar() {
           })
         } else {
           // Case C: Standard single transaction (or recurring)
+          // Se a linha importada tinha campo Pago = Não/Pendente/Falso, respeitar; padrão é true
+          const isPaid = (row as any).isPaid !== undefined ? (row as any).isPaid : true
+
           const singlePayload: any = {
             control_id: currentCompany.id,
             user_id: currentUserId,
@@ -1290,7 +1394,7 @@ export default function Importar() {
             subcategory_id: subcategoryId || undefined,
             account_id: row.matchedAccount.id,
             date: row.dateFormatted,
-            paid: true,
+            paid: isPaid,
             is_recurring: row.isRecurring,
             recurring: row.isRecurring,
             recurrence_type: row.recurrenceType || '',
@@ -1301,7 +1405,6 @@ export default function Importar() {
               ? `Importado de planilha (Recorrente ${row.recurrenceType || 'mensal'})`
               : 'Importado de planilha',
           }
-
           await executeWithRetry(() => pb.collection('transactions').create(singlePayload))
           summary.createdTransactions++
 
@@ -1495,6 +1598,16 @@ export default function Importar() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
+            onClick={handleExportTransactions}
+            disabled={isExporting}
+            className="rounded-xl h-10 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold"
+          >
+            <Download className="w-4 h-4" />
+            <span>{isExporting ? 'Exportando...' : 'Exportar para Planilha (.xlsx)'}</span>
+          </Button>
+
+          <Button
+            type="button"
             variant="outline"
             onClick={() => {
               downloadTemplateXlsx(dbAccounts, dbCategories, dbSubcategories)
@@ -1502,7 +1615,7 @@ export default function Importar() {
             }}
             className="rounded-xl h-10 gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm"
           >
-            <Download className="w-4 h-4 text-indigo-600" />
+            <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
             <span className="font-semibold">Baixar Modelo (.xlsx)</span>
           </Button>
 

@@ -283,3 +283,140 @@ export function downloadTemplateCsv(
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
 }
+
+/**
+ * Interface dos dados exportados compatível com a estrutura de importação.
+ */
+export interface ExportTransactionRow {
+  Data: string // dd/mm/aaaa
+  Descrição: string
+  Valor: string // R$ 1.234,56 ou 1.234,56
+  'Meio de Pagamento': string
+  Categoria: string
+  Subcategoria: string
+  Tipo: 'Entrada' | 'Saída'
+  Parcelas: string // ex: "01/10" ou ""
+  Recorrência: string // "Mensal", "Semanal", "Anual" ou ""
+  Pago: 'Sim' | 'Não'
+}
+
+/**
+ * Exporta uma lista de transações para arquivo Excel (.xlsx) na mesma estrutura
+ * do modelo de importação para permitir reimportação imediata.
+ */
+export function exportTransactionsToXlsx(
+  transactions: Array<{
+    date: string
+    description: string
+    amount: number
+    type: 'receita' | 'despesa'
+    account?: { name: string }
+    category?: { name: string }
+    subcategory?: { name: string }
+    installment_number?: number
+    installments_total?: number
+    installment_total?: number
+    is_recurring?: boolean
+    recurring?: boolean
+    recurrence_type?: string
+    recurrence_period?: string
+    paid?: boolean
+  }>,
+  fileName: string = 'transacoes-exportadas.xlsx',
+) {
+  // Ordenar cronologicamente
+  const sorted = [...transactions].sort(
+    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+  )
+
+  const rows: ExportTransactionRow[] = sorted.map((tx) => {
+    // Formatar data em dd/mm/aaaa
+    let dataBr = ''
+    if (tx.date) {
+      const match = tx.date.match(/^(\d{4})-(\d{2})-(\d{2})/)
+      if (match) {
+        dataBr = `${match[3]}/${match[2]}/${match[1]}`
+      } else {
+        const d = new Date(tx.date)
+        if (!isNaN(d.getTime())) {
+          const dd = String(d.getUTCDate()).padStart(2, '0')
+          const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+          const yyyy = d.getUTCFullYear()
+          dataBr = `${dd}/${mm}/${yyyy}`
+        }
+      }
+    }
+
+    // Formatar valor em pt-BR (ex: "1.250,00")
+    const valorBr = Number(tx.amount || 0).toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+
+    // Tipo (Entrada/Saída)
+    const tipo = tx.type === 'receita' ? 'Entrada' : 'Saída'
+
+    // Meio de Pagamento / Conta
+    const meioPagamento = tx.account?.name || ''
+
+    // Categoria e Subcategoria
+    const categoria = tx.category?.name || ''
+    const subcategoria = tx.subcategory?.name || ''
+
+    // Parcelas (ex: "01/10" ou "")
+    let parcelas = ''
+    const totalInst = tx.installments_total || tx.installment_total || 0
+    const numInst = tx.installment_number || 1
+    if (totalInst > 1) {
+      parcelas = `${String(numInst).padStart(2, '0')}/${String(totalInst).padStart(2, '0')}`
+    }
+
+    // Recorrência
+    let recorrencia = ''
+    const isRec = Boolean(
+      tx.is_recurring || tx.recurring || (tx.recurrence_type && tx.recurrence_type.trim() !== ''),
+    )
+    if (isRec) {
+      const period = (tx.recurrence_type || tx.recurrence_period || 'mensal').toLowerCase()
+      if (period.includes('seman')) recorrencia = 'Semanal'
+      else if (period.includes('anu')) recorrencia = 'Anual'
+      else recorrencia = 'Mensal'
+    }
+
+    // Pago (Sim/Não)
+    const pago = tx.paid !== false ? 'Sim' : 'Não'
+
+    return {
+      Data: dataBr,
+      Descrição: tx.description || '',
+      Valor: valorBr,
+      'Meio de Pagamento': meioPagamento,
+      Categoria: categoria,
+      Subcategoria: subcategoria,
+      Tipo: tipo,
+      Parcelas: parcelas,
+      Recorrência: recorrencia,
+      Pago: pago,
+    }
+  })
+
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.json_to_sheet(rows)
+
+  // Definir larguras de colunas adequadas
+  ws['!cols'] = [
+    { wch: 14 }, // Data
+    { wch: 38 }, // Descrição
+    { wch: 16 }, // Valor
+    { wch: 24 }, // Meio de Pagamento
+    { wch: 22 }, // Categoria
+    { wch: 22 }, // Subcategoria
+    { wch: 12 }, // Tipo
+    { wch: 12 }, // Parcelas
+    { wch: 14 }, // Recorrência
+    { wch: 10 }, // Pago
+  ]
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Lançamentos')
+  XLSX.writeFile(wb, fileName)
+}

@@ -12,6 +12,8 @@ import {
   isRecurringTransaction,
   deleteTransactionWithPropagation,
 } from '@/lib/transaction-propagation'
+import { executeWithRetry, sleep } from '@/lib/pocketbase/retry'
+import { pb } from '@/lib/pocketbase/client'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Transaction, TransactionType } from '@/types/database'
@@ -39,6 +41,8 @@ import {
   CheckSquare,
   Square,
   Calendar,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -53,12 +57,14 @@ import {
 
 export default function TransactionsPage() {
   const {
+    currentCompany,
     transactions,
     accounts,
     categories,
     deleteTransaction,
     setTransactionsPaidStatus,
     canManageTransactions,
+    reloadCompanyData,
   } = useCompany()
 
   // State
@@ -70,7 +76,20 @@ export default function TransactionsPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'pending'>('all')
   const [accountFilter, setAccountFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [monthFilter, setMonthFilter] = useState<string>('all') // 'all' or 'YYYY-MM'
+  // Default month filter to current month ("YYYY-MM")
+  const currentMonthStr = useMemo(() => {
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    return `${yyyy}-${mm}`
+  }, [])
+
+  const [monthFilter, setMonthFilter] = useState<string>(() => {
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    return `${yyyy}-${mm}`
+  }) // 'all' or 'YYYY-MM' (default to current month)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 10
 
@@ -92,10 +111,13 @@ export default function TransactionsPage() {
   const [deletePropagationOpen, setDeletePropagationOpen] = useState(false)
   const [txToDelete, setTxToDelete] = useState<Transaction | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isGeneratingRecurring, setIsGeneratingRecurring] = useState(false)
 
-  // Available unique month/year options from all transactions
+  // Available unique month/year options from all transactions (including current month)
   const availableMonths = useMemo(() => {
     const monthSet = new Set<string>()
+    // Ensure current month is always present in the options
+    monthSet.add(currentMonthStr)
     transactions.forEach((tx) => {
       if (tx.date) {
         const ym = tx.date.substring(0, 7) // "YYYY-MM"
@@ -109,12 +131,13 @@ export default function TransactionsPage() {
       const [year, month] = ym.split('-')
       const dateObj = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1)
       const label = dateObj.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+      const isCurrent = ym === currentMonthStr
       return {
         value: ym,
-        label: label.charAt(0).toUpperCase() + label.slice(1),
+        label: `${label.charAt(0).toUpperCase() + label.slice(1)}${isCurrent ? ' (Atual)' : ''}`,
       }
     })
-  }, [transactions])
+  }, [transactions, currentMonthStr])
 
   // Filtered transactions (ignoring parent installment records)
   const filteredList = useMemo(() => {
@@ -404,6 +427,165 @@ export default function TransactionsPage() {
     )
   }
 
+  // Gerar ocorrências dos próximos 12 meses para TODAS as transações recorrentes do controle ativo
+  const handleGenerateNext12Months = async () => {
+    if (!currentCompany?.id) {
+      toast.error('Nenhum controle selecionado.')
+      return
+    }
+
+    setIsGeneratingRecurring(true)
+    const toastId = toast.loading('Identificando lançamentos recorrentes...')
+
+    try {
+      // 1. Buscar transações recorrentes do controle
+      // Consideramos recorrentes do controle: is_recurring=true || recurring=true || recurrence_type != ''
+      // E pegamos também as transações que já existem na memória do controle para deduplicação rápida
+      const recurringSeeds = transactions.filter(
+        (t) =>
+          Boolean(
+            t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+          ) && t.control_id === currentCompany.id,
+      )
+
+      if (recurringSeeds.length === 0) {
+        toast.dismiss(toastId)
+        toast.info('Nenhuma transação recorrente configurada neste controle.')
+        return
+      }
+
+      // Agrupar por chave canônica para não duplicar se houver várias ocorrências da mesma série
+      // Chave: type + account_id + amount + description normalizada + recurrence_type
+      const canonicalMap = new Map<string, Transaction>()
+      for (const t of recurringSeeds) {
+        const cleanDesc = t.description.trim().toLowerCase()
+        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanDesc}`
+        if (!canonicalMap.has(key)) {
+          canonicalMap.set(key, t)
+        } else {
+          // Manter o que tem data mais recente como referência
+          const existing = canonicalMap.get(key)!
+          if (new Date(t.date).getTime() > new Date(existing.date).getTime()) {
+            canonicalMap.set(key, t)
+          }
+        }
+      }
+
+      const uniqueSeries = Array.from(canonicalMap.values())
+      toast.loading(`Gerando ocorrências para ${uniqueSeries.length} série(s) recorrente(s)...`, {
+        id: toastId,
+      })
+
+      // Mapa de ocorrências existentes no controle para checagem rápida de duplicidade
+      // Chave: type + account_id + amount + description normalizada + YYYY-MM
+      const existingOccurrences = new Set<string>()
+      for (const t of transactions) {
+        if (!t.date) continue
+        const ym = t.date.substring(0, 7) // "YYYY-MM"
+        const cleanDesc = t.description.trim().toLowerCase()
+        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanDesc}_${ym}`
+        existingOccurrences.add(key)
+      }
+
+      let createdIncomeCount = 0
+      let createdExpenseCount = 0
+      const now = new Date()
+
+      // Função auxiliar para calcular data em N meses preservando o dia limite
+      const addMonthsSafe = (baseDateStr: string, monthsToAdd: number): string => {
+        const d = new Date(baseDateStr)
+        const origDay = isNaN(d.getUTCDate()) ? 1 : d.getUTCDate()
+        const targetDate = new Date(Date.UTC(now.getFullYear(), now.getMonth() + monthsToAdd, 1))
+        const targetYear = targetDate.getUTCFullYear()
+        const targetMonth = targetDate.getUTCMonth() // 0-based
+        const lastDayOfTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate()
+        const targetDay = Math.min(origDay, lastDayOfTargetMonth)
+
+        const yyyy = String(targetYear).padStart(4, '0')
+        const mm = String(targetMonth + 1).padStart(2, '0')
+        const dd = String(targetDay).padStart(2, '0')
+        return `${yyyy}-${mm}-${dd} 00:00:00.000Z`
+      }
+
+      // Para cada série única, gerar ocorrências para os próximos 12 meses (mês 1 ao mês 12 a partir de agora)
+      for (const seed of uniqueSeries) {
+        const cleanDesc = seed.description.trim().toLowerCase()
+
+        for (let m = 1; m <= 12; m++) {
+          const nextDateStr = addMonthsSafe(seed.date, m)
+          const ym = nextDateStr.substring(0, 7)
+          const checkKey = `${seed.type}_${seed.account_id || ''}_${seed.amount}_${cleanDesc}_${ym}`
+
+          if (existingOccurrences.has(checkKey)) {
+            continue
+          }
+
+          const payload = {
+            control_id: currentCompany.id,
+            user_id: pb.authStore.record?.id || (currentCompany as any).created_by || '',
+            type: seed.type,
+            amount: seed.amount,
+            description: seed.description,
+            category_id: seed.category_id || '',
+            subcategory_id: seed.subcategory_id || '',
+            account_id: seed.account_id || '',
+            date: nextDateStr,
+            payment_date: '',
+            paid: false, // Ocorrências futuras ficam pendentes
+            is_recurring: true,
+            recurring: true,
+            recurrence_type: seed.recurrence_type || 'mensal',
+            recurrence_period: (seed as any).recurrence_period || seed.recurrence_type || 'mensal',
+            installment_number: 1,
+            installment_total: 0,
+            parent_transaction_id: '',
+            notes: seed.notes || '',
+          }
+
+          // Inserir com retry e throttle para evitar 429
+          await executeWithRetry(
+            () => pb.collection('transactions').create(payload),
+            4,
+            300,
+            'GerarRecorrentes',
+          )
+
+          existingOccurrences.add(checkKey)
+
+          if (seed.type === 'receita') {
+            createdIncomeCount++
+          } else {
+            createdExpenseCount++
+          }
+
+          // Throttle suave de 35ms entre requisições para evitar rate limit
+          await sleep(35)
+        }
+      }
+
+      toast.dismiss(toastId)
+
+      const totalCreated = createdIncomeCount + createdExpenseCount
+      if (totalCreated === 0) {
+        toast.info(
+          'Todas as transações recorrentes já possuem lançamentos gerados para os próximos 12 meses.',
+        )
+      } else {
+        toast.success(
+          `Concluído! ${totalCreated} novos lançamentos gerados (${createdIncomeCount} receita(s) e ${createdExpenseCount} despesa(s)) para os próximos 12 meses.`,
+          { duration: 6000 },
+        )
+        // Recarregar dados para refletir na tela imediatamente
+        await reloadCompanyData()
+      }
+    } catch (err: any) {
+      toast.dismiss(toastId)
+      toast.error(err?.message || 'Erro ao gerar lançamentos recorrentes.')
+    } finally {
+      setIsGeneratingRecurring(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -418,7 +600,22 @@ export default function TransactionsPage() {
         </div>
 
         {canManageTransactions && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              onClick={handleGenerateNext12Months}
+              disabled={isGeneratingRecurring}
+              variant="outline"
+              title="Gera on demand as ocorrências dos próximos 12 meses para todas as receitas e despesas recorrentes"
+              className="rounded-xl h-11 px-3.5 font-semibold border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/50 flex items-center gap-2 transition-colors"
+            >
+              {isGeneratingRecurring ? (
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+              ) : (
+                <RefreshCw className="w-4 h-4 text-indigo-500" />
+              )}
+              <span className="hidden lg:inline">Gerar recorrentes próximos 12 meses</span>
+              <span className="lg:hidden">Recorrentes (12m)</span>
+            </Button>
             <Button
               onClick={() => setAiModalOpen(true)}
               variant="outline"
