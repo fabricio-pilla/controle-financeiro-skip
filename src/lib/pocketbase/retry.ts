@@ -16,14 +16,15 @@ export interface RetryOptions {
   maxRetries?: number
   baseDelayMs?: number
   tag?: string
+  maxDelayMs?: number
 }
 
 export const executeWithRetry = async <T>(
   fn: () => Promise<T>,
   maxRetries = 5,
-  baseDelayMs = 1000,
+  baseDelayMs = 500,
   tag = 'API',
-  maxDelayMs = 10000,
+  maxDelayMs = 8000,
 ): Promise<T> => {
   let attempt = 0
   while (true) {
@@ -32,10 +33,12 @@ export const executeWithRetry = async <T>(
     } catch (error: any) {
       if (is429Error(error) && attempt < maxRetries) {
         attempt++
-        const calculatedDelay = baseDelayMs * Math.pow(2, attempt - 1)
+        // Jitter to prevent stampedes when multiple requests get throttled
+        const jitter = Math.random() * 200
+        const calculatedDelay = baseDelayMs * Math.pow(1.8, attempt - 1) + jitter
         const delay = Math.min(calculatedDelay, maxDelayMs)
         console.warn(
-          `[${tag}] 429 detectado. Retentando em ${delay}ms (tentativa ${attempt}/${maxRetries})...`,
+          `[${tag}] 429 detectado. Retentando em ${Math.round(delay)}ms (tentativa ${attempt}/${maxRetries})...`,
         )
         await sleep(delay)
         continue
@@ -43,4 +46,44 @@ export const executeWithRetry = async <T>(
       throw error
     }
   }
+}
+
+export interface RunInPoolOptions {
+  concurrency?: number
+  delayBetweenBatchesMs?: number
+  tag?: string
+}
+
+/**
+ * Runs a collection of tasks in controlled concurrent batches with backoff on 429.
+ * Balances high throughput (concurrency = 3-4) while preserving rate limit headroom.
+ */
+export async function runInPool<TItem, TResult>(
+  items: TItem[],
+  task: (item: TItem, index: number) => Promise<TResult>,
+  options: RunInPoolOptions = {},
+): Promise<TResult[]> {
+  const { concurrency = 4, delayBetweenBatchesMs = 25, tag = 'POOL' } = options
+  if (items.length === 0) return []
+
+  const results: TResult[] = new Array(items.length)
+  let currentIndex = 0
+
+  async function worker() {
+    while (currentIndex < items.length) {
+      const idx = currentIndex++
+      const item = items[idx]
+      const res = await executeWithRetry(() => task(item, idx), 5, 500, tag)
+      results[idx] = res
+      if (delayBetweenBatchesMs > 0) {
+        await sleep(delayBetweenBatchesMs)
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length)
+  const workers = Array.from({ length: workerCount }, () => worker())
+  await Promise.all(workers)
+
+  return results
 }

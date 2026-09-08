@@ -124,9 +124,19 @@ interface CompanyContextType {
   updateTransaction: (
     transactionId: string,
     data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
+    options?: { skipReload?: boolean },
   ) => Promise<Transaction>
-  deleteTransaction: (transactionId: string) => Promise<void>
-  setTransactionsPaidStatus: (transactionIds: string[], paid: boolean) => Promise<void>
+  deleteTransaction: (transactionId: string, options?: { skipReload?: boolean }) => Promise<void>
+  setTransactionsPaidStatus: (
+    transactionIds: string[],
+    paid: boolean,
+    options?: { skipReload?: boolean },
+  ) => Promise<Transaction[]>
+  applyTransactionsBatchUpdate: (mutation: {
+    updated?: Transaction[]
+    created?: Transaction[]
+    deletedIds?: string[]
+  }) => void
 
   // Team
   inviteMember: (email: string, role: UserRole) => Promise<CompanyMember>
@@ -407,30 +417,81 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     [currentCompany, reloadCompanyData],
   )
 
+  const applyTransactionsBatchUpdate = useCallback(
+    (mutation: { updated?: Transaction[]; created?: Transaction[]; deletedIds?: string[] }) => {
+      setTransactions((prev) => {
+        const deletedSet = new Set(mutation.deletedIds || [])
+        const updatedMap = new Map((mutation.updated || []).map((t) => [t.id, t]))
+
+        let list = prev
+          .filter((t) => !deletedSet.has(t.id))
+          .map((t) => (updatedMap.has(t.id) ? updatedMap.get(t.id)! : t))
+
+        if (mutation.created && mutation.created.length > 0) {
+          list = [...mutation.created, ...list]
+        }
+        list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        return list
+      })
+    },
+    [],
+  )
+
   const updateTransaction = useCallback(
     async (
       transactionId: string,
       data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
+      options?: { skipReload?: boolean },
     ) => {
+      // Optimistic update in local state for instantaneous UI response
+      setTransactions((prev) => prev.map((t) => (t.id === transactionId ? { ...t, ...data } : t)))
       const tx = await skipCloud.updateTransaction(transactionId, data)
-      await reloadCompanyData()
+      setTransactions((prev) => prev.map((t) => (t.id === transactionId ? tx : t)))
+      if (!options?.skipReload) {
+        // Sync accounts / totals in background without blocking caller
+        reloadCompanyData().catch((e) =>
+          console.warn('[updateTransaction] Background reloadCompanyData error:', e),
+        )
+      }
       return tx
     },
     [reloadCompanyData],
   )
 
   const deleteTransaction = useCallback(
-    async (transactionId: string) => {
+    async (transactionId: string, options?: { skipReload?: boolean }) => {
+      // Optimistic local deletion
+      setTransactions((prev) => prev.filter((t) => t.id !== transactionId))
       await skipCloud.deleteTransaction(transactionId)
-      await reloadCompanyData()
+      if (!options?.skipReload) {
+        reloadCompanyData().catch((e) =>
+          console.warn('[deleteTransaction] Background reloadCompanyData error:', e),
+        )
+      }
     },
     [reloadCompanyData],
   )
 
   const setTransactionsPaidStatus = useCallback(
-    async (transactionIds: string[], paid: boolean) => {
-      await skipCloud.setTransactionsPaidStatus(transactionIds, paid)
-      await reloadCompanyData()
+    async (transactionIds: string[], paid: boolean, options?: { skipReload?: boolean }) => {
+      const idSet = new Set(transactionIds)
+      // Instant optimistic update
+      setTransactions((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, paid } : t)))
+      const updated = await skipCloud.setTransactionsPaidStatus(transactionIds, paid)
+      // Update with server returned items
+      if (updated.length > 0) {
+        const updatedMap = new Map(updated.map((u) => [u.id, u]))
+        setTransactions((prev) =>
+          prev.map((t) => (updatedMap.has(t.id) ? updatedMap.get(t.id)! : t)),
+        )
+      }
+      if (!options?.skipReload) {
+        // Run light background sync to refresh account balances without delaying the UI
+        reloadCompanyData().catch((e) =>
+          console.warn('[setTransactionsPaidStatus] Background reloadCompanyData error:', e),
+        )
+      }
+      return updated
     },
     [reloadCompanyData],
   )
@@ -510,6 +571,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         updateTransaction,
         deleteTransaction,
         setTransactionsPaidStatus,
+        applyTransactionsBatchUpdate,
         inviteMember,
         updateMemberRole,
         removeMember,

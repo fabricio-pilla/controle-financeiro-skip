@@ -1274,16 +1274,20 @@ class SkipCloudService {
   async updateTransaction(
     transactionId: string,
     data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
+    skipBalanceUpdate = false,
   ): Promise<Transaction> {
     try {
-      const existing = await pb.collection('transactions').getOne(transactionId)
-      // Revert old balance
-      await this.adjustAccountBalance(
-        existing.account_id,
-        Number(existing.amount),
-        existing.type,
-        -1,
-      )
+      let existing: any = null
+      if (!skipBalanceUpdate) {
+        existing = await pb.collection('transactions').getOne(transactionId)
+        // Revert old balance
+        await this.adjustAccountBalance(
+          existing.account_id,
+          Number(existing.amount),
+          existing.type,
+          -1,
+        )
+      }
       const payload: any = {}
       if (data.account_id !== undefined) payload.account_id = data.account_id
       if (data.category_id !== undefined) payload.category_id = data.category_id || ''
@@ -1307,31 +1311,76 @@ class SkipCloudService {
       if (data.installments_total !== undefined) payload.installment_total = data.installments_total
 
       const r = await pb.collection('transactions').update(transactionId, payload)
-      const newAccId = r.account_id
-      const newAmount = Number(r.amount)
-      const newType = r.type
-      await this.adjustAccountBalance(newAccId, newAmount, newType, 1)
+      if (!skipBalanceUpdate) {
+        const newAccId = r.account_id
+        const newAmount = Number(r.amount)
+        const newType = r.type
+        await this.adjustAccountBalance(newAccId, newAmount, newType, 1)
+      }
       return mapTransaction(r)
     } catch (e: any) {
       throw pbErr(e)
     }
   }
 
-  async deleteTransaction(transactionId: string): Promise<void> {
+  async deleteTransaction(transactionId: string, skipBalanceUpdate = false): Promise<void> {
     try {
-      const tx = await pb.collection('transactions').getOne(transactionId)
-      await this.adjustAccountBalance(tx.account_id, Number(tx.amount), tx.type, -1)
+      if (!skipBalanceUpdate) {
+        const tx = await pb.collection('transactions').getOne(transactionId)
+        await this.adjustAccountBalance(tx.account_id, Number(tx.amount), tx.type, -1)
+      }
       await pb.collection('transactions').delete(transactionId)
     } catch (e: any) {
       throw pbErr(e)
     }
   }
 
-  async setTransactionsPaidStatus(transactionIds: string[], paid: boolean): Promise<void> {
+  /**
+   * Recalculates and persists accounts balances for the given account IDs based on current transactions in PB.
+   */
+  async recomputeAccountsBalances(accountIds: string[]): Promise<void> {
+    const uniqueIds = Array.from(new Set(accountIds.filter(Boolean)))
+    if (!uniqueIds.length) return
     try {
-      for (const id of transactionIds) {
-        await pb.collection('transactions').update(id, { paid })
+      for (const accId of uniqueIds) {
+        const [acc, txs] = await Promise.all([
+          pb.collection('accounts').getOne(accId),
+          pb.collection('transactions').getFullList({
+            filter: `account_id="${accId}"`,
+            fields: 'amount,type',
+          }),
+        ])
+        const mapped = mapAccount(acc)
+        let calcBalance = 0
+        for (const t of txs) {
+          const amt = Number(t.amount) || 0
+          const tType = t.type as TransactionType
+          if (mapped.type === 'credito') {
+            calcBalance += tType === 'despesa' ? amt : -amt
+          } else {
+            calcBalance += tType === 'receita' ? amt : -amt
+          }
+        }
+        await pb.collection('accounts').update(accId, { balance: calcBalance })
       }
+    } catch (e) {
+      console.warn('[recomputeAccountsBalances] Failed to sync account balance:', e)
+    }
+  }
+
+  async setTransactionsPaidStatus(transactionIds: string[], paid: boolean): Promise<Transaction[]> {
+    try {
+      if (!transactionIds.length) return []
+      const { runInPool } = await import('@/lib/pocketbase/retry')
+      const updatedRecords = await runInPool(
+        transactionIds,
+        async (id) => {
+          const rec = await pb.collection('transactions').update(id, { paid })
+          return mapTransaction(rec)
+        },
+        { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'SET_PAID_STATUS' },
+      )
+      return updatedRecords
     } catch (e: any) {
       throw pbErr(e)
     }

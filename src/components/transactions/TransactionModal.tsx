@@ -61,6 +61,8 @@ export function TransactionModal({
     transactions,
     createTransaction,
     updateTransaction,
+    applyTransactionsBatchUpdate,
+    reloadCompanyData,
   } = useCompany()
 
   const isEditing = Boolean(transaction)
@@ -211,18 +213,25 @@ export function TransactionModal({
     if (!transaction) return
     setIsSubmitting(true)
     try {
-      await updateTransactionWithPropagation({
+      const result = await updateTransactionWithPropagation({
         transaction,
         allTransactions: transactions,
         formData,
         choice,
       })
-      // Refresh context data
-      await updateTransaction(transaction.id, {})
+
+      // Immediately apply batch changes to context state (no blocking reload)
+      applyTransactionsBatchUpdate(result)
+
       toast.success('Lançamento atualizado com sucesso!')
       setPropagationModalOpen(false)
       setPendingFormData(null)
       onOpenChange(false)
+
+      // Background sync to keep balances fresh
+      reloadCompanyData().catch((e) =>
+        console.warn('[TransactionModal] Background reloadCompanyData error:', e),
+      )
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao atualizar lançamento.')
     } finally {

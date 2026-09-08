@@ -10,10 +10,12 @@ import {
 import {
   isInstallmentTransaction,
   isRecurringTransaction,
+  findInstallmentGroup,
+  findRecurringSeries,
   deleteTransactionWithPropagation,
 } from '@/lib/transaction-propagation'
 import { executeWithRetry, sleep } from '@/lib/pocketbase/retry'
-import { pb } from '@/lib/pocketbase/client'
+import pb from '@/lib/pocketbase/client'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Transaction, TransactionType } from '@/types/database'
@@ -63,6 +65,7 @@ export default function TransactionsPage() {
     categories,
     deleteTransaction,
     setTransactionsPaidStatus,
+    applyTransactionsBatchUpdate,
     canManageTransactions,
     reloadCompanyData,
   } = useCompany()
@@ -346,13 +349,44 @@ export default function TransactionsPage() {
     if (!txToDelete) return
     setIsDeleting(true)
     try {
+      // Find targets before delete to update state immediately
+      const isInst = isInstallmentTransaction(txToDelete)
+      const isRec = isRecurringTransaction(txToDelete)
+      let targetIds: string[] = [txToDelete.id]
+
+      if (isInst) {
+        const group = findInstallmentGroup(txToDelete, transactions)
+        const currentNum = txToDelete.installment_number || 1
+        if (choice === 'all') {
+          targetIds = (group.length > 0 ? group : [txToDelete]).map((t) => t.id)
+        } else if (choice === 'future') {
+          targetIds = group
+            .filter((t) => (t.installment_number || 0) >= currentNum)
+            .map((t) => t.id)
+          if (targetIds.length === 0) targetIds = [txToDelete.id]
+        }
+      } else if (isRec) {
+        const series = findRecurringSeries(txToDelete, transactions)
+        const currentDate = new Date(txToDelete.date).getTime()
+        if (choice === 'all') {
+          targetIds = (series.length > 0 ? series : [txToDelete]).map((t) => t.id)
+        } else if (choice === 'future') {
+          targetIds = series
+            .filter((t) => new Date(t.date).getTime() >= currentDate)
+            .map((t) => t.id)
+          if (targetIds.length === 0) targetIds = [txToDelete.id]
+        }
+      }
+
       await deleteTransactionWithPropagation({
         transaction: txToDelete,
         allTransactions: transactions,
         choice,
       })
-      // Refresh context state
-      await deleteTransaction(txToDelete.id)
+
+      // Immediate UI update without waiting for heavy reload
+      applyTransactionsBatchUpdate({ deletedIds: targetIds })
+
       toast.success(
         choice === 'all'
           ? 'Todos os registros vinculados foram excluídos com sucesso!'
@@ -360,9 +394,14 @@ export default function TransactionsPage() {
             ? 'Este e os próximos registros foram excluídos com sucesso!'
             : 'Lançamento excluído com sucesso!',
       )
-      setSelectedIds((prev) => prev.filter((id) => id !== txToDelete.id))
+      setSelectedIds((prev) => prev.filter((id) => !targetIds.includes(id)))
       setTxToDelete(null)
       setDeletePropagationOpen(false)
+
+      // Background sync to update balances
+      reloadCompanyData().catch((e) =>
+        console.warn('[confirmPropagationDelete] Background sync error:', e),
+      )
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao excluir lançamentos.')
     } finally {
@@ -393,15 +432,17 @@ export default function TransactionsPage() {
   // Bulk toggle status
   const handleBulkStatusChange = async (newPaidStatus: boolean) => {
     if (selectedIds.length === 0) return
+    const idsToUpdate = [...selectedIds]
+    const count = idsToUpdate.length
     setIsBulkUpdating(true)
+    setSelectedIds([]) // deselect immediately for fluid UI
     try {
-      await setTransactionsPaidStatus(selectedIds, newPaidStatus)
+      await setTransactionsPaidStatus(idsToUpdate, newPaidStatus)
       toast.success(
-        `${selectedIds.length} lançamento(s) marcado(s) como ${
+        `${count} lançamento(s) marcado(s) como ${
           newPaidStatus ? 'pago(s) / recebido(s)' : 'pendente(s)'
         }!`,
       )
-      setSelectedIds([])
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao alterar status dos lançamentos selecionados.')
     } finally {
@@ -542,11 +583,11 @@ export default function TransactionsPage() {
             notes: seed.notes || '',
           }
 
-          // Inserir com retry e throttle para evitar 429
+          // Inserir com retry e throttle suave
           await executeWithRetry(
             () => pb.collection('transactions').create(payload),
             4,
-            300,
+            250,
             'GerarRecorrentes',
           )
 
@@ -558,8 +599,8 @@ export default function TransactionsPage() {
             createdExpenseCount++
           }
 
-          // Throttle suave de 35ms entre requisições para evitar rate limit
-          await sleep(35)
+          // Throttle mínimo de 15ms entre requisições para evitar rate limit
+          await sleep(15)
         }
       }
 

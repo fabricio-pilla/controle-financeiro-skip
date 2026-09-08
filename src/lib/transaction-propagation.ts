@@ -1,7 +1,7 @@
 import { Transaction, TransactionType, RecurrenceType } from '@/types/database'
 import pb from '@/lib/pocketbase/client'
 import { skipCloud } from '@/lib/skip-cloud'
-import { executeWithRetry } from '@/lib/pocketbase/retry'
+import { executeWithRetry, runInPool } from '@/lib/pocketbase/retry'
 import { PropagationChoice } from '@/components/transactions/RecurrencePropagationModal'
 
 export interface UpdateTransactionPayload {
@@ -148,15 +148,19 @@ export async function deleteTransactionWithPropagation({
       if (targetsToDelete.length === 0) targetsToDelete = [transaction]
     }
 
-    // Delete targets with retry
-    for (const item of targetsToDelete) {
-      await executeWithRetry(
-        () => skipCloud.deleteTransaction(item.id),
-        5,
-        1000,
-        'DELETE_INSTALLMENT',
-      )
-    }
+    const affectedAccountIds = Array.from(new Set(targetsToDelete.map((t) => t.account_id)))
+
+    // Delete targets in controlled concurrent pool (concurrency: 4)
+    await runInPool(
+      targetsToDelete,
+      async (item) => {
+        await skipCloud.deleteTransaction(item.id, true)
+      },
+      { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'DELETE_INSTALLMENT' },
+    )
+
+    // Recompute balance once at end
+    await skipCloud.recomputeAccountsBalances(affectedAccountIds)
     return
   }
 
@@ -173,15 +177,19 @@ export async function deleteTransactionWithPropagation({
       if (targetsToDelete.length === 0) targetsToDelete = [transaction]
     }
 
-    // Delete targets with retry
-    for (const item of targetsToDelete) {
-      await executeWithRetry(
-        () => skipCloud.deleteTransaction(item.id),
-        5,
-        1000,
-        'DELETE_RECURRING',
-      )
-    }
+    const affectedAccountIds = Array.from(new Set(targetsToDelete.map((t) => t.account_id)))
+
+    // Delete targets in controlled concurrent pool (concurrency: 4)
+    await runInPool(
+      targetsToDelete,
+      async (item) => {
+        await skipCloud.deleteTransaction(item.id, true)
+      },
+      { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'DELETE_RECURRING' },
+    )
+
+    // Recompute balance once at end
+    await skipCloud.recomputeAccountsBalances(affectedAccountIds)
     return
   }
 }
@@ -199,7 +207,7 @@ export async function updateTransactionWithPropagation({
   allTransactions: Transaction[]
   formData: UpdateTransactionPayload
   choice?: PropagationChoice
-}): Promise<void> {
+}): Promise<{ updated: Transaction[]; created: Transaction[]; deletedIds: string[] }> {
   const isInstallment = Boolean(
     transaction.parent_transaction_id ||
     (transaction.installment_number && transaction.installment_number > 0) ||
@@ -210,7 +218,7 @@ export async function updateTransactionWithPropagation({
 
   // If it's a simple standalone transaction or choice is 'single'
   if ((!isInstallment && !isRecurring) || choice === 'single') {
-    await skipCloud.updateTransaction(transaction.id, {
+    const updated = await skipCloud.updateTransaction(transaction.id, {
       description: formData.description.trim(),
       amount: formData.amount,
       type: formData.type,
@@ -223,30 +231,30 @@ export async function updateTransactionWithPropagation({
       is_recurring: formData.is_recurring,
       recurrence_type: formData.is_recurring ? formData.recurrence_type : undefined,
     })
-    return
+    return { updated: [updated], created: [], deletedIds: [] }
   }
 
   // Handle INSTALLMENT Propagation
   if (isInstallment) {
-    await handleInstallmentPropagation({
+    return await handleInstallmentPropagation({
       transaction,
       allTransactions,
       formData,
       choice: choice || 'all',
     })
-    return
   }
 
   // Handle RECURRING Propagation
   if (isRecurring) {
-    await handleRecurringPropagation({
+    return await handleRecurringPropagation({
       transaction,
       allTransactions,
       formData,
       choice: choice || 'all',
     })
-    return
   }
+
+  return { updated: [], created: [], deletedIds: [] }
 }
 
 /**
@@ -262,9 +270,8 @@ async function handleInstallmentPropagation({
   allTransactions: Transaction[]
   formData: UpdateTransactionPayload
   choice: PropagationChoice
-}) {
+}): Promise<{ updated: Transaction[]; created: Transaction[]; deletedIds: string[] }> {
   const parentId = transaction.parent_transaction_id || transaction.id
-  const originalDesc = cleanDescription(transaction.description)
   const newBaseDesc = cleanDescription(formData.description)
 
   // Find all sibling transactions in this installment group
@@ -286,58 +293,80 @@ async function handleInstallmentPropagation({
     if (targetsToUpdate.length === 0) targetsToUpdate = [transaction]
   }
 
-  // 1. Update existing target transactions
-  for (const item of targetsToUpdate) {
-    const itemNum = item.installment_number || 1
-    const desc = newTotal > 1 ? `${newBaseDesc} (${itemNum}/${newTotal})` : newBaseDesc
+  const affectedAccountIds = new Set<string>()
+  affectedAccountIds.add(formData.account_id)
+  targetsToUpdate.forEach((t) => affectedAccountIds.add(t.account_id))
 
-    // If date changed on current transaction, shift relative dates if choice is 'all' or 'future'
-    let itemDate = item.date
-    if (item.id === transaction.id) {
-      itemDate = formData.date
-    } else {
-      // Calculate date relative to current transaction's new date
-      const diffMonths = (item.installment_number || 1) - currentNum
-      itemDate = addMonths(formData.date, diffMonths)
-    }
+  // 1. Update existing target transactions concurrently
+  const updatedItems = await runInPool(
+    targetsToUpdate,
+    async (item) => {
+      const itemNum = item.installment_number || 1
+      const desc = newTotal > 1 ? `${newBaseDesc} (${itemNum}/${newTotal})` : newBaseDesc
 
-    let itemPaymentDate = item.payment_date || itemDate
-    if (item.id === transaction.id) {
-      itemPaymentDate = formData.payment_date || formData.date
-    } else {
-      const diffMonths = (item.installment_number || 1) - currentNum
-      itemPaymentDate = addMonths(formData.payment_date || formData.date, diffMonths)
-    }
+      let itemDate = item.date
+      if (item.id === transaction.id) {
+        itemDate = formData.date
+      } else {
+        const diffMonths = (item.installment_number || 1) - currentNum
+        itemDate = addMonths(formData.date, diffMonths)
+      }
 
-    await skipCloud.updateTransaction(item.id, {
-      description: desc,
-      amount: formData.amount,
-      type: formData.type,
-      account_id: formData.account_id,
-      category_id: formData.category_id,
-      subcategory_id: formData.subcategory_id || '',
-      date: itemDate,
-      payment_date: itemPaymentDate,
-      notes: formData.notes?.trim() || '',
-      installment_number: itemNum,
-      installments_total: newTotal,
-      parent_transaction_id: parentId,
-      is_recurring: false,
-    })
-  }
+      let itemPaymentDate = item.payment_date || itemDate
+      if (item.id === transaction.id) {
+        itemPaymentDate = formData.payment_date || formData.date
+      } else {
+        const diffMonths = (item.installment_number || 1) - currentNum
+        itemPaymentDate = addMonths(formData.payment_date || formData.date, diffMonths)
+      }
+
+      return await skipCloud.updateTransaction(
+        item.id,
+        {
+          description: desc,
+          amount: formData.amount,
+          type: formData.type,
+          account_id: formData.account_id,
+          category_id: formData.category_id,
+          subcategory_id: formData.subcategory_id || '',
+          date: itemDate,
+          payment_date: itemPaymentDate,
+          notes: formData.notes?.trim() || '',
+          installment_number: itemNum,
+          installments_total: newTotal,
+          parent_transaction_id: parentId,
+          is_recurring: false,
+        },
+        true, // skip per-request balance update
+      )
+    },
+    { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'UPDATE_INSTALLMENT' },
+  )
 
   // 2. Also update installment_total & description suffix on prior items if choice was 'future' and total changed
   if (choice === 'future' && newTotal !== oldTotal) {
     const priorItems = group.filter((t) => (t.installment_number || 0) < currentNum)
-    for (const prior of priorItems) {
-      const priorNum = prior.installment_number || 1
-      const priorDesc = `${cleanDescription(prior.description)} (${priorNum}/${newTotal})`
-      await skipCloud.updateTransaction(prior.id, {
-        description: priorDesc,
-        installments_total: newTotal,
-      })
-    }
+    const priorUpdated = await runInPool(
+      priorItems,
+      async (prior) => {
+        const priorNum = prior.installment_number || 1
+        const priorDesc = `${cleanDescription(prior.description)} (${priorNum}/${newTotal})`
+        return await skipCloud.updateTransaction(
+          prior.id,
+          {
+            description: priorDesc,
+            installments_total: newTotal,
+          },
+          true,
+        )
+      },
+      { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'UPDATE_PRIOR_INSTALLMENTS' },
+    )
+    updatedItems.push(...priorUpdated)
   }
+
+  const createdItems: Transaction[] = []
+  const deletedIds: string[] = []
 
   // 3. Handle changing the number of installments (increase or decrease)
   if (newTotal !== oldTotal) {
@@ -347,41 +376,86 @@ async function handleInstallmentPropagation({
       const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
       const baseDate = formData.date
 
+      const missingIndexes: number[] = []
       for (let i = maxExistingNum + 1; i <= newTotal; i++) {
-        const diffMonths = i - currentNum
-        const parcelDate = addMonths(baseDate, diffMonths)
-        const parcelDesc = `${newBaseDesc} (${i}/${newTotal})`
-
-        const payload: any = {
-          control_id: transaction.control_id,
-          user_id: userId,
-          type: formData.type,
-          amount: formData.amount,
-          description: parcelDesc,
-          category_id: formData.category_id || '',
-          subcategory_id: formData.subcategory_id || '',
-          account_id: formData.account_id,
-          date: parcelDate,
-          payment_date: addMonths(formData.payment_date || formData.date, diffMonths),
-          paid: false, // Future created parcels default to pending
-          is_recurring: false,
-          recurrence_type: '',
-          installments_total: newTotal,
-          installment_total: newTotal,
-          installment_number: i,
-          parent_transaction_id: parentId,
-          notes: formData.notes?.trim() || '',
-        }
-        await pb.collection('transactions').create(payload)
+        missingIndexes.push(i)
       }
+
+      const newlyCreated = await runInPool(
+        missingIndexes,
+        async (i) => {
+          const diffMonths = i - currentNum
+          const parcelDate = addMonths(baseDate, diffMonths)
+          const parcelDesc = `${newBaseDesc} (${i}/${newTotal})`
+
+          const payload: any = {
+            control_id: transaction.control_id,
+            user_id: userId,
+            type: formData.type,
+            amount: formData.amount,
+            description: parcelDesc,
+            category_id: formData.category_id || '',
+            subcategory_id: formData.subcategory_id || '',
+            account_id: formData.account_id,
+            date: parcelDate,
+            payment_date: addMonths(formData.payment_date || formData.date, diffMonths),
+            paid: false, // Future created parcels default to pending
+            is_recurring: false,
+            recurrence_type: '',
+            installments_total: newTotal,
+            installment_total: newTotal,
+            installment_number: i,
+            parent_transaction_id: parentId,
+            notes: formData.notes?.trim() || '',
+          }
+          const rec = await pb.collection('transactions').create(payload)
+          return {
+            id: rec.id,
+            control_id: rec.control_id,
+            user_id: rec.user_id,
+            type: rec.type,
+            amount: Number(rec.amount),
+            description: rec.description,
+            category_id: rec.category_id,
+            subcategory_id: rec.subcategory_id,
+            account_id: rec.account_id,
+            date: rec.date,
+            payment_date: rec.payment_date,
+            paid: rec.paid,
+            is_recurring: rec.is_recurring,
+            recurrence_type: rec.recurrence_type,
+            installment_number: rec.installment_number,
+            installments_total: rec.installment_total || rec.installments_total,
+            parent_transaction_id: rec.parent_transaction_id,
+            notes: rec.notes,
+            created_at: rec.created,
+          } as Transaction
+        },
+        { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'CREATE_INSTALLMENT' },
+      )
+      createdItems.push(...newlyCreated)
     } else if (newTotal < oldTotal) {
       // Exceeding installments to remove (e.g. reduced from 10 to 6 -> delete 7, 8, 9, 10)
       const excessItems = group.filter((t) => (t.installment_number || 0) > newTotal)
-      for (const excess of excessItems) {
-        await skipCloud.deleteTransaction(excess.id)
-      }
+      excessItems.forEach((excess) => {
+        affectedAccountIds.add(excess.account_id)
+        deletedIds.push(excess.id)
+      })
+
+      await runInPool(
+        excessItems,
+        async (excess) => {
+          await skipCloud.deleteTransaction(excess.id, true)
+        },
+        { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'DELETE_EXCESS_INSTALLMENTS' },
+      )
     }
   }
+
+  // Recompute balance once at end for all affected accounts
+  await skipCloud.recomputeAccountsBalances(Array.from(affectedAccountIds))
+
+  return { updated: updatedItems, created: createdItems, deletedIds }
 }
 
 /**
@@ -397,11 +471,7 @@ async function handleRecurringPropagation({
   allTransactions: Transaction[]
   formData: UpdateTransactionPayload
   choice: PropagationChoice
-}) {
-  const originalDesc = transaction.description.trim()
-  const currentCatId = transaction.category_id
-  const currentType = transaction.type
-
+}): Promise<{ updated: Transaction[]; created: Transaction[]; deletedIds: string[] }> {
   // Find all transactions that belong to this recurring series
   const series = findRecurringSeries(transaction, allTransactions)
 
@@ -414,27 +484,43 @@ async function handleRecurringPropagation({
     if (targetsToUpdate.length === 0) targetsToUpdate = [transaction]
   }
 
-  for (const item of targetsToUpdate) {
-    // If it's the specific transaction being edited, use formData.date
-    // Otherwise keep the original date of the occurrence (only update amount, description, cat, account, etc.)
-    const targetDate = item.id === transaction.id ? formData.date : item.date
-    const targetPaymentDate =
-      item.id === transaction.id
-        ? formData.payment_date || formData.date
-        : item.payment_date || item.date
+  const affectedAccountIds = new Set<string>()
+  affectedAccountIds.add(formData.account_id)
+  targetsToUpdate.forEach((t) => affectedAccountIds.add(t.account_id))
 
-    await skipCloud.updateTransaction(item.id, {
-      description: formData.description.trim(),
-      amount: formData.amount,
-      type: formData.type,
-      account_id: formData.account_id,
-      category_id: formData.category_id,
-      subcategory_id: formData.subcategory_id || '',
-      date: targetDate,
-      payment_date: targetPaymentDate,
-      notes: formData.notes?.trim() || '',
-      is_recurring: formData.is_recurring,
-      recurrence_type: formData.is_recurring ? formData.recurrence_type : undefined,
-    })
-  }
+  // Update in controlled concurrent pool (concurrency = 4)
+  const updatedItems = await runInPool(
+    targetsToUpdate,
+    async (item) => {
+      const targetDate = item.id === transaction.id ? formData.date : item.date
+      const targetPaymentDate =
+        item.id === transaction.id
+          ? formData.payment_date || formData.date
+          : item.payment_date || item.date
+
+      return await skipCloud.updateTransaction(
+        item.id,
+        {
+          description: formData.description.trim(),
+          amount: formData.amount,
+          type: formData.type,
+          account_id: formData.account_id,
+          category_id: formData.category_id,
+          subcategory_id: formData.subcategory_id || '',
+          date: targetDate,
+          payment_date: targetPaymentDate,
+          notes: formData.notes?.trim() || '',
+          is_recurring: formData.is_recurring,
+          recurrence_type: formData.is_recurring ? formData.recurrence_type : undefined,
+        },
+        true, // skip per-request balance update
+      )
+    },
+    { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'UPDATE_RECURRING' },
+  )
+
+  // Recompute balance once at end for all affected accounts
+  await skipCloud.recomputeAccountsBalances(Array.from(affectedAccountIds))
+
+  return { updated: updatedItems, created: [], deletedIds: [] }
 }
