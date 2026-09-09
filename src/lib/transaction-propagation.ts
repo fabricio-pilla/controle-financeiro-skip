@@ -31,6 +31,19 @@ function addMonths(dateStr: string, months: number): string {
 }
 
 // Clean title from "(X/Y)" suffix if present
+/**
+ * Helper to check if a transaction record is a consolidated parent record of an installment series.
+ * Parent records must be completely excluded from all sums, statistics, charts, and list views.
+ */
+export function isParentTransaction(
+  transaction: Pick<Transaction, 'installment_number' | 'installments_total'> | any,
+): boolean {
+  if (!transaction) return false
+  const num = transaction.installment_number ?? 0
+  const total = transaction.installments_total ?? transaction.installment_total ?? 0
+  return (num === 0 || num === undefined) && total > 0
+}
+
 export function cleanDescription(desc: string): string {
   return desc.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/i, '').trim()
 }

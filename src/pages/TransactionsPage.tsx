@@ -146,10 +146,7 @@ export default function TransactionsPage() {
   const filteredList = useMemo(() => {
     return transactions.filter((tx) => {
       // Ignore parent installment records (installment_number=0 && installment_total>0)
-      const isParent =
-        (tx.installment_number === 0 || tx.installment_number === undefined) &&
-        (tx.installments_total || 0) > 0
-      if (isParent) return false
+      if (isParentTransaction(tx)) return false
 
       // Month filter
       if (monthFilter !== 'all') {

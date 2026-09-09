@@ -5,6 +5,7 @@ import { SubcategoryModal } from '@/components/categories/SubcategoryModal'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency } from '@/lib/formatters'
+import { isParentTransaction } from '@/lib/transaction-propagation'
 import { Category, Subcategory, TransactionType } from '@/types/database'
 import { toast } from 'sonner'
 import {
@@ -62,10 +63,7 @@ export default function CategoriesPage() {
 
     transactions.forEach((tx) => {
       // Ignorar registros pai de parcelamento
-      const isParent =
-        (tx.installment_number === 0 || tx.installment_number === undefined) &&
-        (tx.installments_total || 0) > 0
-      if (isParent) return
+      if (isParentTransaction(tx)) return
 
       if (tx.category_id) {
         if (!catStats[tx.category_id]) {

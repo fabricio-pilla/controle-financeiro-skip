@@ -7,6 +7,7 @@ import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
 import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
 import { formatCurrency, formatDateBR, getGreeting } from '@/lib/formatters'
+import { isParentTransaction } from '@/lib/transaction-propagation'
 import {
   Wallet,
   ArrowUpRight,
@@ -69,10 +70,7 @@ export default function Dashboard() {
 
     return transactions.filter((t) => {
       // Ignore parent installment records
-      const isParent =
-        (t.installment_number === 0 || t.installment_number === undefined) &&
-        (t.installments_total || 0) > 0
-      if (isParent) return false
+      if (isParentTransaction(t)) return false
 
       const txDate = new Date(t.date)
       if (period === 'this_month') {
@@ -139,10 +137,7 @@ export default function Dashboard() {
 
     transactions.forEach((tx) => {
       // Ignore parent installment records
-      const isParent =
-        (tx.installment_number === 0 || tx.installment_number === undefined) &&
-        (tx.installments_total || 0) > 0
-      if (isParent) return
+      if (isParentTransaction(tx)) return
 
       const d = new Date(tx.date)
       if (d.getFullYear() === curYear) {
@@ -180,15 +175,7 @@ export default function Dashboard() {
 
   // Last 5 transactions (ignoring parent installment records)
   const latestTransactions = useMemo(() => {
-    return transactions
-      .filter(
-        (t) =>
-          !(
-            (t.installment_number === 0 || t.installment_number === undefined) &&
-            (t.installments_total || 0) > 0
-          ),
-      )
-      .slice(0, 5)
+    return transactions.filter((t) => !isParentTransaction(t)).slice(0, 5)
   }, [transactions])
 
   return (
