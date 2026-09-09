@@ -90,6 +90,7 @@ export interface Transaction {
   paid?: boolean
   recurrence_type?: RecurrenceType
   installments_total?: number
+  installment_total?: number
   installment_number?: number
   parent_transaction_id?: string
   notes?: string

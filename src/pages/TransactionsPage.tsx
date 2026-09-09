@@ -468,7 +468,7 @@ export default function TransactionsPage() {
     )
   }
 
-  // Gerar ocorrências dos próximos 12 meses para TODAS as transações recorrentes do controle ativo
+  // Gerar ocorrências dos próximos 12 meses para TODAS as transações recorrentes e séries parceladas do controle ativo
   const handleGenerateNext12Months = async () => {
     if (!currentCompany?.id) {
       toast.error('Nenhum controle selecionado.')
@@ -476,69 +476,29 @@ export default function TransactionsPage() {
     }
 
     setIsGeneratingRecurring(true)
-    const toastId = toast.loading('Identificando lançamentos recorrentes...')
+    const toastId = toast.loading('Identificando lançamentos recorrentes e parcelas pendentes...')
 
     try {
-      // 1. Buscar transações recorrentes do controle
-      // Consideramos recorrentes do controle: is_recurring=true || recurring=true || recurrence_type != ''
-      // E pegamos também as transações que já existem na memória do controle para deduplicação rápida
-      const recurringSeeds = transactions.filter(
-        (t) =>
-          Boolean(
-            t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
-          ) && t.control_id === currentCompany.id,
-      )
-
-      if (recurringSeeds.length === 0) {
-        toast.dismiss(toastId)
-        toast.info('Nenhuma transação recorrente configurada neste controle.')
-        return
-      }
-
-      // Agrupar por chave canônica para não duplicar se houver várias ocorrências da mesma série
-      // Chave: type + account_id + amount + description normalizada + recurrence_type
-      const canonicalMap = new Map<string, Transaction>()
-      for (const t of recurringSeeds) {
-        const cleanDesc = t.description.trim().toLowerCase()
-        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanDesc}`
-        if (!canonicalMap.has(key)) {
-          canonicalMap.set(key, t)
-        } else {
-          // Manter o que tem data mais recente como referência
-          const existing = canonicalMap.get(key)!
-          if (new Date(t.date).getTime() > new Date(existing.date).getTime()) {
-            canonicalMap.set(key, t)
-          }
-        }
-      }
-
-      const uniqueSeries = Array.from(canonicalMap.values())
-      toast.loading(`Gerando ocorrências para ${uniqueSeries.length} série(s) recorrente(s)...`, {
-        id: toastId,
-      })
-
-      // Mapa de ocorrências existentes no controle para checagem rápida de duplicidade
-      // Chave: type + account_id + amount + description normalizada + YYYY-MM
-      const existingOccurrences = new Set<string>()
-      for (const t of transactions) {
-        if (!t.date) continue
-        const ym = t.date.substring(0, 7) // "YYYY-MM"
-        const cleanDesc = t.description.trim().toLowerCase()
-        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanDesc}_${ym}`
-        existingOccurrences.add(key)
-      }
-
-      let createdIncomeCount = 0
-      let createdExpenseCount = 0
       const now = new Date()
+      const todayStr = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
 
-      // Função auxiliar para calcular data em N meses preservando o dia limite
-      const addMonthsSafe = (baseDateStr: string, monthsToAdd: number): string => {
-        const d = new Date(baseDateStr)
+      // Janela de 12 meses a partir de hoje
+      const windowEnd = new Date(
+        Date.UTC(now.getFullYear(), now.getMonth() + 12, now.getDate(), 23, 59, 59, 999),
+      )
+      const windowEndIso = windowEnd.toISOString()
+
+      // Função auxiliar para adicionar N meses mantendo o dia limite do mês
+      const addMonthsSafe = (dateStr: string, monthsToAdd: number): string => {
+        const d = new Date(dateStr)
         const origDay = isNaN(d.getUTCDate()) ? 1 : d.getUTCDate()
-        const targetDate = new Date(Date.UTC(now.getFullYear(), now.getMonth() + monthsToAdd, 1))
-        const targetYear = targetDate.getUTCFullYear()
-        const targetMonth = targetDate.getUTCMonth() // 0-based
+        const origYear = isNaN(d.getUTCFullYear()) ? now.getFullYear() : d.getUTCFullYear()
+        const origMonth = isNaN(d.getUTCMonth()) ? now.getMonth() : d.getUTCMonth()
+
+        const targetTotalMonth = origMonth + monthsToAdd
+        const targetYear = origYear + Math.floor(targetTotalMonth / 12)
+        const targetMonth = ((targetTotalMonth % 12) + 12) % 12
+
         const lastDayOfTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate()
         const targetDay = Math.min(origDay, lastDayOfTargetMonth)
 
@@ -548,15 +508,78 @@ export default function TransactionsPage() {
         return `${yyyy}-${mm}-${dd} 00:00:00.000Z`
       }
 
-      // Para cada série única, gerar ocorrências para os próximos 12 meses (mês 1 ao mês 12 a partir de agora)
-      for (const seed of uniqueSeries) {
-        const cleanDesc = seed.description.trim().toLowerCase()
+      // Função auxiliar para limpar sufixos da descrição
+      const cleanDesc = (desc: string): string => {
+        if (!desc) return 'Sem descrição'
+        let res = desc.replace(/\s*\(Total:\s*R\$[^)]+\)\s*$/i, '').trim()
+        res = res.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/i, '').trim()
+        return res || 'Sem descrição'
+      }
 
+      // ----------------------------------------------------
+      // PARTE 1: RECORRÊNCIAS
+      // ----------------------------------------------------
+      const recurringSeeds = transactions.filter(
+        (t) =>
+          Boolean(
+            t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+          ) &&
+          t.control_id === currentCompany.id &&
+          !isParentTransaction(t),
+      )
+
+      // Agrupar por chave canônica para não duplicar se houver várias ocorrências da mesma série
+      const canonicalMap = new Map<string, Transaction>()
+      for (const t of recurringSeeds) {
+        const cleanD = t.description.trim().toLowerCase()
+        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanD}`
+        if (!canonicalMap.has(key)) {
+          canonicalMap.set(key, t)
+        } else {
+          const existing = canonicalMap.get(key)!
+          if (new Date(t.date).getTime() > new Date(existing.date).getTime()) {
+            canonicalMap.set(key, t)
+          }
+        }
+      }
+
+      const uniqueRecurringSeries = Array.from(canonicalMap.values())
+
+      // Mapa de ocorrências existentes no controle para checagem rápida de duplicidade
+      const existingOccurrences = new Set<string>()
+      for (const t of transactions) {
+        if (!t.date) continue
+        const ym = t.date.substring(0, 7)
+        const cleanD = t.description.trim().toLowerCase()
+        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanD}_${ym}`
+        existingOccurrences.add(key)
+      }
+
+      let createdIncomeCount = 0
+      let createdExpenseCount = 0
+
+      for (const seed of uniqueRecurringSeries) {
+        const cleanD = seed.description.trim().toLowerCase()
+
+        // Calcular a partir de agora: mês 1 ao mês 12 a partir da data base da seed
         for (let m = 1; m <= 12; m++) {
-          const nextDateStr = addMonthsSafe(seed.date, m)
-          const ym = nextDateStr.substring(0, 7)
-          const checkKey = `${seed.type}_${seed.account_id || ''}_${seed.amount}_${cleanDesc}_${ym}`
+          const nextDate = new Date(Date.UTC(now.getFullYear(), now.getMonth() + m, 1))
+          const origDate = new Date(seed.date)
+          const origDay = isNaN(origDate.getUTCDate()) ? 1 : origDate.getUTCDate()
+          const targetYear = nextDate.getUTCFullYear()
+          const targetMonth = nextDate.getUTCMonth()
+          const lastDayOfTargetMonth = new Date(
+            Date.UTC(targetYear, targetMonth + 1, 0),
+          ).getUTCDate()
+          const targetDay = Math.min(origDay, lastDayOfTargetMonth)
 
+          const yyyy = String(targetYear).padStart(4, '0')
+          const mm = String(targetMonth + 1).padStart(2, '0')
+          const dd = String(targetDay).padStart(2, '0')
+          const nextDateStr = `${yyyy}-${mm}-${dd} 00:00:00.000Z`
+          const ym = nextDateStr.substring(0, 7)
+
+          const checkKey = `${seed.type}_${seed.account_id || ''}_${seed.amount}_${cleanD}_${ym}`
           if (existingOccurrences.has(checkKey)) {
             continue
           }
@@ -572,7 +595,7 @@ export default function TransactionsPage() {
             account_id: seed.account_id || '',
             date: nextDateStr,
             payment_date: '',
-            paid: false, // Ocorrências futuras ficam pendentes
+            paid: false,
             is_recurring: true,
             recurring: true,
             recurrence_type: seed.recurrence_type || 'mensal',
@@ -583,7 +606,6 @@ export default function TransactionsPage() {
             notes: seed.notes || '',
           }
 
-          // Inserir com retry e throttle suave
           await executeWithRetry(
             () => pb.collection('transactions').create(payload),
             4,
@@ -592,36 +614,309 @@ export default function TransactionsPage() {
           )
 
           existingOccurrences.add(checkKey)
-
           if (seed.type === 'receita') {
             createdIncomeCount++
           } else {
             createdExpenseCount++
           }
 
-          // Throttle mínimo de 15ms entre requisições para evitar rate limit
+          await sleep(15)
+        }
+      }
+
+      // ----------------------------------------------------
+      // PARTE 2: PARCELAS DE SÉRIES PARCELADAS
+      // ----------------------------------------------------
+      toast.loading('Analisando séries parceladas e gerando parcelas pendentes...', {
+        id: toastId,
+      })
+
+      // Buscar registros pais do controle
+      const parentRecords = transactions.filter(
+        (t) =>
+          t.control_id === currentCompany.id &&
+          (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
+          Number(t.installment_total || (t as any).installments_total || 0) > 1,
+      )
+
+      // Também agrupar filhas existentes do controle por série
+      // Chave por parentId OU chave por descrição base + total de parcelas
+      const parentsById = new Map<string, Transaction>()
+      parentRecords.forEach((p) => parentsById.set(p.id, p))
+
+      // Filhas existentes
+      const daughterRecords = transactions.filter(
+        (t) =>
+          t.control_id === currentCompany.id &&
+          Number(t.installment_number) >= 1 &&
+          Number(t.installment_total || (t as any).installments_total || 0) > 1,
+      )
+
+      // Identificar todas as séries únicas do controle
+      interface InstallmentSeries {
+        parentId?: string
+        parentRecord?: Transaction
+        baseDesc: string
+        totalInstallments: number
+        totalAmount?: number
+        account_id: string
+        category_id: string
+        subcategory_id: string
+        credit_card_id?: string
+        user_id: string
+        type: TransactionType
+        // Filhas conhecidas da série
+        daughters: Transaction[]
+        existingNumbers: Set<number>
+        maxNumber: number
+        maxDateStr: string
+        minNumber: number
+        minDateStr: string
+      }
+
+      const seriesList: InstallmentSeries[] = []
+      const processedParentIds = new Set<string>()
+      const processedDaughterIds = new Set<string>()
+
+      // 1. Séries a partir dos registros pais consolidados
+      for (const parent of parentRecords) {
+        processedParentIds.add(parent.id)
+        const total = Number(parent.installment_total || (parent as any).installments_total || 0)
+        const baseD = cleanDesc(parent.description)
+        const daughters = daughterRecords.filter((d) => {
+          if (d.parent_transaction_id === parent.id) return true
+          // Se não tiver parent_transaction_id mas tem descrição e total compatíveis
+          const dTotal = Number(d.installment_total || (d as any).installments_total || 0)
+          if (dTotal === total && cleanDesc(d.description).toLowerCase() === baseD.toLowerCase()) {
+            return true
+          }
+          return false
+        })
+
+        daughters.forEach((d) => processedDaughterIds.add(d.id))
+
+        const existingNumbers = new Set<number>()
+        let maxNum = 0
+        let maxDateStr = parent.date
+        let minNum = 999999
+        let minDateStr = parent.date
+
+        daughters.forEach((d) => {
+          const num = Number(d.installment_number)
+          if (num > 0) {
+            existingNumbers.add(num)
+            if (num > maxNum) {
+              maxNum = num
+              maxDateStr = d.date
+            }
+            if (num < minNum) {
+              minNum = num
+              minDateStr = d.date
+            }
+          }
+        })
+
+        seriesList.push({
+          parentId: parent.id,
+          parentRecord: parent,
+          baseDesc: baseD,
+          totalInstallments: total,
+          totalAmount: parent.amount,
+          account_id: parent.account_id || '',
+          category_id: parent.category_id || '',
+          subcategory_id: parent.subcategory_id || '',
+          credit_card_id: (parent as any).credit_card_id || '',
+          user_id: parent.user_id || pb.authStore.record?.id || '',
+          type: parent.type || 'despesa',
+          daughters,
+          existingNumbers,
+          maxNumber: maxNum,
+          maxDateStr: maxNum > 0 ? maxDateStr : parent.date,
+          minNumber: minNum < 999999 ? minNum : 0,
+          minDateStr: minNum < 999999 ? minDateStr : parent.date,
+        })
+      }
+
+      // 2. Séries órfãs (filhas sem registro pai correspondente)
+      for (const d of daughterRecords) {
+        if (processedDaughterIds.has(d.id)) continue
+
+        const total = Number(d.installment_total || (d as any).installments_total || 0)
+        const baseD = cleanDesc(d.description)
+        const parentId = d.parent_transaction_id || ''
+
+        // Buscar todas as filhas do mesmo grupo
+        const group = daughterRecords.filter((other) => {
+          if (parentId && other.parent_transaction_id === parentId) return true
+          const otherTotal = Number(
+            other.installment_total || (other as any).installments_total || 0,
+          )
+          return (
+            otherTotal === total &&
+            cleanDesc(other.description).toLowerCase() === baseD.toLowerCase()
+          )
+        })
+
+        group.forEach((item) => processedDaughterIds.add(item.id))
+
+        const existingNumbers = new Set<number>()
+        let maxNum = 0
+        let maxDateStr = d.date
+        let minNum = 999999
+        let minDateStr = d.date
+
+        group.forEach((item) => {
+          const num = Number(item.installment_number)
+          if (num > 0) {
+            existingNumbers.add(num)
+            if (num > maxNum) {
+              maxNum = num
+              maxDateStr = item.date
+            }
+            if (num < minNum) {
+              minNum = num
+              minDateStr = item.date
+            }
+          }
+        })
+
+        seriesList.push({
+          parentId: parentId || undefined,
+          baseDesc: baseD,
+          totalInstallments: total,
+          account_id: d.account_id || '',
+          category_id: d.category_id || '',
+          subcategory_id: d.subcategory_id || '',
+          credit_card_id: (d as any).credit_card_id || '',
+          user_id: d.user_id || pb.authStore.record?.id || '',
+          type: d.type || 'despesa',
+          daughters: group,
+          existingNumbers,
+          maxNumber: maxNum,
+          maxDateStr: maxDateStr,
+          minNumber: minNum < 999999 ? minNum : 1,
+          minDateStr: minDateStr,
+        })
+      }
+
+      let createdInstallmentCount = 0
+
+      // Processar cada série para criar parcelas faltantes dentro da janela dos próximos 12 meses
+      for (const series of seriesList) {
+        // Se a série já concluiu todas as parcelas, pular
+        if (series.maxNumber >= series.totalInstallments) {
+          continue
+        }
+
+        // Se a série nunca teve parcela criada (apenas o pai)
+        // A parcela 1 começa na data do pai
+        const referenceNumber = series.maxNumber > 0 ? series.maxNumber : 0
+        const referenceDateStr =
+          series.maxNumber > 0 ? series.maxDateStr : series.parentRecord?.date || series.minDateStr
+
+        // Calcular valor rateado das parcelas
+        let baseParcelAmount = 0
+        let lastParcelAmount = 0
+
+        if (series.totalAmount && series.totalAmount > 0) {
+          baseParcelAmount = Math.round((series.totalAmount / series.totalInstallments) * 100) / 100
+          lastParcelAmount =
+            Math.round(
+              (series.totalAmount - baseParcelAmount * (series.totalInstallments - 1)) * 100,
+            ) / 100
+        } else if (series.daughters.length > 0) {
+          // Usar o valor de uma parcela existente
+          baseParcelAmount = series.daughters[0].amount
+          lastParcelAmount = baseParcelAmount
+        }
+
+        // Gerar as parcelas seguintes (maxNumber + 1 até totalInstallments)
+        for (let n = series.maxNumber + 1; n <= series.totalInstallments; n++) {
+          if (series.existingNumbers.has(n)) {
+            continue // Idempotência garantida
+          }
+
+          // Distância em meses a partir da data de referência
+          const diffMonths = n - referenceNumber
+          const parcelDateStr = addMonthsSafe(referenceDateStr, diffMonths)
+
+          // Checar se a data da parcela cai dentro da janela dos próximos 12 meses (<= windowEndIso)
+          // Se ultrapassar a janela de 12 meses, encerramos a geração desta série
+          if (parcelDateStr > windowEndIso) {
+            break
+          }
+
+          const parcelAmount = n === series.totalInstallments ? lastParcelAmount : baseParcelAmount
+          const parcelDesc = `${series.baseDesc} (${n}/${series.totalInstallments})`
+
+          const payload = {
+            control_id: currentCompany.id,
+            user_id:
+              series.user_id || pb.authStore.record?.id || (currentCompany as any).created_by || '',
+            type: series.type,
+            amount: parcelAmount,
+            description: parcelDesc,
+            category_id: series.category_id || '',
+            subcategory_id: series.subcategory_id || '',
+            account_id: series.account_id || '',
+            credit_card_id: series.credit_card_id || '',
+            date: parcelDateStr,
+            payment_date: parcelDateStr,
+            paid: parcelDateStr.substring(0, 10) <= todayStr, // Futuras pendentes
+            recurring: false,
+            is_recurring: false,
+            recurrence_type: '',
+            recurrence_period: '',
+            installment_number: n,
+            installment_total: series.totalInstallments,
+            parent_transaction_id: series.parentId || '',
+            notes: 'Gerado automaticamente: parcela da série',
+          }
+
+          await executeWithRetry(
+            () => pb.collection('transactions').create(payload),
+            4,
+            250,
+            'GerarParcelas',
+          )
+
+          series.existingNumbers.add(n)
+          createdInstallmentCount++
+
+          // Throttle mínimo de 15ms entre requisições para proteção 429
           await sleep(15)
         }
       }
 
       toast.dismiss(toastId)
 
-      const totalCreated = createdIncomeCount + createdExpenseCount
-      if (totalCreated === 0) {
+      const totalRecurCreated = createdIncomeCount + createdExpenseCount
+      const totalAllCreated = totalRecurCreated + createdInstallmentCount
+
+      if (totalAllCreated === 0) {
         toast.info(
-          'Todas as transações recorrentes já possuem lançamentos gerados para os próximos 12 meses.',
+          'Todas as transações recorrentes e séries parceladas já estão completas para os próximos 12 meses.',
         )
       } else {
-        toast.success(
-          `Concluído! ${totalCreated} novos lançamentos gerados (${createdIncomeCount} receita(s) e ${createdExpenseCount} despesa(s)) para os próximos 12 meses.`,
-          { duration: 6000 },
-        )
+        const parts: string[] = []
+        if (totalRecurCreated > 0) {
+          parts.push(
+            `${totalRecurCreated} recorrência(s) (${createdIncomeCount} receita(s) e ${createdExpenseCount} despesa(s))`,
+          )
+        }
+        if (createdInstallmentCount > 0) {
+          parts.push(`${createdInstallmentCount} parcela(s)`)
+        }
+
+        toast.success(`Concluído! Gerados: ${parts.join(' e ')} para os próximos 12 meses.`, {
+          duration: 7000,
+        })
         // Recarregar dados para refletir na tela imediatamente
         await reloadCompanyData()
       }
     } catch (err: any) {
       toast.dismiss(toastId)
-      toast.error(err?.message || 'Erro ao gerar lançamentos recorrentes.')
+      toast.error(err?.message || 'Erro ao gerar lançamentos.')
     } finally {
       setIsGeneratingRecurring(false)
     }
@@ -646,7 +941,7 @@ export default function TransactionsPage() {
               onClick={handleGenerateNext12Months}
               disabled={isGeneratingRecurring}
               variant="outline"
-              title="Gera on demand as ocorrências dos próximos 12 meses para todas as receitas e despesas recorrentes"
+              title="Gera on demand as ocorrências dos próximos 12 meses para receitas e despesas recorrentes e parcelas pendentes"
               className="rounded-xl h-11 px-3.5 font-semibold border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/50 flex items-center gap-2 transition-colors"
             >
               {isGeneratingRecurring ? (
@@ -654,8 +949,8 @@ export default function TransactionsPage() {
               ) : (
                 <RefreshCw className="w-4 h-4 text-indigo-500" />
               )}
-              <span className="hidden lg:inline">Gerar recorrentes próximos 12 meses</span>
-              <span className="lg:hidden">Recorrentes (12m)</span>
+              <span className="hidden lg:inline">Gerar recorrentes e parcelas (12m)</span>
+              <span className="lg:hidden">Recorrentes/Parcelas (12m)</span>
             </Button>
             <Button
               onClick={() => setAiModalOpen(true)}
