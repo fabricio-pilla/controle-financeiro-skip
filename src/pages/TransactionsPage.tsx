@@ -13,6 +13,7 @@ import {
   findInstallmentGroup,
   findRecurringSeries,
   deleteTransactionWithPropagation,
+  isParentTransaction,
 } from '@/lib/transaction-propagation'
 import { executeWithRetry, sleep } from '@/lib/pocketbase/retry'
 import pb from '@/lib/pocketbase/client'
@@ -122,6 +123,8 @@ export default function TransactionsPage() {
     // Ensure current month is always present in the options
     monthSet.add(currentMonthStr)
     transactions.forEach((tx) => {
+      // Ignorar registros pai na lista de meses disponíveis
+      if (isParentTransaction(tx)) return
       if (tx.date) {
         const ym = tx.date.substring(0, 7) // "YYYY-MM"
         if (/^\d{4}-\d{2}$/.test(ym)) {

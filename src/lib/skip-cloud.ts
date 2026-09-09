@@ -1347,12 +1347,18 @@ class SkipCloudService {
           pb.collection('accounts').getOne(accId),
           pb.collection('transactions').getFullList({
             filter: `account_id="${accId}"`,
-            fields: 'amount,type',
+            fields: 'amount,type,installment_number,installment_total',
           }),
         ])
         const mapped = mapAccount(acc)
         let calcBalance = 0
-        for (const t of txs) {
+        for (const t of txs as any[]) {
+          // Ignorar registros pai consolidados de parcelamento (installment_number=0 e installment_total>0)
+          const isParent =
+            (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
+            Number(t.installment_total) > 0
+          if (isParent) continue
+
           const amt = Number(t.amount) || 0
           const tType = t.type as TransactionType
           if (mapped.type === 'credito') {
@@ -1361,6 +1367,7 @@ class SkipCloudService {
             calcBalance += tType === 'receita' ? amt : -amt
           }
         }
+        calcBalance = Math.round(calcBalance * 100) / 100
         await pb.collection('accounts').update(accId, { balance: calcBalance })
       }
     } catch (e) {

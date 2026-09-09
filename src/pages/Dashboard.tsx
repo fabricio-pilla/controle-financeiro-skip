@@ -68,19 +68,23 @@ export default function Dashboard() {
     const currentYear = now.getFullYear()
     const currentMonth = now.getMonth()
 
+    const curYm = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`
+    const lastMonthNum = currentMonth === 0 ? 12 : currentMonth
+    const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear
+    const lastYm = `${lastMonthYear}-${String(lastMonthNum).padStart(2, '0')}`
+    const curYearPrefix = `${currentYear}-`
+
     return transactions.filter((t) => {
       // Ignore parent installment records
       if (isParentTransaction(t)) return false
+      if (!t.date) return false
 
-      const txDate = new Date(t.date)
       if (period === 'this_month') {
-        return txDate.getFullYear() === currentYear && txDate.getMonth() === currentMonth
+        return t.date.startsWith(curYm)
       } else if (period === 'last_month') {
-        const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1
-        const yearOfLastMonth = currentMonth === 0 ? currentYear - 1 : currentYear
-        return txDate.getFullYear() === yearOfLastMonth && txDate.getMonth() === lastMonth
+        return t.date.startsWith(lastYm)
       } else if (period === 'this_year') {
-        return txDate.getFullYear() === currentYear
+        return t.date.startsWith(curYearPrefix)
       }
       return true
     })
@@ -135,13 +139,15 @@ export default function Dashboard() {
       despesas: 0,
     }))
 
+    const curYearPrefix = `${curYear}-`
     transactions.forEach((tx) => {
       // Ignore parent installment records
       if (isParentTransaction(tx)) return
+      if (!tx.date || !tx.date.startsWith(curYearPrefix)) return
 
-      const d = new Date(tx.date)
-      if (d.getFullYear() === curYear) {
-        const mIdx = d.getMonth()
+      // Parse month directly from "YYYY-MM-DD" to avoid timezone drift
+      const mIdx = parseInt(tx.date.substring(5, 7), 10) - 1
+      if (mIdx >= 0 && mIdx < 12) {
         if (tx.type === 'receita') {
           data[mIdx].receitas += tx.amount
         } else {

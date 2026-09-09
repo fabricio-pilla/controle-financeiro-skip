@@ -45,6 +45,7 @@ import {
   downloadTemplateCsv,
   exportTransactionsToXlsx,
 } from '@/lib/import-template'
+import { isParentTransaction } from '@/lib/transaction-propagation'
 
 // 11 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
@@ -675,8 +676,11 @@ export default function Importar() {
         return
       }
 
+      // Filtrar registros pai consolidados da exportação
+      const nonParentRecords = records.filter((r) => !isParentTransaction(r))
+
       // Mapear registros com as expansões
-      const formatted = records.map((r) => ({
+      const formatted = nonParentRecords.map((r) => ({
         date: r.date,
         description: r.description,
         amount: Number(r.amount) || 0,
@@ -708,7 +712,7 @@ export default function Importar() {
       exportTransactionsToXlsx(formatted, fileName)
       toast.dismiss(toastId)
       toast.success(
-        `Planilha exportada com sucesso! ${records.length} transações salvas em ${fileName}.`,
+        `Planilha exportada com sucesso! ${formatted.length} transações salvas em ${fileName}.`,
       )
     } catch (err: any) {
       toast.dismiss(toastId)
