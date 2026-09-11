@@ -15,7 +15,7 @@ import {
   deleteTransactionWithPropagation,
   isParentTransaction,
 } from '@/lib/transaction-propagation'
-import { executeWithRetry, sleep } from '@/lib/pocketbase/retry'
+import { executeWithRetry, sleep, is429Error } from '@/lib/pocketbase/retry'
 import pb from '@/lib/pocketbase/client'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
@@ -557,6 +557,8 @@ export default function TransactionsPage() {
 
       let createdIncomeCount = 0
       let createdExpenseCount = 0
+      let rateLimitedRecurrencesCount = 0
+      let rateLimitedInstallmentsCount = 0
 
       for (const seed of uniqueRecurringSeries) {
         const cleanD = seed.description.trim().toLowerCase()
@@ -606,21 +608,37 @@ export default function TransactionsPage() {
             notes: seed.notes || '',
           }
 
-          await executeWithRetry(
-            () => pb.collection('transactions').create(payload),
-            4,
-            250,
-            'GerarRecorrentes',
-          )
+          try {
+            await executeWithRetry(
+              () => pb.collection('transactions').create(payload),
+              5,
+              400,
+              'GerarRecorrentes',
+            )
 
-          existingOccurrences.add(checkKey)
-          if (seed.type === 'receita') {
-            createdIncomeCount++
-          } else {
-            createdExpenseCount++
+            existingOccurrences.add(checkKey)
+            if (seed.type === 'receita') {
+              createdIncomeCount++
+            } else {
+              createdExpenseCount++
+            }
+          } catch (createErr: any) {
+            if (is429Error(createErr)) {
+              console.warn(
+                `[GerarRecorrentes] 429 persistente na recorrência "${seed.description}" (${ym}). Pulando para tentar na próxima execução.`,
+              )
+              rateLimitedRecurrencesCount++
+            } else {
+              console.error(
+                `[GerarRecorrentes] Falha ao criar recorrência "${seed.description}" (${ym}):`,
+                createErr,
+              )
+              throw createErr
+            }
           }
 
-          await sleep(15)
+          // Espaçamento entre cada create para não saturar o rate limit do PocketBase
+          await sleep(80)
         }
       }
 
@@ -873,18 +891,33 @@ export default function TransactionsPage() {
             notes: 'Gerado automaticamente: parcela da série',
           }
 
-          await executeWithRetry(
-            () => pb.collection('transactions').create(payload),
-            4,
-            250,
-            'GerarParcelas',
-          )
+          try {
+            await executeWithRetry(
+              () => pb.collection('transactions').create(payload),
+              5,
+              400,
+              'GerarParcelas',
+            )
 
-          series.existingNumbers.add(n)
-          createdInstallmentCount++
+            series.existingNumbers.add(n)
+            createdInstallmentCount++
+          } catch (createErr: any) {
+            if (is429Error(createErr)) {
+              console.warn(
+                `[GerarParcelas] 429 persistente na parcela ${n}/${series.totalInstallments} de "${series.baseDesc}". Pulando para tentar na próxima execução.`,
+              )
+              rateLimitedInstallmentsCount++
+            } else {
+              console.error(
+                `[GerarParcelas] Falha ao criar parcela ${n}/${series.totalInstallments} de "${series.baseDesc}":`,
+                createErr,
+              )
+              throw createErr
+            }
+          }
 
-          // Throttle mínimo de 15ms entre requisições para proteção 429
-          await sleep(15)
+          // Espaçamento entre cada create para não saturar o rate limit do PocketBase
+          await sleep(80)
         }
       }
 
@@ -892,11 +925,19 @@ export default function TransactionsPage() {
 
       const totalRecurCreated = createdIncomeCount + createdExpenseCount
       const totalAllCreated = totalRecurCreated + createdInstallmentCount
+      const totalRateLimited = rateLimitedRecurrencesCount + rateLimitedInstallmentsCount
 
       if (totalAllCreated === 0) {
-        toast.info(
-          'Todas as transações recorrentes e séries parceladas já estão completas para os próximos 12 meses.',
-        )
+        if (totalRateLimited > 0) {
+          toast.warning(
+            `Nenhum novo lançamento pôde ser gerado devido ao limite temporário do servidor (${totalRateLimited} pendente(s)). Clique novamente no botão para continuar.`,
+            { duration: 8000 },
+          )
+        } else {
+          toast.info(
+            'Todas as transações recorrentes e séries parceladas já estão completas para os próximos 12 meses.',
+          )
+        }
       } else {
         const parts: string[] = []
         if (totalRecurCreated > 0) {
@@ -908,11 +949,22 @@ export default function TransactionsPage() {
           parts.push(`${createdInstallmentCount} parcela(s)`)
         }
 
-        toast.success(`Concluído! Gerados: ${parts.join(' e ')} para os próximos 12 meses.`, {
-          duration: 7000,
-        })
+        if (totalRateLimited > 0) {
+          toast.warning(
+            `Gerados parcialmente: ${parts.join(' e ')}. ${totalRateLimited} lançamento(s) não foram gerados por limite de requisições do servidor. Clique no botão novamente para gerar os restantes.`,
+            { duration: 9000 },
+          )
+        } else {
+          toast.success(`Concluído! Gerados: ${parts.join(' e ')} para os próximos 12 meses.`, {
+            duration: 7000,
+          })
+        }
         // Recarregar dados para refletir na tela imediatamente
-        await reloadCompanyData()
+        try {
+          await reloadCompanyData()
+        } catch (reloadErr) {
+          console.warn('Erro não bloqueante ao atualizar dados da empresa pós-geração:', reloadErr)
+        }
       }
     } catch (err: any) {
       toast.dismiss(toastId)
