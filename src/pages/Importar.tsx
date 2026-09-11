@@ -40,6 +40,7 @@ import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
 import { sleep, executeWithRetry as executeSharedRetry } from '@/lib/pocketbase/retry'
+import { extractFieldErrors } from '@/lib/pocketbase/errors'
 import {
   downloadTemplateXlsx,
   downloadTemplateCsv,
@@ -576,6 +577,118 @@ function addMonths(dateStr: string, months: number): string {
   const targetMonthLastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
   if (day > targetMonthLastDay) d.setDate(targetMonthLastDay)
   return d.toISOString().split('T')[0]
+}
+
+// Allowed recurrence select values in PocketBase transactions schema
+const VALID_RECURRENCE_VALUES = new Set(['mensal', 'semanal', 'anual'])
+
+/**
+ * Sanitizes transaction create payload according to PocketBase transactions collection schema.
+ * Prevents HTTP 400 validation errors (e.g. empty strings in relation/date/select fields, invalid enums).
+ */
+function sanitizeTransactionPayload(input: Record<string, any>): Record<string, any> {
+  const payload: Record<string, any> = {
+    control_id: input.control_id,
+    type: input.type === 'receita' ? 'receita' : 'despesa',
+    amount: typeof input.amount === 'number' && !isNaN(input.amount) ? Math.abs(input.amount) : 0,
+    description: String(input.description || 'Sem descrição').trim() || 'Sem descrição',
+    date: input.date,
+  }
+
+  // Relations (must be non-empty string or omitted, never "")
+  if (typeof input.account_id === 'string' && input.account_id.trim()) {
+    payload.account_id = input.account_id.trim()
+  }
+  if (typeof input.category_id === 'string' && input.category_id.trim()) {
+    payload.category_id = input.category_id.trim()
+  }
+  if (typeof input.subcategory_id === 'string' && input.subcategory_id.trim()) {
+    payload.subcategory_id = input.subcategory_id.trim()
+  }
+  if (typeof input.credit_card_id === 'string' && input.credit_card_id.trim()) {
+    payload.credit_card_id = input.credit_card_id.trim()
+  }
+
+  // Optional text fields
+  if (typeof input.user_id === 'string' && input.user_id.trim()) {
+    payload.user_id = input.user_id.trim()
+  }
+  if (typeof input.parent_transaction_id === 'string' && input.parent_transaction_id.trim()) {
+    payload.parent_transaction_id = input.parent_transaction_id.trim()
+  }
+  if (typeof input.notes === 'string' && input.notes.trim()) {
+    payload.notes = input.notes.trim()
+  }
+
+  // Dates: only include if valid non-empty string, never empty string ""
+  if (typeof input.payment_date === 'string' && input.payment_date.trim()) {
+    payload.payment_date = input.payment_date.trim()
+  }
+
+  // Booleans
+  if (typeof input.paid === 'boolean') {
+    payload.paid = input.paid
+  }
+  if (typeof input.is_recurring === 'boolean') {
+    payload.is_recurring = input.is_recurring
+  }
+  if (typeof input.recurring === 'boolean') {
+    payload.recurring = input.recurring
+  }
+
+  // Numbers (installments)
+  if (typeof input.installment_number === 'number' && !isNaN(input.installment_number)) {
+    payload.installment_number = input.installment_number
+  }
+  if (typeof input.installment_total === 'number' && !isNaN(input.installment_total)) {
+    payload.installment_total = input.installment_total
+  }
+
+  // Recurrence select fields (mensal | semanal | anual) - ONLY if valid, never ""
+  const recPeriod = input.recurrence_period || input.recurrence_type
+  if (
+    typeof recPeriod === 'string' &&
+    VALID_RECURRENCE_VALUES.has(recPeriod.trim().toLowerCase())
+  ) {
+    const val = recPeriod.trim().toLowerCase()
+    payload.recurrence_period = val
+    payload.recurrence_type = val
+  }
+
+  return payload
+}
+
+/**
+ * Formats error message from PocketBase API response for human display.
+ * Extracts individual field validation details when available (e.g. "date: Cannot be blank").
+ */
+function formatPocketBaseError(err: any): string {
+  const isRateLimit =
+    err?.status === 429 ||
+    err?.statusCode === 429 ||
+    err?.response?.status === 429 ||
+    err?.message?.includes('429')
+
+  if (isRateLimit) {
+    return 'Limite de requisições do servidor — tente novamente'
+  }
+
+  const fieldErrors = extractFieldErrors(err)
+  const fieldKeys = Object.keys(fieldErrors)
+  if (fieldKeys.length > 0) {
+    const details = fieldKeys.map((f) => `${f}: ${fieldErrors[f]}`).join('; ')
+    return `Validação recusada (${details})`
+  }
+
+  if (err?.response?.message) {
+    return err.response.message
+  }
+
+  if (err?.message) {
+    return err.message
+  }
+
+  return 'Falha ao gravar no banco de dados.'
 }
 
 export default function Importar() {
@@ -1241,50 +1354,56 @@ export default function Importar() {
           const totalEstimatedAmount = Math.round(unitAmount * totalInst * 100) / 100
 
           // 1. Create parent record (is_parent = true, installment_number = 0)
-          const parentPayload: any = {
+          const rawParentPayload: any = {
             control_id: currentCompany.id,
             user_id: currentUserId,
             type: row.matchedCategoryType,
             amount: totalEstimatedAmount,
             description: `${row.description} (Total: ${formatCurrency(totalEstimatedAmount)})`,
             category_id: categoryId,
-            subcategory_id: subcategoryId || undefined,
+            subcategory_id: subcategoryId,
             account_id: row.matchedAccount.id,
             date: row.dateFormatted,
+            payment_date: row.dateFormatted,
             paid: true,
             is_recurring: false,
-            installments_total: totalInst,
+            recurring: false,
             installment_total: totalInst,
             installment_number: 0,
             notes: `Importado de planilha: registro pai consolidado (${totalInst}x)`,
           }
 
+          const sanitizedParentPayload = sanitizeTransactionPayload(rawParentPayload)
           const parentRecord = await executeWithRetry(() =>
-            pb.collection('transactions').create(parentPayload),
+            pb.collection('transactions').create(sanitizedParentPayload),
           )
           summary.createdTransactions++
 
           // 2. Create the current individual installment (e.g. 23/36) with sheet date
-          const currentInstPayload: any = {
+          const rawCurrentInstPayload: any = {
             control_id: currentCompany.id,
             user_id: currentUserId,
             type: row.matchedCategoryType,
             amount: unitAmount,
             description: `${row.description} (${currentInst}/${totalInst})`,
             category_id: categoryId,
-            subcategory_id: subcategoryId || undefined,
+            subcategory_id: subcategoryId,
             account_id: row.matchedAccount.id,
             date: row.dateFormatted,
+            payment_date: row.dateFormatted,
             paid: true,
             is_recurring: false,
-            installments_total: totalInst,
+            recurring: false,
             installment_total: totalInst,
             installment_number: currentInst,
             parent_transaction_id: parentRecord.id,
             notes: `Importado de planilha: parcela ${currentInst}/${totalInst}`,
           }
 
-          await executeWithRetry(() => pb.collection('transactions').create(currentInstPayload))
+          const sanitizedCurrentInstPayload = sanitizeTransactionPayload(rawCurrentInstPayload)
+          await executeWithRetry(() =>
+            pb.collection('transactions').create(sanitizedCurrentInstPayload),
+          )
           summary.createdTransactions++
 
           // Adjust account balance for the created installment
@@ -1328,26 +1447,32 @@ export default function Importar() {
               inst === 1 ? Math.round((baseAmount + remainder) * 100) / 100 : baseAmount
             const instDate = addMonths(row.dateFormatted, inst - 1)
 
-            const payload: any = {
+            const rawPayload: any = {
               control_id: currentCompany.id,
               user_id: currentUserId,
               type: row.matchedCategoryType,
               amount: parcelAmount,
               description: `${row.description} (${inst}/${totalInst})`,
               category_id: categoryId,
-              subcategory_id: subcategoryId || undefined,
+              subcategory_id: subcategoryId,
               account_id: row.matchedAccount.id,
               date: instDate,
+              payment_date: instDate,
               paid: true,
               is_recurring: false,
-              installments_total: totalInst,
+              recurring: false,
               installment_total: totalInst,
               installment_number: inst,
               notes: 'Importado de planilha via parcelamento automático',
             }
 
-            if (inst !== 1) payload.parent_transaction_id = parentId
-            const rec = await executeWithRetry(() => pb.collection('transactions').create(payload))
+            if (inst !== 1 && parentId) {
+              rawPayload.parent_transaction_id = parentId
+            }
+            const sanitizedPayload = sanitizeTransactionPayload(rawPayload)
+            const rec = await executeWithRetry(() =>
+              pb.collection('transactions').create(sanitizedPayload),
+            )
             summary.createdTransactions++
 
             if (inst === 1) {
@@ -1388,28 +1513,29 @@ export default function Importar() {
           // Se a linha importada tinha campo Pago = Não/Pendente/Falso, respeitar; padrão é true
           const isPaid = (row as any).isPaid !== undefined ? (row as any).isPaid : true
 
-          const singlePayload: any = {
+          const rawSinglePayload: any = {
             control_id: currentCompany.id,
             user_id: currentUserId,
             type: row.matchedCategoryType,
             amount: row.amount,
             description: row.description,
             category_id: categoryId,
-            subcategory_id: subcategoryId || undefined,
+            subcategory_id: subcategoryId,
             account_id: row.matchedAccount.id,
             date: row.dateFormatted,
+            payment_date: row.dateFormatted,
             paid: isPaid,
-            is_recurring: row.isRecurring,
-            recurring: row.isRecurring,
-            recurrence_type: row.recurrenceType || '',
-            recurrence_period: row.recurrenceType || '',
-            installments_total: 1,
+            is_recurring: Boolean(row.isRecurring),
+            recurring: Boolean(row.isRecurring),
+            recurrence_type: row.recurrenceType || undefined,
+            recurrence_period: row.recurrenceType || undefined,
             installment_number: 1,
             notes: row.isRecurring
               ? `Importado de planilha (Recorrente ${row.recurrenceType || 'mensal'})`
               : 'Importado de planilha',
           }
-          await executeWithRetry(() => pb.collection('transactions').create(singlePayload))
+          const sanitizedSinglePayload = sanitizeTransactionPayload(rawSinglePayload)
+          await executeWithRetry(() => pb.collection('transactions').create(sanitizedSinglePayload))
           summary.createdTransactions++
 
           // Adjust balance
@@ -1441,21 +1567,13 @@ export default function Importar() {
       } catch (err: any) {
         console.error(`Erro ao importar linha ${row.rowIndex}:`, err)
         summary.errorsCount++
-        const isRateLimit =
-          err?.status === 429 ||
-          err?.statusCode === 429 ||
-          err?.response?.status === 429 ||
-          err?.message?.includes('429')
-
-        const errorMessage = isRateLimit
-          ? 'Limite de requisições do servidor — tente novamente'
-          : err?.message || 'Falha ao gravar no banco de dados.'
+        const formattedReason = formatPocketBaseError(err)
 
         summary.details.push({
           row: row.rowIndex,
           description: row.description,
           status: 'error',
-          message: errorMessage,
+          message: formattedReason,
         })
         summary.unimportedRows.push({
           rowIndex: row.rowIndex,
@@ -1464,9 +1582,7 @@ export default function Importar() {
           amount: row.amount,
           accountRaw: row.accountRaw,
           categoryRaw: row.categoryRaw,
-          reason: isRateLimit
-            ? 'Limite de requisições do servidor — tente novamente'
-            : `Erro da API PocketBase: ${errorMessage}`,
+          reason: formattedReason,
           type: 'error',
           rawDetails: row.raw,
         })
