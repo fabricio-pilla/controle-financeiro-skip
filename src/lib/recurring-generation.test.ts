@@ -775,4 +775,92 @@ describe('recurring-generation engine', () => {
       expect(candidates[1].payment_date).toBe('2026-06-20')
     })
   })
+
+  describe('recurring value edit idempotency (bug fix)', () => {
+    it('does NOT plan new transactions when recurring value is changed and future occurrences already exist', () => {
+      // Simula a série de 12 meses existente criada no valor R$ 50
+      const existingSeries: Transaction[] = []
+      for (let i = 0; i < 12; i++) {
+        const monthNum = i + 1
+        const monthStr = monthNum < 10 ? `0${monthNum}` : `${monthNum}`
+        existingSeries.push({
+          id: `tx_rec_${i}`,
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 50,
+          description: 'Netflix Mensal',
+          category_id: 'cat_streaming',
+          account_id: 'acc_inter',
+          date: `2026-${monthStr}-15 00:00:00.000Z`,
+          paid: i === 0,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-15T00:00:00.000Z',
+        })
+      }
+
+      // O usuário altera o valor do lançamento de março de R$ 50 para R$ 60
+      const editedSource: Transaction = {
+        ...existingSeries[2], // Março 2026
+        amount: 60,
+      }
+
+      // Se a geração for avaliada contra as transações existentes (que ainda têm valor 50),
+      // a nova verificação por mês (não por valor) NÃO deve criar duplicatas!
+      const candidates = planOccurrencesForSingleRecurring({
+        sourceTransaction: editedSource,
+        existingTransactions: existingSeries,
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      // Março a Dezembro já existem na lista (10 meses existentes).
+      // Os únicos que faltariam seriam Janeiro e Fevereiro de 2027 (para completar 12 meses futuros a partir de Março 2026).
+      // Nenhum mês de 2026 pode ser re-planejado/duplicado.
+      const months2026 = candidates.filter((c) => c.date.startsWith('2026-'))
+      expect(months2026.length).toBe(0)
+      expect(candidates.every((c) => c.date.startsWith('2027-'))).toBe(true)
+    })
+
+    it('does NOT create duplicate occurrences if all 12 future months already exist', () => {
+      // Série com 13 meses completos (mês 0 a mês 12)
+      const existingSeries: Transaction[] = []
+      for (let i = 1; i <= 13; i++) {
+        const year = i <= 12 ? 2026 : 2027
+        const m = i <= 12 ? i : 1
+        const mStr = m < 10 ? `0${m}` : `${m}`
+        existingSeries.push({
+          id: `tx_rec_${i}`,
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 100,
+          description: 'Academia SmartFit',
+          category_id: 'cat_saude',
+          account_id: 'acc_itau',
+          date: `${year}-${mStr}-05 00:00:00.000Z`,
+          paid: false,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-05T00:00:00.000Z',
+        })
+      }
+
+      const editedSource: Transaction = {
+        ...existingSeries[0],
+        amount: 120, // valor alterado
+      }
+
+      const candidates = planOccurrencesForSingleRecurring({
+        sourceTransaction: editedSource,
+        existingTransactions: existingSeries,
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      // Todos os 12 meses seguintes (fev/2026 a jan/2027) já têm ocorrências existentes
+      expect(candidates.length).toBe(0)
+    })
+  })
 })

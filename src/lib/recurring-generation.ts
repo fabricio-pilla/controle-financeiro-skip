@@ -318,34 +318,42 @@ export function planOccurrencesForSingleRecurring({
   const baseMonth = origParts.month
   const origDay = origParts.day
 
-  // Montar conjunto de checagem rápida de ocorrências existentes
-  const existingSet = new Set<string>()
+  // Montar conjunto de checagem rápida de ocorrências existentes.
+  // IMPORTANTE: A idempotência por mês de uma série recorrente deve checar
+  // (tipo + conta + descrição base + YYYY-MM), NÃO incluindo o valor no check,
+  // pois se o usuário acabou de editar o valor de um lançamento (ou se o valor variou),
+  // as ocorrências futuras já existentes com o valor antigo (ou novo) não podem ser duplicadas.
+  // Também indexamos com e sem account_id para garantir que mesmo se a conta for trocada
+  // ou se houver registros antigos com mesma descrição e tipo na série, não haja duplicação.
+  const existingMonthSet = new Set<string>()
   for (const t of existingTransactions) {
     if (!t.date || (t.control_id && t.control_id !== currentCompanyId)) continue
-    const ym = t.date.substring(0, 7)
+    const isRec = Boolean(
+      t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+    )
     const d = cleanDescription(t.description).toLowerCase()
-    const key = `${t.type}_${t.account_id || ''}_${t.amount}_${d}_${ym}`
-    existingSet.add(key)
+    // Pertence à mesma série se tiver a mesma descrição base e tipo
+    if (d === cleanD && t.type === sourceTransaction.type) {
+      const ym = t.date.substring(0, 7)
+      existingMonthSet.add(ym)
+    }
   }
 
-  // Também não duplicar a própria transação fonte
+  // Também não duplicar no próprio mês da transação fonte
   const sourceYM = getYearMonth(baseYear, baseMonth)
-  existingSet.add(
-    `${sourceTransaction.type}_${sourceTransaction.account_id || ''}_${sourceTransaction.amount}_${cleanD}_${sourceYM}`,
-  )
+  existingMonthSet.add(sourceYM)
 
   const planned: RecurringGenerationCandidate[] = []
 
   for (let m = 1; m <= 12; m++) {
     const targetDateStr = computeTargetDate(baseYear, baseMonth, origDay, m)
     const targetYM = targetDateStr.substring(0, 7)
-    const checkKey = `${sourceTransaction.type}_${sourceTransaction.account_id || ''}_${sourceTransaction.amount}_${cleanD}_${targetYM}`
 
-    if (existingSet.has(checkKey)) {
-      continue // Idempotente
+    if (existingMonthSet.has(targetYM)) {
+      continue // Idempotente: mês já possui ocorrência desta série
     }
 
-    existingSet.add(checkKey)
+    existingMonthSet.add(targetYM)
 
     planned.push({
       control_id: currentCompanyId,
@@ -754,12 +762,12 @@ export function planNextRecurringTransactions({
       ),
   )
 
-  // 2. Desduplicar seeds por chave canônica
-  // Chave: type_account_amount_cleanDesc
+  // 2. Desduplicar seeds por série canônica (tipo + conta + cleanDesc)
+  // Independente do valor, ocorrências da mesma série pertencem à mesma recorrência.
   const canonicalMap = new Map<string, Transaction>()
   for (const t of recurringSeeds) {
     const cleanD = cleanDescription(t.description).toLowerCase()
-    const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanD}`
+    const key = `${t.type}_${t.account_id || ''}_${cleanD}`
     if (!canonicalMap.has(key)) {
       canonicalMap.set(key, t)
     } else {
@@ -771,13 +779,14 @@ export function planNextRecurringTransactions({
     }
   }
 
-  // 3. Montar conjunto de checagem rápida de ocorrências existentes
+  // 3. Montar conjunto de checagem rápida de ocorrências existentes por série e mês
+  // Chave: type_account_cleanDesc_ym
   const existingSet = new Set<string>()
   for (const t of existingTransactions) {
     if (!t.date || t.control_id !== currentCompanyId) continue
     const ym = t.date.substring(0, 7)
     const cleanD = cleanDescription(t.description).toLowerCase()
-    const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanD}_${ym}`
+    const key = `${t.type}_${t.account_id || ''}_${cleanD}_${ym}`
     existingSet.add(key)
   }
 
@@ -802,7 +811,7 @@ export function planNextRecurringTransactions({
     for (let m = 1; m <= 12; m++) {
       const targetDateStr = computeTargetDate(startBaseYear, startBaseMonth, origDay, m)
       const targetYM = targetDateStr.substring(0, 7)
-      const checkKey = `${seed.type}_${seed.account_id || ''}_${seed.amount}_${cleanD}_${targetYM}`
+      const checkKey = `${seed.type}_${seed.account_id || ''}_${cleanD}_${targetYM}`
 
       if (existingSet.has(checkKey)) {
         continue // Idempotente

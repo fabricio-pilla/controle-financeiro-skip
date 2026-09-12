@@ -108,20 +108,36 @@ export function findRecurringSeries(
   transaction: Transaction,
   allTransactions: Transaction[],
 ): Transaction[] {
-  const originalDesc = transaction.description.trim()
+  const cleanSourceDesc = cleanDescription(transaction.description || '')
+    .trim()
+    .toLowerCase()
   const currentCatId = transaction.category_id
   const currentType = transaction.type
+  const currentAccountId = transaction.account_id
 
-  const series = allTransactions.filter(
-    (t) =>
-      t.control_id === transaction.control_id &&
-      (t.is_recurring || t.recurring || Boolean(t.recurrence_type)) &&
-      t.type === currentType &&
-      (t.id === transaction.id ||
-        t.description.trim().toLowerCase() === originalDesc.toLowerCase() ||
-        (t.category_id === currentCatId &&
-          t.description.trim().toLowerCase() === originalDesc.toLowerCase())),
-  )
+  const series = allTransactions.filter((t) => {
+    if (t.control_id !== transaction.control_id) return false
+    // A transação original é sempre incluída
+    if (t.id === transaction.id) return true
+    // Deve ser do mesmo tipo (receita / despesa)
+    if (t.type !== currentType) return false
+    // Deve ser uma transação recorrente
+    const isRec = Boolean(
+      t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+    )
+    if (!isRec) return false
+    // Não pode ser pai consolidado nem parcela de compra parcelada
+    const instTotal = Number(t.installments_total || (t as any).installment_total || 0)
+    if (instTotal > 1) return false
+
+    const itemCleanDesc = cleanDescription(t.description || '')
+      .trim()
+      .toLowerCase()
+    // Match por descrição base limpa
+    const descMatches = itemCleanDesc === cleanSourceDesc
+    // Se a descrição bater ou se mesma categoria + descrição bater
+    return descMatches || (currentCatId && t.category_id === currentCatId && descMatches)
+  })
 
   series.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
   return series

@@ -229,10 +229,23 @@ export function TransactionModal({
       setPendingFormData(null)
       onOpenChange(false)
 
-      // Se a transação agora é recorrente (ativada agora ou já era recorrente) e não gerou ocorrências futuras na propagação,
-      // verificar se há necessidade de gerar as 12 ocorrências futuras automaticamente
+      // Construir lista atualizada com as transações em memória para manter idempotência estrita
+      const updatedTxMap = new Map<string, Transaction>()
+      transactions.forEach((t) => updatedTxMap.set(t.id, t))
+      result.deletedIds.forEach((id) => updatedTxMap.delete(id))
+      result.updated.forEach((t) => updatedTxMap.set(t.id, t))
+      result.created.forEach((t) => updatedTxMap.set(t.id, t))
+      const combinedTransactions = Array.from(updatedTxMap.values())
+
+      // Regra de geração pós-edição:
+      // Se o usuário escolheu "single" (somente esse registro), NÃO disparar geração automática de ocorrências futuras.
+      // Se escolheu 'future' ou 'all' (ou se a transação passou a ser recorrente agora):
+      // apenas disparar a geração se houver meses futuros sem ocorrência (preenchendo a janela de 12 meses),
+      // passando combinedTransactions para que ocorrências já existentes (atualizadas) NUNCA sejam duplicadas.
       const nowRecurring = Boolean(formData.is_recurring)
-      if (nowRecurring && currentCompany) {
+      const shouldCheckRecurringGeneration = nowRecurring && currentCompany && choice !== 'single'
+
+      if (shouldCheckRecurringGeneration) {
         import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
           const pb = (await import('@/lib/pocketbase/client')).default
           const currentUserId =
@@ -246,13 +259,13 @@ export function TransactionModal({
           }
           triggerAutoRecurringGeneration({
             sourceTransaction: updatedTarget,
-            existingTransactions: transactions,
+            existingTransactions: combinedTransactions,
             currentCompanyId: currentCompany.id,
             currentUserId,
             onSuccessCreated: (createdList) => {
               applyTransactionsBatchUpdate({ created: createdList })
               toast.success(
-                `Foram geradas automaticamente 12 ocorrências futuras para "${formData.description}".`,
+                `Foram geradas automaticamente ${createdList.length} ocorrência(s) futura(s) faltante(s) para "${formData.description}".`,
               )
             },
           }).catch((err) => {
@@ -261,14 +274,18 @@ export function TransactionModal({
         })
       }
 
-      // Se a transação é parcelada (installment_total > 1), disparar a geração automática das parcelas seguintes faltantes da série
+      // Se a transação é parcelada (installment_total > 1) e o usuário não escolheu 'single',
+      // disparar a geração automática apenas para parcelas faltantes da série
       const resolvedTargetTotal = Number(
         formData.installments_total ||
           transaction.installments_total ||
           resolvedInstallmentsTotal ||
           1,
       )
-      if (resolvedTargetTotal > 1 && currentCompany) {
+      const shouldCheckInstallmentGeneration =
+        resolvedTargetTotal > 1 && currentCompany && choice !== 'single'
+
+      if (shouldCheckInstallmentGeneration) {
         import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
           const pb = (await import('@/lib/pocketbase/client')).default
           const currentUserId =
@@ -284,14 +301,14 @@ export function TransactionModal({
           }
           triggerAutoInstallmentGeneration({
             sourceTransaction: updatedTarget,
-            existingTransactions: [...transactions, ...result.created, ...result.updated],
+            existingTransactions: combinedTransactions,
             accounts,
             currentCompanyId: currentCompany.id,
             currentUserId,
             onSuccessCreated: (createdList) => {
               applyTransactionsBatchUpdate({ created: createdList })
               toast.success(
-                `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${formData.description}".`,
+                `Foram geradas automaticamente ${createdList.length} parcela(s) seguinte(s) para "${formData.description}".`,
               )
             },
           }).catch((err) => {
