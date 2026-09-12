@@ -1,4 +1,5 @@
-import { Transaction, TransactionType } from '@/types/database'
+import { Transaction, TransactionType, Account } from '@/types/database'
+import { calculatePaymentDate } from '@/lib/invoice-helper'
 
 export interface RecurringGenerationCandidate {
   control_id: string
@@ -377,6 +378,333 @@ export function planOccurrencesForSingleRecurring({
   }
 
   return planned
+}
+
+/**
+ * Extrai número e total de parcelas de uma transação ou de sua descrição.
+ */
+export function resolveInstallmentInfo(tx: any): {
+  installmentNumber: number
+  installmentTotal: number
+} {
+  let num = Number(tx.installment_number || 0)
+  let total = Number(
+    tx.installments_total || tx.installment_total || (tx as any).installments_total || 0,
+  )
+
+  if ((!num || !total || total <= 1) && tx.description) {
+    const match = String(tx.description).match(/\(\s*(\d+)\s*\/\s*(\d+)\s*\)/)
+    if (match) {
+      if (!num) num = parseInt(match[1], 10)
+      if (!total || total <= 1) total = parseInt(match[2], 10)
+    }
+  }
+
+  if (num <= 0) num = 1
+  if (total <= 0) total = 1
+
+  return { installmentNumber: num, installmentTotal: total }
+}
+
+/**
+ * Encontra todos os membros da mesma série de parcelamento pertencentes a uma transação de referência.
+ * Identificação estrita por parent_transaction_id quando existente (ou id caso ela seja o pai),
+ * com fallback por conta e descrição base APENAS se parent_transaction_id não existir em nenhum dos lados,
+ * evitando misturar séries homônimas em contas diferentes ou com pais diferentes.
+ */
+export function findInstallmentSeriesSiblings(
+  sourceTx: Transaction | InstallmentGenerationCandidate | any,
+  allTransactions: Transaction[],
+): { siblings: Transaction[]; parentId: string } {
+  const sourceParentId =
+    sourceTx.parent_transaction_id ||
+    (sourceTx.installment_number === 0 || sourceTx.installment_number === undefined
+      ? sourceTx.id
+      : '')
+
+  const sourceAccountId = sourceTx.account_id || ''
+  const sourceCleanDesc = cleanDescription(sourceTx.description || '').toLowerCase()
+  const { installmentTotal: sourceTotal } = resolveInstallmentInfo(sourceTx)
+
+  // 1. Se soubermos o parentId, filtramos exclusivamente por ele + conta
+  if (sourceParentId) {
+    const siblings = allTransactions.filter((t) => {
+      if (t.id === sourceParentId) return true
+      if (t.parent_transaction_id && t.parent_transaction_id === sourceParentId) return true
+      return false
+    })
+    return { siblings, parentId: sourceParentId }
+  }
+
+  // 2. Se sourceTx não possui parent_transaction_id, procurar se há um pai consolidado existente com mesma conta e descrição
+  const matchedParent = allTransactions.find((t) => {
+    const { installmentNumber, installmentTotal } = resolveInstallmentInfo(t)
+    return (
+      (installmentNumber === 0 || !t.installment_number) &&
+      installmentTotal === sourceTotal &&
+      t.type === sourceTx.type &&
+      (t.account_id || '') === sourceAccountId &&
+      cleanDescription(t.description || '').toLowerCase() === sourceCleanDesc
+    )
+  })
+
+  if (matchedParent) {
+    const parentId = matchedParent.id
+    const siblings = allTransactions.filter((t) => {
+      if (t.id === parentId) return true
+      if (t.parent_transaction_id && t.parent_transaction_id === parentId) return true
+      return false
+    })
+    return { siblings, parentId }
+  }
+
+  // 3. Fallback: agrupar por conta, tipo, total de parcelas e descrição base
+  // Ignora transações que apontam para OUTRO parent_transaction_id
+  const siblings = allTransactions.filter((t) => {
+    if (t.parent_transaction_id) {
+      // Tem outro parentId diferente de vazio
+      return false
+    }
+    const { installmentTotal } = resolveInstallmentInfo(t)
+    return (
+      installmentTotal === sourceTotal &&
+      t.type === sourceTx.type &&
+      (t.account_id || '') === sourceAccountId &&
+      cleanDescription(t.description || '').toLowerCase() === sourceCleanDesc
+    )
+  })
+
+  return { siblings, parentId: sourceTx.id || '' }
+}
+
+/**
+ * Planeja as parcelas futuras faltantes para um lançamento parcelado individual recém criado ou editado.
+ *
+ * Exemplo: usuário cria/edita parcela 31/36 da compra X.
+ * - Identifica as parcelas faltantes da série (32..36).
+ * - Avança 1 mês a cada parcela (32 no mês seguinte à 31, 33 dois meses depois, etc.), preservando o dia original.
+ * - Calcula a data de pagamento respeitando a regra da conta (fechamento/vencimento de cartão quando conta de crédito).
+ * - Idempotente: nunca duplica parcelas já existentes na mesma série/número/mês alvo.
+ * - Preserva rateio de valores e vincula ao mesmo parent_transaction_id.
+ * - Se a série já estiver completa (ex: 36/36 ou todas as subsequentes já existirem), retorna lista vazia.
+ */
+export function planOccurrencesForSingleInstallment({
+  sourceTransaction,
+  existingTransactions,
+  accounts = [],
+  currentCompanyId,
+  currentUserId,
+}: {
+  sourceTransaction: Transaction | InstallmentGenerationCandidate | any
+  existingTransactions: Transaction[]
+  accounts?: Account[]
+  currentCompanyId: string
+  currentUserId: string
+}): InstallmentGenerationCandidate[] {
+  const { installmentNumber: curNum, installmentTotal: total } =
+    resolveInstallmentInfo(sourceTransaction)
+
+  // Apenas gera se houver parcelamento ativo (> 1 parcela)
+  if (total <= 1) {
+    return []
+  }
+
+  // Se já estamos na última parcela da série, não há parcelas subsequentes a gerar
+  if (curNum >= total) {
+    return []
+  }
+
+  const { siblings, parentId } = findInstallmentSeriesSiblings(
+    sourceTransaction,
+    existingTransactions,
+  )
+
+  const effectiveParentId =
+    sourceTransaction.parent_transaction_id || parentId || sourceTransaction.id || ''
+
+  // Conjuntos para checagem rápida de idempotência
+  const existingNumbers = new Set<number>()
+  const existingMonths = new Set<string>()
+
+  // Registrar todas as parcelas irmãs já existentes
+  for (const s of siblings) {
+    const { installmentNumber } = resolveInstallmentInfo(s)
+    if (installmentNumber > 0) {
+      existingNumbers.add(installmentNumber)
+    }
+    if (s.date) {
+      existingMonths.add(s.date.substring(0, 7))
+    }
+  }
+
+  // Registrar a própria transação fonte
+  existingNumbers.add(curNum)
+  if (sourceTransaction.date) {
+    existingMonths.add(sourceTransaction.date.substring(0, 7))
+  }
+
+  const baseDesc = cleanDescription(sourceTransaction.description || 'Lançamento parcelado')
+  const origParts = parseDateParts(sourceTransaction.date)
+  const baseYear = origParts.year
+  const baseMonth = origParts.month
+  const origDay = origParts.day
+
+  // Encontrar conta para calcular data de pagamento (fechamento/vencimento de cartão)
+  const targetAccountId = sourceTransaction.account_id || ''
+  const targetAccount = accounts.find((a) => a.id === targetAccountId) || null
+
+  // Identificar se há registro pai consolidado com o valor total para rateio preciso
+  const parentRec = siblings.find((s) => {
+    const num = s.installment_number ?? 0
+    return (num === 0 || !s.installment_number) && s.id === effectiveParentId
+  })
+
+  let baseParcelAmount = Number(sourceTransaction.amount) || 0
+  let lastParcelAmount = Number(sourceTransaction.amount) || 0
+
+  if (parentRec && Number(parentRec.amount) > 0) {
+    const fullAmount = Number(parentRec.amount)
+    baseParcelAmount = Math.round((fullAmount / total) * 100) / 100
+    lastParcelAmount = Math.round((fullAmount - baseParcelAmount * (total - 1)) * 100) / 100
+  }
+
+  const planned: InstallmentGenerationCandidate[] = []
+
+  // Gerar da parcela (curNum + 1) até total
+  for (let n = curNum + 1; n <= total; n++) {
+    // Idempotência por número da parcela
+    if (existingNumbers.has(n)) {
+      continue
+    }
+
+    const monthOffset = n - curNum
+    const targetDateStr = computeTargetDate(baseYear, baseMonth, origDay, monthOffset)
+    const targetYM = targetDateStr.substring(0, 7)
+
+    // Idempotência por mês alvo na mesma série
+    if (existingMonths.has(targetYM)) {
+      continue
+    }
+
+    // Calcula data de pagamento respeitando fechamento e vencimento de cartão de crédito
+    const cleanDateOnly = targetDateStr.split(/[T\s]/)[0]
+    let calculatedPaymentDate = cleanDateOnly
+    if (targetAccount && targetAccount.type === 'credito') {
+      calculatedPaymentDate = calculatePaymentDate(cleanDateOnly, targetAccount)
+    } else if (sourceTransaction.payment_date) {
+      // Se a conta não for crédito mas a fonte tinha payment_date com offset do date, manter mesmo dia
+      const payParts = parseDateParts(sourceTransaction.payment_date)
+      calculatedPaymentDate = computeTargetDate(
+        payParts.year,
+        payParts.month,
+        payParts.day,
+        monthOffset,
+      ).split(/[T\s]/)[0]
+    }
+
+    const parcelAmount = n === total ? lastParcelAmount : baseParcelAmount
+    const parcelDesc = `${baseDesc} (${n}/${total})`
+
+    existingNumbers.add(n)
+    existingMonths.add(targetYM)
+
+    planned.push({
+      control_id: currentCompanyId,
+      user_id: currentUserId || sourceTransaction.user_id || '',
+      type: sourceTransaction.type,
+      amount: parcelAmount,
+      description: parcelDesc,
+      category_id: sourceTransaction.category_id || '',
+      subcategory_id: sourceTransaction.subcategory_id || '',
+      account_id: targetAccountId,
+      credit_card_id: (sourceTransaction as any).credit_card_id || '',
+      date: targetDateStr,
+      payment_date: calculatedPaymentDate,
+      paid: false, // Futuras sempre criadas como pendentes
+      recurring: false,
+      is_recurring: false,
+      recurrence_type: '',
+      recurrence_period: '',
+      installment_number: n,
+      installment_total: total,
+      parent_transaction_id: effectiveParentId,
+      notes: sourceTransaction.notes || 'Gerado automaticamente: parcela da série',
+    })
+  }
+
+  return planned
+}
+
+/**
+ * Dispara em segundo plano a geração automática das parcelas subsequentes faltantes para um lançamento parcelado.
+ * Idempotente e resiliente: se falhar por limite/429 ou erro de rede, notifica via toast sem quebrar a tela nem perder o lançamento salvo.
+ */
+export async function triggerAutoInstallmentGeneration({
+  sourceTransaction,
+  existingTransactions,
+  accounts = [],
+  currentCompanyId,
+  currentUserId,
+  onSuccessCreated,
+}: {
+  sourceTransaction: Transaction | InstallmentGenerationCandidate | any
+  existingTransactions: Transaction[]
+  accounts?: Account[]
+  currentCompanyId: string
+  currentUserId: string
+  onSuccessCreated?: (createdList: Transaction[]) => void
+}): Promise<void> {
+  const { installmentNumber: curNum, installmentTotal: total } =
+    resolveInstallmentInfo(sourceTransaction)
+
+  if (total <= 1 || curNum >= total) {
+    return
+  }
+
+  const planned = planOccurrencesForSingleInstallment({
+    sourceTransaction,
+    existingTransactions,
+    accounts,
+    currentCompanyId,
+    currentUserId,
+  })
+
+  if (planned.length === 0) {
+    return
+  }
+
+  const { toast } = await import('sonner')
+
+  try {
+    const { created, failedCount } = await createPlannedTransactionsInPool({
+      plannedItems: planned,
+    })
+
+    if (created.length > 0 && onSuccessCreated) {
+      onSuccessCreated(created)
+    }
+
+    if (failedCount > 0 && created.length === 0) {
+      toast.warning(
+        `O lançamento principal (${curNum}/${total}) foi salvo, mas não foi possível gerar as ${planned.length} parcela(s) seguintes devido ao limite do servidor. Use o botão "Gerar parcelas" para completar.`,
+        { duration: 8000 },
+      )
+    } else if (failedCount > 0) {
+      toast.warning(
+        `Foram geradas automaticamente ${created.length} parcela(s) seguintes, mas ${failedCount} ficaram pendentes por limite do servidor. Use o botão "Gerar parcelas" para concluir.`,
+        { duration: 8000 },
+      )
+    }
+  } catch (err: any) {
+    console.warn(
+      '[triggerAutoInstallmentGeneration] Falha geral na geração automática de parcelas:',
+      err,
+    )
+    toast.warning(
+      'O lançamento principal foi salvo, mas a geração automática das parcelas seguintes falhou. Você pode gerá-las a qualquer momento pelo botão "Gerar parcelas".',
+      { duration: 8000 },
+    )
+  }
 }
 
 /**

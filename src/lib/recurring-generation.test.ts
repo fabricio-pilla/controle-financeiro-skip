@@ -6,8 +6,9 @@ import {
   planOccurrencesForSingleRecurring,
   planNextRecurringTransactions,
   planNextInstallmentTransactions,
+  planOccurrencesForSingleInstallment,
 } from './recurring-generation'
-import { Transaction } from '@/types/database'
+import { Transaction, Account } from '@/types/database'
 
 describe('recurring-generation engine', () => {
   describe('cleanDescription', () => {
@@ -505,6 +506,273 @@ describe('recurring-generation engine', () => {
       expect(candB[0].date).toBe('2026-10-10 00:00:00.000Z')
       expect(candB[11].installment_number).toBe(16)
       expect(candB[11].date).toBe('2027-09-10 00:00:00.000Z')
+    })
+  })
+
+  describe('planOccurrencesForSingleInstallment', () => {
+    it('generates the remaining 5 installments when saving 31/36 (32..36)', () => {
+      const tx31: Transaction = {
+        id: 'tx_parcela_31',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 250,
+        description: 'Curso Especialização (31/36)',
+        category_id: 'cat_educacao',
+        subcategory_id: 'sub_pos',
+        account_id: 'acc_corrente',
+        date: '2026-03-15 00:00:00.000Z',
+        payment_date: '2026-03-15',
+        paid: true,
+        installment_number: 31,
+        installments_total: 36,
+        parent_transaction_id: 'parent_curso_123',
+        created_at: '2026-03-15T00:00:00.000Z',
+      }
+
+      const candidates = planOccurrencesForSingleInstallment({
+        sourceTransaction: tx31,
+        existingTransactions: [tx31],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      expect(candidates.length).toBe(5)
+      // 32/36
+      expect(candidates[0].installment_number).toBe(32)
+      expect(candidates[0].installment_total).toBe(36)
+      expect(candidates[0].description).toBe('Curso Especialização (32/36)')
+      expect(candidates[0].date).toBe('2026-04-15 00:00:00.000Z')
+      expect(candidates[0].paid).toBe(false)
+      expect(candidates[0].parent_transaction_id).toBe('parent_curso_123')
+      expect(candidates[0].account_id).toBe('acc_corrente')
+      expect(candidates[0].category_id).toBe('cat_educacao')
+      expect(candidates[0].subcategory_id).toBe('sub_pos')
+
+      // 33/36
+      expect(candidates[1].installment_number).toBe(33)
+      expect(candidates[1].date).toBe('2026-05-15 00:00:00.000Z')
+
+      // 34/36
+      expect(candidates[2].installment_number).toBe(34)
+      expect(candidates[2].date).toBe('2026-06-15 00:00:00.000Z')
+
+      // 35/36
+      expect(candidates[3].installment_number).toBe(35)
+      expect(candidates[3].date).toBe('2026-07-15 00:00:00.000Z')
+
+      // 36/36 (última)
+      expect(candidates[4].installment_number).toBe(36)
+      expect(candidates[4].description).toBe('Curso Especialização (36/36)')
+      expect(candidates[4].date).toBe('2026-08-15 00:00:00.000Z')
+    })
+
+    it('returns empty array if the series is already complete (e.g. 36/36)', () => {
+      const tx36: Transaction = {
+        id: 'tx_parcela_36',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 250,
+        description: 'Curso Especialização (36/36)',
+        category_id: 'cat_educacao',
+        account_id: 'acc_corrente',
+        date: '2026-08-15 00:00:00.000Z',
+        paid: false,
+        installment_number: 36,
+        installments_total: 36,
+        parent_transaction_id: 'parent_curso_123',
+        created_at: '2026-08-15T00:00:00.000Z',
+      }
+
+      const candidates = planOccurrencesForSingleInstallment({
+        sourceTransaction: tx36,
+        existingTransactions: [tx36],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      expect(candidates.length).toBe(0)
+    })
+
+    it('returns empty array if transaction is not installment (installment_total <= 1)', () => {
+      const txSingle: Transaction = {
+        id: 'tx_single',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 250,
+        description: 'Mercado',
+        category_id: 'cat_mercado',
+        account_id: 'acc_corrente',
+        date: '2026-03-15 00:00:00.000Z',
+        paid: true,
+        installment_number: 1,
+        installments_total: 1,
+        created_at: '2026-03-15T00:00:00.000Z',
+      }
+
+      const candidates = planOccurrencesForSingleInstallment({
+        sourceTransaction: txSingle,
+        existingTransactions: [txSingle],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      expect(candidates.length).toBe(0)
+    })
+
+    it('is strictly idempotent: does not duplicate already existing installments', () => {
+      const tx31: Transaction = {
+        id: 'tx_parcela_31',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 250,
+        description: 'Curso Especialização (31/36)',
+        category_id: 'cat_educacao',
+        account_id: 'acc_corrente',
+        date: '2026-03-15 00:00:00.000Z',
+        paid: true,
+        installment_number: 31,
+        installments_total: 36,
+        parent_transaction_id: 'parent_curso_123',
+        created_at: '2026-03-15T00:00:00.000Z',
+      }
+
+      const tx32Existing: Transaction = {
+        id: 'tx_parcela_32_existente',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 250,
+        description: 'Curso Especialização (32/36)',
+        category_id: 'cat_educacao',
+        account_id: 'acc_corrente',
+        date: '2026-04-15 00:00:00.000Z',
+        paid: false,
+        installment_number: 32,
+        installments_total: 36,
+        parent_transaction_id: 'parent_curso_123',
+        created_at: '2026-04-15T00:00:00.000Z',
+      }
+
+      const candidates = planOccurrencesForSingleInstallment({
+        sourceTransaction: tx31,
+        existingTransactions: [tx31, tx32Existing],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      // Deverá gerar apenas 33, 34, 35, 36 (4 parcelas, pulando 32)
+      expect(candidates.length).toBe(4)
+      expect(candidates[0].installment_number).toBe(33)
+      expect(candidates.some((c) => c.installment_number === 32)).toBe(false)
+    })
+
+    it('does not confuse distinct series with identical description (homonymous series)', () => {
+      // Duas séries homônimas "Financiamento (X/79)" vinculadas a pais distintos
+      const parentAlpha = 'parent_alpha_uuid'
+      const parentBeta = 'parent_beta_uuid'
+
+      const txAlpha31: Transaction = {
+        id: 'tx_alpha_31',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 600,
+        description: 'Financiamento Imóvel (31/79)',
+        category_id: 'cat_hab',
+        account_id: 'acc_alpha',
+        date: '2026-03-10 00:00:00.000Z',
+        paid: true,
+        installment_number: 31,
+        installments_total: 79,
+        parent_transaction_id: parentAlpha,
+        created_at: '2026-03-10T00:00:00.000Z',
+      }
+
+      // Parcela 32 que pertence à outra série Beta
+      const txBeta32: Transaction = {
+        id: 'tx_beta_32',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 900,
+        description: 'Financiamento Imóvel (32/79)',
+        category_id: 'cat_hab',
+        account_id: 'acc_beta',
+        date: '2026-04-10 00:00:00.000Z',
+        paid: false,
+        installment_number: 32,
+        installments_total: 79,
+        parent_transaction_id: parentBeta,
+        created_at: '2026-04-10T00:00:00.000Z',
+      }
+
+      const candidates = planOccurrencesForSingleInstallment({
+        sourceTransaction: txAlpha31,
+        existingTransactions: [txAlpha31, txBeta32],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      // Não pode achar que a parcela 32 da série Alpha já existe só porque a Beta 32 existe!
+      expect(candidates[0].installment_number).toBe(32)
+      expect(candidates[0].parent_transaction_id).toBe(parentAlpha)
+      expect(candidates[0].account_id).toBe('acc_alpha')
+      expect(candidates[0].amount).toBe(600)
+    })
+
+    it('applies credit card closing and due date calculation for payment_date', () => {
+      // Cartão com fechamento dia 10 e vencimento dia 20
+      const creditCard: Account = {
+        id: 'acc_card_nubank',
+        control_id: 'ctrl_1',
+        name: 'Cartão Nubank',
+        type: 'credito',
+        balance: 0,
+        closing_day: 10,
+        due_day: 20,
+        color: '#820AD1',
+        is_primary: false,
+        created_at: '2026-01-01T00:00:00.000Z',
+      }
+
+      // Parcela 31/36 comprada no dia 15 (após fechamento dia 10 -> fatura fecha no mês seguinte e vence dia 20)
+      const txCard31: Transaction = {
+        id: 'tx_card_31',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 150,
+        description: 'Notebook Dell (31/36)',
+        category_id: 'cat_ti',
+        account_id: 'acc_card_nubank',
+        date: '2026-03-15 00:00:00.000Z',
+        paid: true,
+        installment_number: 31,
+        installments_total: 36,
+        parent_transaction_id: 'parent_dell',
+        created_at: '2026-03-15T00:00:00.000Z',
+      }
+
+      const candidates = planOccurrencesForSingleInstallment({
+        sourceTransaction: txCard31,
+        existingTransactions: [txCard31],
+        accounts: [creditCard],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      expect(candidates.length).toBe(5)
+      // Parcela 32 tem data de compra 2026-04-15 (dia 15 >= closing 10 -> vencimento em maio/2026 dia 20)
+      expect(candidates[0].date).toBe('2026-04-15 00:00:00.000Z')
+      expect(candidates[0].payment_date).toBe('2026-05-20')
+
+      // Parcela 33 tem data de compra 2026-05-15 -> vencimento em junho/2026 dia 20
+      expect(candidates[1].date).toBe('2026-05-15 00:00:00.000Z')
+      expect(candidates[1].payment_date).toBe('2026-06-20')
     })
   })
 })

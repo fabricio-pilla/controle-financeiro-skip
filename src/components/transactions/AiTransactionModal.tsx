@@ -344,6 +344,33 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         })
       }
 
+      // Geração automática de parcelas seguintes se for parcelado (installments_total > 1)
+      if (installmentsTotal > 1 && createdTx && currentCompany) {
+        import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
+          const pb = (await import('@/lib/pocketbase/client')).default
+          const currentUserId =
+            (createdTx as any).user_id ||
+            pb.authStore.record?.id ||
+            (currentCompany as any).created_by ||
+            ''
+          triggerAutoInstallmentGeneration({
+            sourceTransaction: createdTx,
+            existingTransactions: transactions,
+            accounts,
+            currentCompanyId: currentCompany.id,
+            currentUserId,
+            onSuccessCreated: (createdList) => {
+              applyTransactionsBatchUpdate({ created: createdList })
+              toast.success(
+                `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${createdTx.description}".`,
+              )
+            },
+          }).catch((err) => {
+            console.warn('[AiTransactionModal] Erro na geração automática de parcelas:', err)
+          })
+        })
+      }
+
       onOpenChange(false)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao salvar lançamento.')

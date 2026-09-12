@@ -231,7 +231,6 @@ export function TransactionModal({
 
       // Se a transação agora é recorrente (ativada agora ou já era recorrente) e não gerou ocorrências futuras na propagação,
       // verificar se há necessidade de gerar as 12 ocorrências futuras automaticamente
-      const wasRecurring = Boolean(transaction.is_recurring || transaction.recurring)
       const nowRecurring = Boolean(formData.is_recurring)
       if (nowRecurring && currentCompany) {
         import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
@@ -258,6 +257,48 @@ export function TransactionModal({
             },
           }).catch((err) => {
             console.warn('[TransactionModal] Erro na geração automática pós-edição:', err)
+          })
+        })
+      }
+
+      // Se a transação é parcelada (installment_total > 1), disparar a geração automática das parcelas seguintes faltantes da série
+      const resolvedTargetTotal = Number(
+        formData.installments_total ||
+          transaction.installments_total ||
+          resolvedInstallmentsTotal ||
+          1,
+      )
+      if (resolvedTargetTotal > 1 && currentCompany) {
+        import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
+          const pb = (await import('@/lib/pocketbase/client')).default
+          const currentUserId =
+            (transaction as any).user_id ||
+            pb.authStore.record?.id ||
+            (currentCompany as any).created_by ||
+            ''
+          const updatedTarget = result.updated.find((u) => u.id === transaction.id) || {
+            ...transaction,
+            ...formData,
+            installment_number: resolvedInstallmentNumber,
+            installments_total: resolvedTargetTotal,
+          }
+          triggerAutoInstallmentGeneration({
+            sourceTransaction: updatedTarget,
+            existingTransactions: [...transactions, ...result.created, ...result.updated],
+            accounts,
+            currentCompanyId: currentCompany.id,
+            currentUserId,
+            onSuccessCreated: (createdList) => {
+              applyTransactionsBatchUpdate({ created: createdList })
+              toast.success(
+                `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${formData.description}".`,
+              )
+            },
+          }).catch((err) => {
+            console.warn(
+              '[TransactionModal] Erro na geração automática de parcelas pós-edição:',
+              err,
+            )
           })
         })
       }
@@ -381,6 +422,33 @@ export function TransactionModal({
             },
           }).catch((err) => {
             console.warn('[TransactionModal] Erro na geração automática:', err)
+          })
+        })
+      }
+
+      // Geração automática de parcelas seguintes se for parcelado (installment_total > 1)
+      if (installmentsTotal > 1 && createdTx && currentCompany) {
+        import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
+          const pb = (await import('@/lib/pocketbase/client')).default
+          const currentUserId =
+            (createdTx as any).user_id ||
+            pb.authStore.record?.id ||
+            (currentCompany as any).created_by ||
+            ''
+          triggerAutoInstallmentGeneration({
+            sourceTransaction: createdTx,
+            existingTransactions: transactions,
+            accounts,
+            currentCompanyId: currentCompany.id,
+            currentUserId,
+            onSuccessCreated: (createdList) => {
+              applyTransactionsBatchUpdate({ created: createdList })
+              toast.success(
+                `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${createdTx.description}".`,
+              )
+            },
+          }).catch((err) => {
+            console.warn('[TransactionModal] Erro na geração automática de parcelas:', err)
           })
         })
       }
