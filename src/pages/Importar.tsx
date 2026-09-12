@@ -47,12 +47,15 @@ import {
   exportTransactionsToXlsx,
 } from '@/lib/import-template'
 import { isParentTransaction } from '@/lib/transaction-propagation'
+import { matchImportCategoryAndSubcategory } from '@/lib/import-category-matcher'
 
 // 11 Standard categories recognized in the system
 const SYSTEM_CATEGORIES = [
-  'Fabrício',
+  'Despesa Fabrício',
+  'Receita Fabrício',
+  'Despesa Raffaela',
+  'Receita Raffaela',
   'Investimento',
-  'Raffaela',
   'Pets',
   'Transporte',
   'Moradia',
@@ -75,7 +78,7 @@ interface ParsedRow {
   accountRaw: string
   matchedAccount: Account | null
   categoryRaw: string // Raw text in Excel "Categoria" column (user's subcategory)
-  matchedCategoryName: SystemCategoryName | 'Outros'
+  matchedCategoryName: string
   matchedCategoryId: string | null
   matchedCategoryType: 'despesa' | 'receita'
   matchedSubcategoryName: string
@@ -223,232 +226,7 @@ function parseExcelAmount(value: any): number {
   return isNaN(num) ? 0 : Math.abs(num)
 }
 
-// Intelligent Category & Subcategory Mapper based on user's spreadsheet structure
-function mapCategoryAndSubcategory(
-  rawCategoryCol: string, // Column "Categoria" or "Orçamento" in Excel
-  rawDescription: string,
-  rawType?: string,
-  rawBudgetCol?: string, // Column "Orçamento" in Excel
-): {
-  categoryName: SystemCategoryName | 'Família' | 'Outros'
-  subcategoryName: string
-  type: 'despesa' | 'receita'
-} {
-  const normSub = normalizeText(rawCategoryCol)
-  const normBudget = normalizeText(rawBudgetCol || '')
-  const normDesc = normalizeText(rawDescription)
-  const normType = normalizeText(rawType || '')
-  const cleanSubName = rawCategoryCol.trim()
-
-  const isIncome =
-    normType === 'receita' ||
-    normType === 'entrada' ||
-    normDesc.includes('salario') ||
-    normDesc.includes('holerite') ||
-    normSub.includes('salario') ||
-    normSub.includes('plr') ||
-    normSub.includes('rendimento') ||
-    normSub.includes('vendas')
-
-  const txType: 'despesa' | 'receita' = isIncome ? 'receita' : 'despesa'
-
-  // If Orçamento column exists and directly maps to a category:
-  if (normBudget) {
-    if (normBudget.includes('animais') || normBudget.includes('pet')) {
-      return { categoryName: 'Pets', subcategoryName: cleanSubName || 'Outros', type: txType }
-    }
-    if (
-      normBudget.includes('automovel') ||
-      normBudget.includes('carro') ||
-      normBudget.includes('transporte')
-    ) {
-      return {
-        categoryName: 'Transporte',
-        subcategoryName: cleanSubName || 'Diversos',
-        type: txType,
-      }
-    }
-    if (normBudget.includes('casa') || normBudget.includes('moradia')) {
-      return { categoryName: 'Moradia', subcategoryName: cleanSubName || 'Diversos', type: txType }
-    }
-    if (normBudget.includes('fabricio')) {
-      return { categoryName: 'Fabrício', subcategoryName: cleanSubName || 'Diversos', type: txType }
-    }
-    if (normBudget.includes('raffaela')) {
-      return { categoryName: 'Raffaela', subcategoryName: cleanSubName || 'Diversos', type: txType }
-    }
-    if (normBudget.includes('investimento')) {
-      return {
-        categoryName: 'Investimento',
-        subcategoryName: cleanSubName || 'Diversos',
-        type: txType,
-      }
-    }
-    if (normBudget.includes('emanuel')) {
-      return { categoryName: 'Emanuel', subcategoryName: cleanSubName || 'Diversos', type: txType }
-    }
-    if (normBudget.includes('helena')) {
-      return { categoryName: 'Helena', subcategoryName: cleanSubName || 'Diversos', type: txType }
-    }
-    if (normBudget.includes('matheus')) {
-      return { categoryName: 'Matheus', subcategoryName: cleanSubName || 'Diversos', type: txType }
-    }
-    if (normBudget.includes('familia')) {
-      return { categoryName: 'Família', subcategoryName: cleanSubName || 'Diversos', type: txType }
-    }
-    if (normBudget.includes('fast escova')) {
-      return {
-        categoryName: 'Fast Escova',
-        subcategoryName: cleanSubName || 'Diversos',
-        type: txType,
-      }
-    }
-  }
-
-  // --- Direct match by Category column if it matches a parent name ---
-  if (normSub.includes('animais de estimacao') || normSub === 'pets') {
-    return { categoryName: 'Pets', subcategoryName: 'Outros', type: txType }
-  }
-  if (normSub.includes('automovel')) {
-    return { categoryName: 'Transporte', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub === 'casa') {
-    return { categoryName: 'Moradia', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub === 'fabricio' || normSub === 'fabrício') {
-    return { categoryName: 'Fabrício', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub === 'raffaela') {
-    return { categoryName: 'Raffaela', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub.includes('investimento')) {
-    return { categoryName: 'Investimento', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub === 'emanuel') {
-    return { categoryName: 'Emanuel', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub === 'helena') {
-    return { categoryName: 'Helena', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub === 'matheus') {
-    return { categoryName: 'Matheus', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub === 'familia' || normSub === 'família') {
-    return { categoryName: 'Família', subcategoryName: 'Diversos', type: txType }
-  }
-  if (normSub.includes('fast escova')) {
-    return { categoryName: 'Fast Escova', subcategoryName: 'Diversos', type: txType }
-  }
-
-  // --- Pets subcategories ---
-  if (
-    normSub.includes('banho') ||
-    normSub.includes('racao') ||
-    normSub.includes('veterinario') ||
-    normDesc.includes('petshop') ||
-    normDesc.includes('cobasi') ||
-    normDesc.includes('petz')
-  ) {
-    return {
-      categoryName: 'Pets',
-      subcategoryName: cleanSubName || 'Outros',
-      type: txType,
-    }
-  }
-
-  // --- Transporte subcategories ---
-  if (
-    normSub.includes('combustivel') ||
-    normSub.includes('gasolina') ||
-    normSub.includes('consorcio') ||
-    normSub.includes('estacionamento') ||
-    normSub.includes('pedagio') ||
-    normSub.includes('lavagem') ||
-    normSub.includes('multa') ||
-    normSub.includes('revisao') ||
-    normSub.includes('oficina') ||
-    normSub.includes('ipva')
-  ) {
-    return {
-      categoryName: 'Transporte',
-      subcategoryName: cleanSubName || 'Diversos',
-      type: txType,
-    }
-  }
-
-  // --- Moradia subcategories ---
-  if (
-    normSub.includes('agua') ||
-    normSub.includes('luz') ||
-    normSub.includes('gas') ||
-    normSub.includes('internet') ||
-    normSub.includes('iptu') ||
-    normSub.includes('diarista') ||
-    normSub.includes('decoracao') ||
-    normSub.includes('utensilios') ||
-    normSub.includes('manutencao') ||
-    normSub.includes('aluguel') ||
-    normSub.includes('condominio')
-  ) {
-    return {
-      categoryName: 'Moradia',
-      subcategoryName: cleanSubName || 'Diversos',
-      type: txType,
-    }
-  }
-
-  // --- Investimento subcategories ---
-  if (
-    normSub.includes('emprestimo') ||
-    normSub.includes('financiamento') ||
-    normSub.includes('franquia') ||
-    normSub.includes('ibi marmore')
-  ) {
-    return {
-      categoryName: 'Investimento',
-      subcategoryName: cleanSubName || 'Financiamento Casa',
-      type: txType,
-    }
-  }
-
-  // --- Família subcategories ---
-  if (
-    normSub.includes('supermercado') ||
-    normSub.includes('restaurante') ||
-    normSub.includes('delivery') ||
-    normSub.includes('farmacia') ||
-    normSub.includes('igreja') ||
-    normSub.includes('lavanderia') ||
-    normSub.includes('suplemento') ||
-    normSub.includes('comemorac')
-  ) {
-    return {
-      categoryName: 'Família',
-      subcategoryName: cleanSubName || 'Diversos',
-      type: txType,
-    }
-  }
-
-  // --- Fast Escova subcategories ---
-  if (
-    normDesc.includes('fast escova') ||
-    normSub.includes('implantacao') ||
-    normSub.includes('pagamento de contas')
-  ) {
-    return {
-      categoryName: 'Fast Escova',
-      subcategoryName: cleanSubName || 'Diversos',
-      type: txType,
-    }
-  }
-
-  // Default fallback to Fabrício
-  return {
-    categoryName: 'Fabrício',
-    subcategoryName: cleanSubName || 'Diversos',
-    type: txType,
-  }
-}
+// Removida implementação antiga imprecisa em favor de matchImportCategoryAndSubcategory de @/lib/import-category-matcher
 
 // Find matching account by name
 function matchAccount(accountNameRaw: string, accounts: Account[]): Account | null {
@@ -1098,19 +876,29 @@ export default function Importar() {
       // Account match
       const matchedAccount = matchAccount(paymentMethodRaw, accountsList)
 
-      // Category & Subcategory match
-      const mapped = mapCategoryAndSubcategory(categoryRaw, description, String(typeVal), budgetRaw)
+      // Category & Subcategory match (filtrado estritamente pelo tipo da linha: receita vs despesa)
+      const mapped = matchImportCategoryAndSubcategory({
+        rawCategoryCol: categoryRaw,
+        rawDescription: description,
+        rawType: String(typeVal),
+        rawBudgetCol: budgetRaw,
+        categories: categoriesList,
+        subcategories: subcategoriesList,
+      })
+
       const matchedCatRecord =
+        (mapped.categoryId ? categoriesList.find((c) => c.id === mapped.categoryId) : null) ||
         categoriesList.find(
           (c) =>
             normalizeText(c.name) === normalizeText(mapped.categoryName) && c.type === mapped.type,
         ) ||
-        categoriesList.find((c) => normalizeText(c.name) === normalizeText(mapped.categoryName)) ||
         null
 
       // Try matching subcategory in DB
       let matchedSubRecord: Subcategory | null = null
-      if (matchedCatRecord && mapped.subcategoryName) {
+      if (mapped.subcategoryId) {
+        matchedSubRecord = subcategoriesList.find((s) => s.id === mapped.subcategoryId) || null
+      } else if (matchedCatRecord && mapped.subcategoryName) {
         matchedSubRecord =
           subcategoriesList.find(
             (s) =>
@@ -1297,32 +1085,36 @@ export default function Importar() {
       }
 
       const getCatId = (name: string, _type: 'despesa' | 'receita'): string => {
+        // Filtrar SEMPRE apenas categorias que coincidem com o tipo da linha (_type)
+        const allowed = freshCategories.filter((c) => c.type === _type)
+        if (allowed.length === 0) {
+          // Se não houver categorias do tipo, fallback de emergência
+          return freshCategories[0]?.id || ''
+        }
+
         // 1. Exact match by name & type
-        const exactWithType = freshCategories.find(
-          (c) => normalizeText(c.name) === normalizeText(name) && c.type === _type,
-        )
+        const exactWithType = allowed.find((c) => normalizeText(c.name) === normalizeText(name))
         if (exactWithType) return exactWithType.id
 
-        // 2. Exact match by name
-        const exactByName = freshCategories.find(
-          (c) => normalizeText(c.name) === normalizeText(name),
-        )
-        if (exactByName) return exactByName.id
-
-        // 3. Contains match
-        const looseMatch = freshCategories.find(
+        // 2. Loose/contains match strictly within allowed type
+        const looseMatch = allowed.find(
           (c) =>
             normalizeText(c.name).includes(normalizeText(name)) ||
             normalizeText(name).includes(normalizeText(c.name)),
         )
         if (looseMatch) return looseMatch.id
 
-        // 4. Fallback to any category matching the type
-        const fallbackWithType = freshCategories.find((c) => c.type === _type)
-        if (fallbackWithType) return fallbackWithType.id
+        // 3. Fallback semântico preferencial por tipo
+        if (_type === 'receita') {
+          const defaultRec = allowed.find((c) => normalizeText(c.name).includes('fabricio'))
+          if (defaultRec) return defaultRec.id
+        } else {
+          const defaultDesp = allowed.find((c) => normalizeText(c.name).includes('fabricio'))
+          if (defaultDesp) return defaultDesp.id
+        }
 
-        // 5. Ultimate fallback to first available category
-        return freshCategories[0]?.id || ''
+        // 4. Fallback para a primeira categoria permitida do tipo correto
+        return allowed[0]?.id || ''
       }
 
       // Cache of subcategories so we can dynamically auto-create if missing
