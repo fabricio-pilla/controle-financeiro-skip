@@ -45,17 +45,55 @@ export function isParentTransaction(
 }
 
 export function cleanDescription(desc: string): string {
-  return desc.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/i, '').trim()
+  if (!desc) return 'Sem descrição'
+  let res = desc.replace(/\s*\(Total:\s*R\$[^)]+\)\s*$/i, '').trim()
+  res = res.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/i, '').trim()
+  return res || 'Sem descrição'
+}
+
+/**
+ * Helper to resolve installment number and total for a transaction
+ */
+export function resolveInstallmentInfo(tx: any): {
+  installmentNumber: number
+  installmentTotal: number
+} {
+  if (!tx) return { installmentNumber: 1, installmentTotal: 1 }
+  let num = Number(tx.installment_number || 0)
+  let total = Number(
+    tx.installments_total || tx.installment_total || (tx as any).installments_total || 0,
+  )
+
+  if ((!num || !total || total <= 1) && tx.description) {
+    const match = String(tx.description).match(/\(\s*(\d+)\s*\/\s*(\d+)\s*\)/)
+    if (match) {
+      if (!num) num = parseInt(match[1], 10)
+      if (!total || total <= 1) total = parseInt(match[2], 10)
+    }
+  }
+
+  if (num <= 0) num = 1
+  if (total <= 0) total = 1
+
+  return { installmentNumber: num, installmentTotal: total }
 }
 
 /**
  * Helper to check if a transaction is an installment
  */
 export function isInstallmentTransaction(transaction: Transaction): boolean {
+  if (!transaction) return false
+  const total = Number(
+    transaction.installments_total ||
+      transaction.installment_total ||
+      (transaction as any).installments_total ||
+      0,
+  )
+  const num = Number(transaction.installment_number || 0)
   return Boolean(
     transaction.parent_transaction_id ||
-    (transaction.installment_number && transaction.installment_number > 0) ||
-    (transaction.installments_total && transaction.installments_total > 1) ||
+    num > 0 ||
+    total > 1 ||
     /\(\s*\d+\s*\/\s*\d+\s*\)/.test(transaction.description || ''),
   )
 }
@@ -64,45 +102,149 @@ export function isInstallmentTransaction(transaction: Transaction): boolean {
  * Helper to check if a transaction is recurring
  */
 export function isRecurringTransaction(transaction: Transaction): boolean {
-  return Boolean(
+  if (!transaction) return false
+  const hasRecFlag = Boolean(
     transaction.is_recurring ||
     transaction.recurring ||
-    Boolean(transaction.recurrence_type && transaction.recurrence_type.length > 0),
+    Boolean(transaction.recurrence_type && transaction.recurrence_type.trim().length > 0) ||
+    Boolean(
+      (transaction as any).recurrence_period &&
+      (transaction as any).recurrence_period.trim().length > 0,
+    ),
   )
+  if (!hasRecFlag) return false
+  // Não pode ser pai consolidado nem parcela de compra parcelada
+  const total = Number(
+    transaction.installments_total ||
+      transaction.installment_total ||
+      (transaction as any).installments_total ||
+      0,
+  )
+  const num = Number(transaction.installment_number || 0)
+  if (total > 1 || (num > 0 && /\(\s*\d+\s*\/\s*\d+\s*\)/.test(transaction.description || ''))) {
+    return false
+  }
+  return true
 }
 
 /**
- * Find sibling transactions belonging to an installment group
+ * Normaliza data YYYY-MM-DD para comparação confiável
+ */
+function normalizeDateStr(dateStr?: string): string {
+  if (!dateStr) return ''
+  return dateStr.split(/[T\s]/)[0]
+}
+
+/**
+ * Find sibling transactions belonging to an installment group.
+ * Identifica o grupo completo, incluindo:
+ * 1. Parcelas filhas (installment_number >= 1)
+ * 2. Registro pai consolidado (installment_number = 0 && installment_total > 0), se houver
  */
 export function findInstallmentGroup(
   transaction: Transaction,
   allTransactions: Transaction[],
 ): Transaction[] {
-  const parentId = transaction.parent_transaction_id || transaction.id
-  const originalDesc = cleanDescription(transaction.description)
+  const sourceCleanDesc = cleanDescription(transaction.description || '').toLowerCase()
+  const sourceAccountId = transaction.account_id || ''
+  const sourceParentId =
+    transaction.parent_transaction_id || (isParentTransaction(transaction) ? transaction.id : '')
+  const { installmentTotal: sourceTotal } = resolveInstallmentInfo(transaction)
 
-  const group = allTransactions.filter(
-    (t) =>
-      (t.parent_transaction_id && t.parent_transaction_id === parentId) ||
-      t.id === parentId ||
-      (transaction.parent_transaction_id && t.id === transaction.parent_transaction_id) ||
-      (cleanDescription(t.description) === originalDesc &&
-        (t.installments_total || 0) > 1 &&
-        t.type === transaction.type),
-  )
+  // 1. Se soubermos o parentId, filtramos por ele (filhas com parent_transaction_id == parentId OU pai com id == parentId)
+  if (sourceParentId) {
+    const group = allTransactions.filter((t) => {
+      if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+        return false
+      }
+      if (t.id === sourceParentId) return true
+      if (t.parent_transaction_id && t.parent_transaction_id === sourceParentId) return true
+      return false
+    })
 
-  group.sort((a, b) => {
+    if (group.length > 0) {
+      return sortInstallmentGroup(group)
+    }
+  }
+
+  // 2. Se a transação não tem parent_transaction_id, procurar se há um pai consolidado
+  const matchedParent = allTransactions.find((t) => {
+    if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+      return false
+    }
+    const { installmentNumber, installmentTotal } = resolveInstallmentInfo(t)
+    return (
+      (installmentNumber === 0 || isParentTransaction(t)) &&
+      installmentTotal === sourceTotal &&
+      t.type === transaction.type &&
+      (t.account_id || '') === sourceAccountId &&
+      cleanDescription(t.description || '').toLowerCase() === sourceCleanDesc
+    )
+  })
+
+  if (matchedParent) {
+    const parentId = matchedParent.id
+    const group = allTransactions.filter((t) => {
+      if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+        return false
+      }
+      if (t.id === parentId) return true
+      if (t.parent_transaction_id && t.parent_transaction_id === parentId) return true
+      return false
+    })
+    if (group.length > 0) {
+      return sortInstallmentGroup(group)
+    }
+  }
+
+  // 3. Fallback: agrupar por tipo, conta, total de parcelas e descrição base limpa
+  const group = allTransactions.filter((t) => {
+    if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+      return false
+    }
+    // Sempre inclui a transação original
+    if (t.id === transaction.id) return true
+
+    // Se o item aponta para OUTRO parent_transaction_id explícito, não agrupa
+    if (t.parent_transaction_id && sourceParentId && t.parent_transaction_id !== sourceParentId) {
+      return false
+    }
+
+    const { installmentTotal } = resolveInstallmentInfo(t)
+    const matchesTotal =
+      installmentTotal === sourceTotal || (sourceTotal <= 1 && installmentTotal > 1)
+    const matchesAccount = !sourceAccountId || !t.account_id || t.account_id === sourceAccountId
+    const matchesType = t.type === transaction.type
+    const matchesDesc = cleanDescription(t.description || '').toLowerCase() === sourceCleanDesc
+
+    return matchesTotal && matchesAccount && matchesType && matchesDesc
+  })
+
+  return sortInstallmentGroup(group)
+}
+
+function sortInstallmentGroup(group: Transaction[]): Transaction[] {
+  const sorted = [...group]
+  sorted.sort((a, b) => {
+    const isParentA = isParentTransaction(a)
+    const isParentB = isParentTransaction(b)
+    if (isParentA && !isParentB) return -1
+    if (!isParentA && isParentB) return 1
+
     const numA = a.installment_number || 0
     const numB = b.installment_number || 0
     if (numA !== numB) return numA - numB
-    return new Date(a.date).getTime() - new Date(b.date).getTime()
-  })
 
-  return group
+    const dateA = normalizeDateStr(a.date)
+    const dateB = normalizeDateStr(b.date)
+    return dateA.localeCompare(dateB)
+  })
+  return sorted
 }
 
 /**
- * Find transactions belonging to a recurring series
+ * Find transactions belonging to a recurring series.
+ * Identifica a série canônica por: tipo + conta + descrição base limpa (NÃO por valor).
  */
 export function findRecurringSeries(
   transaction: Transaction,
@@ -111,40 +253,130 @@ export function findRecurringSeries(
   const cleanSourceDesc = cleanDescription(transaction.description || '')
     .trim()
     .toLowerCase()
-  const currentCatId = transaction.category_id
   const currentType = transaction.type
-  const currentAccountId = transaction.account_id
+  const currentAccountId = transaction.account_id || ''
 
   const series = allTransactions.filter((t) => {
-    if (t.control_id !== transaction.control_id) return false
+    if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+      return false
+    }
     // A transação original é sempre incluída
     if (t.id === transaction.id) return true
     // Deve ser do mesmo tipo (receita / despesa)
     if (t.type !== currentType) return false
+
+    // Não pode ser pai consolidado nem parcela de compra parcelada
+    const instTotal = Number(
+      t.installments_total || t.installment_total || (t as any).installments_total || 0,
+    )
+    const instNum = Number(t.installment_number || 0)
+    if (
+      isParentTransaction(t) ||
+      instTotal > 1 ||
+      (instNum > 0 && /\(\s*\d+\s*\/\s*\d+\s*\)/.test(t.description || ''))
+    ) {
+      return false
+    }
+
     // Deve ser uma transação recorrente
     const isRec = Boolean(
-      t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+      t.is_recurring ||
+      t.recurring ||
+      (t.recurrence_type && t.recurrence_type.trim() !== '') ||
+      Boolean((t as any).recurrence_period && (t as any).recurrence_period.trim() !== ''),
     )
     if (!isRec) return false
-    // Não pode ser pai consolidado nem parcela de compra parcelada
-    const instTotal = Number(t.installments_total || (t as any).installment_total || 0)
-    if (instTotal > 1) return false
+
+    // Mesma conta (se ambas tiverem conta definida)
+    if (currentAccountId && t.account_id && t.account_id !== currentAccountId) {
+      return false
+    }
 
     const itemCleanDesc = cleanDescription(t.description || '')
       .trim()
       .toLowerCase()
-    // Match por descrição base limpa
-    const descMatches = itemCleanDesc === cleanSourceDesc
-    // Se a descrição bater ou se mesma categoria + descrição bater
-    return descMatches || (currentCatId && t.category_id === currentCatId && descMatches)
+    return itemCleanDesc === cleanSourceDesc
   })
 
-  series.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+  series.sort((a, b) => {
+    const dateA = normalizeDateStr(a.date)
+    const dateB = normalizeDateStr(b.date)
+    return dateA.localeCompare(dateB)
+  })
   return series
 }
 
 /**
+ * Retorna a lista de transações a excluir conforme a opção de propagação (somente esse, este e os próximos, todos)
+ */
+export function resolvePropagationTargets({
+  transaction,
+  allTransactions,
+  choice = 'single',
+}: {
+  transaction: Transaction
+  allTransactions: Transaction[]
+  choice?: PropagationChoice
+}): Transaction[] {
+  const isInstallment = isInstallmentTransaction(transaction)
+  const isRecurring = isRecurringTransaction(transaction)
+
+  // Standalone single transaction ou o usuário escolheu 'single'
+  if ((!isInstallment && !isRecurring) || choice === 'single') {
+    return [transaction]
+  }
+
+  // INSTALLMENT
+  if (isInstallment) {
+    const group = findInstallmentGroup(transaction, allTransactions)
+    const currentNum = transaction.installment_number || 1
+    const currentDate = normalizeDateStr(transaction.date)
+
+    if (choice === 'all') {
+      // "Todos": todas as parcelas e o registro pai consolidado
+      return group.length > 0 ? group : [transaction]
+    }
+
+    if (choice === 'future') {
+      // "Esse e os próximos": parcelas com número >= número atual (ou data >= data atual se num for 0)
+      // O registro pai NÃO é excluído em "future" porque as parcelas passadas continuam existindo
+      const futureTargets = group.filter((t) => {
+        if (isParentTransaction(t)) return false
+        const tNum = t.installment_number || 0
+        if (tNum > 0 && currentNum > 0) {
+          return tNum >= currentNum
+        }
+        const tDate = normalizeDateStr(t.date)
+        return tDate >= currentDate
+      })
+      return futureTargets.length > 0 ? futureTargets : [transaction]
+    }
+  }
+
+  // RECURRING
+  if (isRecurring) {
+    const series = findRecurringSeries(transaction, allTransactions)
+    const currentDate = normalizeDateStr(transaction.date)
+
+    if (choice === 'all') {
+      return series.length > 0 ? series : [transaction]
+    }
+
+    if (choice === 'future') {
+      const futureTargets = series.filter((t) => {
+        const tDate = normalizeDateStr(t.date)
+        return tDate >= currentDate
+      })
+      return futureTargets.length > 0 ? futureTargets : [transaction]
+    }
+  }
+
+  return [transaction]
+}
+
+/**
  * Handle deleting a transaction with propagation support for installments and recurring items.
+ * Retorna os IDs das transações excluídas para permitir atualização otimista precisa na UI.
  */
 export async function deleteTransactionWithPropagation({
   transaction,
@@ -154,73 +386,43 @@ export async function deleteTransactionWithPropagation({
   transaction: Transaction
   allTransactions: Transaction[]
   choice?: PropagationChoice
-}): Promise<void> {
-  const isInstallment = isInstallmentTransaction(transaction)
-  const isRecurring = isRecurringTransaction(transaction)
+}): Promise<{ deletedIds: string[] }> {
+  const targetsToDelete = resolvePropagationTargets({
+    transaction,
+    allTransactions,
+    choice,
+  })
 
-  // Standalone single transaction or user chose 'single'
-  if ((!isInstallment && !isRecurring) || choice === 'single') {
-    await executeWithRetry(() => skipCloud.deleteTransaction(transaction.id), 5, 1000, 'DELETE_TX')
-    return
+  const targetIds = Array.from(new Set(targetsToDelete.map((t) => t.id).filter(Boolean)))
+  if (targetIds.length === 0) {
+    return { deletedIds: [] }
   }
 
-  // Handle INSTALLMENT deletion
-  if (isInstallment) {
-    const group = findInstallmentGroup(transaction, allTransactions)
-    const currentNum = transaction.installment_number || 1
+  const affectedAccountIds = Array.from(
+    new Set(targetsToDelete.map((t) => t.account_id).filter(Boolean)),
+  )
 
-    let targetsToDelete: Transaction[] = []
-    if (choice === 'all') {
-      targetsToDelete = group.length > 0 ? group : [transaction]
-    } else if (choice === 'future') {
-      targetsToDelete = group.filter((t) => (t.installment_number || 0) >= currentNum)
-      if (targetsToDelete.length === 0) targetsToDelete = [transaction]
-    }
+  // Single transaction rápida
+  if (targetIds.length === 1) {
+    await executeWithRetry(() => skipCloud.deleteTransaction(targetIds[0]), 5, 1000, 'DELETE_TX')
+    return { deletedIds: targetIds }
+  }
 
-    const affectedAccountIds = Array.from(new Set(targetsToDelete.map((t) => t.account_id)))
+  // Exclusão em pool resiliente com limite de concorrência e retry contra 429
+  await runInPool(
+    targetsToDelete,
+    async (item) => {
+      await skipCloud.deleteTransaction(item.id, true)
+    },
+    { concurrency: 4, delayBetweenBatchesMs: 25, tag: 'DELETE_PROPAGATION_POOL' },
+  )
 
-    // Delete targets in controlled concurrent pool (concurrency: 4)
-    await runInPool(
-      targetsToDelete,
-      async (item) => {
-        await skipCloud.deleteTransaction(item.id, true)
-      },
-      { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'DELETE_INSTALLMENT' },
-    )
-
-    // Recompute balance once at end
+  // Recalcula o saldo das contas afetadas UMA ÚNICA VEZ ao final
+  if (affectedAccountIds.length > 0) {
     await skipCloud.recomputeAccountsBalances(affectedAccountIds)
-    return
   }
 
-  // Handle RECURRING deletion
-  if (isRecurring) {
-    const series = findRecurringSeries(transaction, allTransactions)
-    const currentDate = new Date(transaction.date).getTime()
-
-    let targetsToDelete: Transaction[] = []
-    if (choice === 'all') {
-      targetsToDelete = series.length > 0 ? series : [transaction]
-    } else if (choice === 'future') {
-      targetsToDelete = series.filter((t) => new Date(t.date).getTime() >= currentDate)
-      if (targetsToDelete.length === 0) targetsToDelete = [transaction]
-    }
-
-    const affectedAccountIds = Array.from(new Set(targetsToDelete.map((t) => t.account_id)))
-
-    // Delete targets in controlled concurrent pool (concurrency: 4)
-    await runInPool(
-      targetsToDelete,
-      async (item) => {
-        await skipCloud.deleteTransaction(item.id, true)
-      },
-      { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'DELETE_RECURRING' },
-    )
-
-    // Recompute balance once at end
-    await skipCloud.recomputeAccountsBalances(affectedAccountIds)
-    return
-  }
+  return { deletedIds: targetIds }
 }
 
 /**

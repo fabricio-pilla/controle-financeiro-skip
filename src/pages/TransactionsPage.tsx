@@ -355,36 +355,7 @@ export default function TransactionsPage() {
     if (!txToDelete) return
     setIsDeleting(true)
     try {
-      // Find targets before delete to update state immediately
-      const isInst = isInstallmentTransaction(txToDelete)
-      const isRec = isRecurringTransaction(txToDelete)
-      let targetIds: string[] = [txToDelete.id]
-
-      if (isInst) {
-        const group = findInstallmentGroup(txToDelete, transactions)
-        const currentNum = txToDelete.installment_number || 1
-        if (choice === 'all') {
-          targetIds = (group.length > 0 ? group : [txToDelete]).map((t) => t.id)
-        } else if (choice === 'future') {
-          targetIds = group
-            .filter((t) => (t.installment_number || 0) >= currentNum)
-            .map((t) => t.id)
-          if (targetIds.length === 0) targetIds = [txToDelete.id]
-        }
-      } else if (isRec) {
-        const series = findRecurringSeries(txToDelete, transactions)
-        const currentDate = new Date(txToDelete.date).getTime()
-        if (choice === 'all') {
-          targetIds = (series.length > 0 ? series : [txToDelete]).map((t) => t.id)
-        } else if (choice === 'future') {
-          targetIds = series
-            .filter((t) => new Date(t.date).getTime() >= currentDate)
-            .map((t) => t.id)
-          if (targetIds.length === 0) targetIds = [txToDelete.id]
-        }
-      }
-
-      await deleteTransactionWithPropagation({
+      const { deletedIds: targetIds } = await deleteTransactionWithPropagation({
         transaction: txToDelete,
         allTransactions: transactions,
         choice,
@@ -1686,8 +1657,15 @@ export default function TransactionsPage() {
           mode="delete"
           isInstallment={isInstallmentTransaction(txToDelete)}
           isRecurring={isRecurringTransaction(txToDelete)}
-          currentInstallment={txToDelete.installment_number || 1}
-          totalInstallments={txToDelete.installments_total || 1}
+          currentInstallment={
+            txToDelete.installment_number ||
+            parseInt(txToDelete.description?.match(/\(\s*(\d+)\s*\/\s*(\d+)\s*\)/)?.[1] || '1', 10)
+          }
+          totalInstallments={
+            txToDelete.installments_total ||
+            (txToDelete as any).installment_total ||
+            parseInt(txToDelete.description?.match(/\(\s*(\d+)\s*\/\s*(\d+)\s*\)/)?.[2] || '1', 10)
+          }
           onConfirm={confirmPropagationDelete}
           isSubmitting={isDeleting}
         />
