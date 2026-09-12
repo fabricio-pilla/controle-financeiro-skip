@@ -218,12 +218,12 @@ export function planNextRecurringTransactions({
         paid: false,
         is_recurring: true,
         recurring: true,
-        recurrence_type: seed.recurrence_type || 'mensal',
+        recurrence_type: seed.recurrence_type || (seed as any).recurrence_period || 'mensal',
         recurrence_period: (seed as any).recurrence_period || seed.recurrence_type || 'mensal',
         installment_number: 1,
         installment_total: 0,
         parent_transaction_id: '',
-        notes: seed.notes || '',
+        notes: seed.notes || 'Gerado automaticamente: recorrência mensal',
       })
     }
   }
@@ -300,13 +300,30 @@ export function planNextInstallmentTransactions({
 
   // 3. Agrupar filhas do mês atual por série
   // Chave de série: parent_transaction_id (se houver) OU (type_account_cleanDesc_total)
+  // Caso a filha não tenha parent_transaction_id, mas coincida com um registro pai por (type, account, cleanDesc, total),
+  // adotamos o parentId do pai correspondente para garantir vínculo e agrupamento exato.
   const seriesMap = new Map<string, InstallmentSeriesFromCurrentMonth>()
 
   for (const daughter of currentMonthDaughters) {
     const total = Number(daughter.installments_total || (daughter as any).installment_total || 0)
     const num = Number(daughter.installment_number || 1)
     const baseD = cleanDescription(daughter.description)
-    const parentId = daughter.parent_transaction_id || ''
+    let parentId = daughter.parent_transaction_id || ''
+
+    if (!parentId) {
+      const matchedParent = allParents.find((p) => {
+        const pTotal = Number(p.installments_total || (p as any).installment_total || 0)
+        return (
+          pTotal === total &&
+          p.type === daughter.type &&
+          (p.account_id || '') === (daughter.account_id || '') &&
+          cleanDescription(p.description).toLowerCase() === baseD.toLowerCase()
+        )
+      })
+      if (matchedParent) {
+        parentId = matchedParent.id
+      }
+    }
 
     const seriesKey = parentId
       ? `parent_${parentId}`
@@ -315,12 +332,15 @@ export function planNextInstallmentTransactions({
     if (!seriesMap.has(seriesKey)) {
       // Encontrar todas as filhas dessa série no controle inteiro
       const daughtersOfSeries = allDaughters.filter((d) => {
-        if (parentId && d.parent_transaction_id === parentId) return true
+        if (parentId) {
+          if (d.parent_transaction_id === parentId) return true
+        }
         const dTotal = Number(d.installments_total || (d as any).installment_total || 0)
         return (
           dTotal === total &&
           cleanDescription(d.description).toLowerCase() === baseD.toLowerCase() &&
-          d.type === daughter.type
+          d.type === daughter.type &&
+          (d.account_id || '') === (daughter.account_id || '')
         )
       })
 
@@ -368,18 +388,14 @@ export function planNextInstallmentTransactions({
       continue
     }
 
-    // Ponto de partida para novos números:
-    // O usuário especificou: a partir da parcela do mês atual (ex: 7/10), gerar as próximas
-    // a partir do mês seguinte ao atual. Se por acaso já existirem números > curNum,
-    // garantimos idempotência não duplicando nenhum existente.
-    const startNum = Math.max(curNum, series.maxExistingNumber) + 1
+    // Regra 4: Continuar a partir da parcela do mês atual (curNum).
+    // A primeira parcela futura gerada corresponde ao mês seguinte (offset = 1) e terá número curNum + 1.
+    // Gerar até acabar o total de parcelas OU no máximo +12 parcelas futuras.
+    // Ex: parcela 7/10 gera 3 parcelas (8/10, 9/10, 10/10);
+    // Ex: parcela 3/79 gera 12 parcelas (4/79 a 15/79).
+    const startNum = curNum + 1
+    const maxNumToGenerate = Math.min(total, curNum + 12)
 
-    // Limite de parcelas novas a gerar: no máximo 12 ou até atingir total
-    // Ex: 7/10 -> gera 8, 9, 10 (3 parcelas)
-    // Ex: 3/79 -> gera 4..15 (12 parcelas)
-    const maxNumToGenerate = Math.min(total, startNum + 12 - 1)
-
-    // Se startNum > total, já terminou
     if (startNum > total) {
       continue
     }
@@ -397,16 +413,25 @@ export function planNextInstallmentTransactions({
     const curParts = parseDateParts(series.currentMonthParcelDate)
     const origDay = curParts.day
 
-    // Gerar números de startNum até maxNumToGenerate
+    // Gerar números de startNum até maxNumToGenerate (offset em meses = 1 a 12)
     for (let n = startNum; n <= maxNumToGenerate; n++) {
-      if (series.existingNumbers.has(n)) {
-        continue // Idempotência garantida
-      }
-
-      // Distância em meses em relação ao mês atual:
-      // A primeira futura (curNum + 1) cai exatamente no mês seguinte ao atual (offset = 1)
+      // Offset de meses referente ao mês atual:
+      // n = curNum + 1 => monthOffset = 1 (mês seguinte ao atual)
+      // n = curNum + 2 => monthOffset = 2 ...
       const monthOffset = n - curNum
       const targetDateStr = computeTargetDate(currentYear, currentMonth, origDay, monthOffset)
+
+      // Regra 5 (Idempotência): checar tanto por número da parcela quanto por data no mês alvo
+      if (series.existingNumbers.has(n)) {
+        continue
+      }
+      const targetYM = targetDateStr.substring(0, 7)
+      const alreadyHasInTargetMonth = series.allDaughters.some(
+        (d) => d.date && d.date.startsWith(targetYM),
+      )
+      if (alreadyHasInTargetMonth) {
+        continue
+      }
 
       const parcelAmount = n === total ? lastParcelAmount : baseParcelAmount
       const parcelDesc = `${series.baseDesc} (${n}/${total})`

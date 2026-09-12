@@ -320,5 +320,99 @@ describe('recurring-generation engine', () => {
 
       expect(candidates.length).toBe(0)
     })
+
+    it('case 5: separates distinct series with same base description but different accounts or parent IDs', () => {
+      const parentA: Transaction = {
+        id: 'parent_A',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 50000,
+        description: 'Financiamento (Total: R$ 50.000,00)',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-10 00:00:00.000Z',
+        paid: true,
+        installment_number: 0,
+        installments_total: 79,
+        created_at: '2026-09-10T00:00:00.000Z',
+      }
+
+      const parentB: Transaction = {
+        id: 'parent_B',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 90000,
+        description: 'Financiamento (Total: R$ 90.000,00)',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-10 00:00:00.000Z',
+        paid: true,
+        installment_number: 0,
+        installments_total: 79,
+        created_at: '2026-09-10T00:00:00.000Z',
+      }
+
+      const daughterA35: Transaction = {
+        id: 'inst_A_35',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 632.91,
+        description: 'Financiamento (35/79)',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-10 00:00:00.000Z',
+        paid: true,
+        installment_number: 35,
+        installments_total: 79,
+        parent_transaction_id: 'parent_A',
+        created_at: '2026-09-10T00:00:00.000Z',
+      }
+
+      const daughterB4: Transaction = {
+        id: 'inst_B_4',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 1139.24,
+        description: 'Financiamento (4/79)',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-10 00:00:00.000Z',
+        paid: true,
+        installment_number: 4,
+        installments_total: 79,
+        parent_transaction_id: 'parent_B',
+        created_at: '2026-09-10T00:00:00.000Z',
+      }
+
+      const candidates = planNextInstallmentTransactions({
+        currentMonthTransactions: [daughterA35, daughterB4],
+        allCompanyTransactions: [parentA, parentB, daughterA35, daughterB4],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+        currentYear: 2026,
+        currentMonth: 9,
+      })
+
+      // Série A: 35/79 -> gera 36..47 (12 parcelas) no mês seguinte (10/2026..09/2027)
+      // Série B: 4/79 -> gera 5..16 (12 parcelas) no mês seguinte (10/2026..09/2027)
+      const candA = candidates.filter((c) => c.parent_transaction_id === 'parent_A')
+      const candB = candidates.filter((c) => c.parent_transaction_id === 'parent_B')
+
+      expect(candA.length).toBe(12)
+      expect(candA[0].installment_number).toBe(36)
+      expect(candA[0].date).toBe('2026-10-10 00:00:00.000Z')
+      expect(candA[11].installment_number).toBe(47)
+      expect(candA[11].date).toBe('2027-09-10 00:00:00.000Z')
+
+      expect(candB.length).toBe(12)
+      expect(candB[0].installment_number).toBe(5)
+      expect(candB[0].date).toBe('2026-10-10 00:00:00.000Z')
+      expect(candB[11].installment_number).toBe(16)
+      expect(candB[11].date).toBe('2027-09-10 00:00:00.000Z')
+    })
   })
 })
