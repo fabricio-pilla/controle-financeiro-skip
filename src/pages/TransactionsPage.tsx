@@ -492,7 +492,7 @@ export default function TransactionsPage() {
         return
       }
 
-      const currentUserId = pb.authStore.record?.id || (currentCompany as any).created_by || ''
+      const currentUserId = pb.authStore.model?.id || currentCompany.owner_id || ''
 
       // ----------------------------------------------------
       // PLANEJAMENTO PURO EM MEMÓRIA (Sem chamadas adicionais de rede)

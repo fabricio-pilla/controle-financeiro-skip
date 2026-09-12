@@ -323,10 +323,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
           const pb = (await import('@/lib/pocketbase/client')).default
           const currentUserId =
-            (createdTx as any).user_id ||
-            pb.authStore.record?.id ||
-            (currentCompany as any).created_by ||
-            ''
+            (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
           triggerAutoRecurringGeneration({
             sourceTransaction: createdTx,
             existingTransactions: transactions,
@@ -349,10 +346,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
           const pb = (await import('@/lib/pocketbase/client')).default
           const currentUserId =
-            (createdTx as any).user_id ||
-            pb.authStore.record?.id ||
-            (currentCompany as any).created_by ||
-            ''
+            (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
           triggerAutoInstallmentGeneration({
             sourceTransaction: createdTx,
             existingTransactions: transactions,

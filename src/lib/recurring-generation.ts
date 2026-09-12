@@ -7,21 +7,21 @@ export interface RecurringGenerationCandidate {
   type: TransactionType
   amount: number
   description: string
-  category_id: string
-  subcategory_id: string
-  account_id: string
+  category_id?: string
+  subcategory_id?: string
+  account_id?: string
   credit_card_id?: string
   date: string
-  payment_date: string
+  payment_date?: string
   paid: boolean
   is_recurring: boolean
   recurring: boolean
-  recurrence_type: string
-  recurrence_period: string
-  installment_number: number
-  installment_total: number
-  parent_transaction_id: string
-  notes: string
+  recurrence_type?: string
+  recurrence_period?: string
+  installment_number?: number
+  installment_total?: number
+  parent_transaction_id?: string
+  notes?: string
 }
 
 /**
@@ -52,8 +52,63 @@ export async function createPlannedTransactionsInPool({
     plannedItems,
     async (item) => {
       try {
+        // Sanitizar payload para o PocketBase:
+        // 1. Campos de relação (category_id, subcategory_id, account_id, credit_card_id, control_id)
+        //    NUNCA podem ser string vazia `""` — devem ser omitidos ou undefined.
+        // 2. payment_date e date devem ser datas válidas (YYYY-MM-DD ou ISO), nunca `""`.
+        // 3. user_id só deve ser enviado se não for vazio.
+        const payload: Record<string, any> = {
+          control_id: item.control_id,
+          type: item.type,
+          amount: item.amount,
+          description: item.description,
+          date: item.date,
+          paid: Boolean(item.paid),
+          is_recurring: Boolean(item.is_recurring),
+          recurring: Boolean(item.recurring || item.is_recurring),
+        }
+
+        if (item.user_id && item.user_id.trim() !== '') {
+          payload.user_id = item.user_id.trim()
+        }
+        if (item.category_id && item.category_id.trim() !== '') {
+          payload.category_id = item.category_id.trim()
+        }
+        if (item.subcategory_id && item.subcategory_id.trim() !== '') {
+          payload.subcategory_id = item.subcategory_id.trim()
+        }
+        if (item.account_id && item.account_id.trim() !== '') {
+          payload.account_id = item.account_id.trim()
+        }
+        if (item.credit_card_id && item.credit_card_id.trim() !== '') {
+          payload.credit_card_id = item.credit_card_id.trim()
+        }
+        if (item.parent_transaction_id && item.parent_transaction_id.trim() !== '') {
+          payload.parent_transaction_id = item.parent_transaction_id.trim()
+        }
+        if (item.payment_date && item.payment_date.trim() !== '') {
+          payload.payment_date = item.payment_date.trim()
+        } else if (item.date) {
+          payload.payment_date = item.date
+        }
+        if (item.recurrence_type && item.recurrence_type.trim() !== '') {
+          payload.recurrence_type = item.recurrence_type.trim()
+        }
+        if (item.recurrence_period && item.recurrence_period.trim() !== '') {
+          payload.recurrence_period = item.recurrence_period.trim()
+        }
+        if (item.installment_number !== undefined && item.installment_number !== null) {
+          payload.installment_number = item.installment_number
+        }
+        if (item.installment_total !== undefined && item.installment_total !== null) {
+          payload.installment_total = item.installment_total
+        }
+        if (item.notes && item.notes.trim() !== '') {
+          payload.notes = item.notes.trim()
+        }
+
         const rec = await executeWithRetry(
-          () => pb.collection('transactions').create(item),
+          () => pb.collection('transactions').create(payload),
           7,
           1000,
           'CREATE_PLANNED_TX',
@@ -185,21 +240,21 @@ export interface InstallmentGenerationCandidate {
   type: TransactionType
   amount: number
   description: string
-  category_id: string
-  subcategory_id: string
-  account_id: string
+  category_id?: string
+  subcategory_id?: string
+  account_id?: string
   credit_card_id?: string
   date: string
-  payment_date: string
+  payment_date?: string
   paid: boolean
   recurring: boolean
   is_recurring: boolean
-  recurrence_type: string
-  recurrence_period: string
-  installment_number: number
-  installment_total: number
-  parent_transaction_id: string
-  notes: string
+  recurrence_type?: string
+  recurrence_period?: string
+  installment_number?: number
+  installment_total?: number
+  parent_transaction_id?: string
+  notes?: string
 }
 
 /**
@@ -320,30 +375,36 @@ export function planOccurrencesForSingleRecurring({
 
   // Montar conjunto de checagem rápida de ocorrências existentes.
   // IMPORTANTE: A idempotência por mês de uma série recorrente deve checar
-  // (tipo + conta + descrição base + YYYY-MM), NÃO incluindo o valor no check,
-  // pois se o usuário acabou de editar o valor de um lançamento (ou se o valor variou),
-  // as ocorrências futuras já existentes com o valor antigo (ou novo) não podem ser duplicadas.
-  // Também indexamos com e sem account_id para garantir que mesmo se a conta for trocada
-  // ou se houver registros antigos com mesma descrição e tipo na série, não haja duplicação.
+  // mesma conta (account_id), mesmo tipo (type) e descrição normalizada (cleanD),
+  // NÃO incluindo o valor no check, pois se o usuário acabou de editar o valor de um lançamento,
+  // as ocorrências futuras já existentes com o valor antigo não podem ser duplicadas.
+  // Restringir por conta garante que despesas com mesma descrição em contas diferentes não colidam.
+  const sourceAccountId = sourceTransaction.account_id || ''
   const existingMonthSet = new Set<string>()
   for (const t of existingTransactions) {
     if (!t.date || (t.control_id && t.control_id !== currentCompanyId)) continue
-    const isRec = Boolean(
-      t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
-    )
     const d = cleanDescription(t.description).toLowerCase()
-    // Pertence à mesma série se tiver a mesma descrição base e tipo
-    if (d === cleanD && t.type === sourceTransaction.type) {
+    const tAccountId = t.account_id || ''
+    // Pertence à mesma série se tiver a mesma conta, tipo e descrição base
+    if (d === cleanD && t.type === sourceTransaction.type && tAccountId === sourceAccountId) {
       const ym = t.date.substring(0, 7)
       if (ym) existingMonthSet.add(ym)
     }
   }
 
-  // Também não duplicar no próprio mês da transação fonte (ambos os formatos)
+  // Também não duplicar no próprio mês da transação fonte
   const sourceYM = getYearMonth(baseYear, baseMonth)
   existingMonthSet.add(sourceYM)
   if (sourceTransaction.date) {
     existingMonthSet.add(sourceTransaction.date.substring(0, 7))
+  }
+
+  // Projetar dia de pagamento original da transação cadastrada
+  // Se a fonte possui payment_date válida, respeitar o dia dela (ou recair na própria targetDate)
+  let payOrigDay = origDay
+  if (sourceTransaction.payment_date) {
+    const payParts = parseDateParts(sourceTransaction.payment_date)
+    payOrigDay = payParts.day
   }
 
   const planned: RecurringGenerationCandidate[] = []
@@ -358,18 +419,23 @@ export function planOccurrencesForSingleRecurring({
 
     existingMonthSet.add(targetYM)
 
+    // Data de pagamento projetada respeitando o dia original da payment_date
+    const targetPaymentDateStr = sourceTransaction.payment_date
+      ? computeTargetDate(baseYear, baseMonth, payOrigDay, m)
+      : targetDateStr
+
     planned.push({
       control_id: currentCompanyId,
       user_id: currentUserId || sourceTransaction.user_id || '',
       type: sourceTransaction.type,
       amount: sourceTransaction.amount,
       description: cleanDescription(sourceTransaction.description),
-      category_id: sourceTransaction.category_id || '',
-      subcategory_id: sourceTransaction.subcategory_id || '',
-      account_id: sourceTransaction.account_id || '',
-      credit_card_id: (sourceTransaction as any).credit_card_id || '',
+      category_id: sourceTransaction.category_id || undefined,
+      subcategory_id: sourceTransaction.subcategory_id || undefined,
+      account_id: sourceTransaction.account_id || undefined,
+      credit_card_id: (sourceTransaction as any).credit_card_id || undefined,
       date: targetDateStr,
-      payment_date: '',
+      payment_date: targetPaymentDateStr,
       paid: false,
       is_recurring: true,
       recurring: true,
@@ -383,7 +449,7 @@ export function planOccurrencesForSingleRecurring({
         'mensal',
       installment_number: 1,
       installment_total: 0,
-      parent_transaction_id: '',
+      parent_transaction_id: undefined,
       notes: sourceTransaction.notes || 'Gerado automaticamente: recorrência mensal',
     })
   }
@@ -625,20 +691,20 @@ export function planOccurrencesForSingleInstallment({
       type: sourceTransaction.type,
       amount: parcelAmount,
       description: parcelDesc,
-      category_id: sourceTransaction.category_id || '',
-      subcategory_id: sourceTransaction.subcategory_id || '',
-      account_id: targetAccountId,
-      credit_card_id: (sourceTransaction as any).credit_card_id || '',
+      category_id: sourceTransaction.category_id || undefined,
+      subcategory_id: sourceTransaction.subcategory_id || undefined,
+      account_id: targetAccountId || undefined,
+      credit_card_id: (sourceTransaction as any).credit_card_id || undefined,
       date: targetDateStr,
       payment_date: calculatedPaymentDate,
       paid: false, // Futuras sempre criadas como pendentes
       recurring: false,
       is_recurring: false,
-      recurrence_type: '',
-      recurrence_period: '',
+      recurrence_type: undefined,
+      recurrence_period: undefined,
       installment_number: n,
       installment_total: total,
-      parent_transaction_id: effectiveParentId,
+      parent_transaction_id: effectiveParentId || undefined,
       notes: sourceTransaction.notes || 'Gerado automaticamente: parcela da série',
     })
   }
@@ -811,6 +877,13 @@ export function planNextRecurringTransactions({
     const startBaseYear = isFutureSeed ? origParts.year : currentYear
     const startBaseMonth = isFutureSeed ? origParts.month : currentMonth
 
+    // Projetar dia de pagamento respeitando o original de seed.payment_date quando existir
+    let seedPayOrigDay = origDay
+    if (seed.payment_date) {
+      const payParts = parseDateParts(seed.payment_date)
+      seedPayOrigDay = payParts.day
+    }
+
     for (let m = 1; m <= 12; m++) {
       const targetDateStr = computeTargetDate(startBaseYear, startBaseMonth, origDay, m)
       const targetYM = targetDateStr.substring(0, 7)
@@ -823,18 +896,22 @@ export function planNextRecurringTransactions({
       // Marcar no existingSet para não duplicar se houver colisão interna
       existingSet.add(checkKey)
 
+      const targetPaymentDateStr = seed.payment_date
+        ? computeTargetDate(startBaseYear, startBaseMonth, seedPayOrigDay, m)
+        : targetDateStr
+
       planned.push({
         control_id: currentCompanyId,
         user_id: currentUserId || seed.user_id || '',
         type: seed.type,
         amount: seed.amount,
         description: cleanDescription(seed.description),
-        category_id: seed.category_id || '',
-        subcategory_id: seed.subcategory_id || '',
-        account_id: seed.account_id || '',
-        credit_card_id: (seed as any).credit_card_id || '',
+        category_id: seed.category_id || undefined,
+        subcategory_id: seed.subcategory_id || undefined,
+        account_id: seed.account_id || undefined,
+        credit_card_id: (seed as any).credit_card_id || undefined,
         date: targetDateStr,
-        payment_date: '',
+        payment_date: targetPaymentDateStr,
         paid: false,
         is_recurring: true,
         recurring: true,
@@ -842,7 +919,7 @@ export function planNextRecurringTransactions({
         recurrence_period: (seed as any).recurrence_period || seed.recurrence_type || 'mensal',
         installment_number: 1,
         installment_total: 0,
-        parent_transaction_id: '',
+        parent_transaction_id: undefined,
         notes: seed.notes || 'Gerado automaticamente: recorrência mensal',
       })
     }
@@ -1064,20 +1141,21 @@ export function planNextInstallmentTransactions({
         type: series.currentMonthTx.type,
         amount: parcelAmount,
         description: parcelDesc,
-        category_id: series.currentMonthTx.category_id || '',
-        subcategory_id: series.currentMonthTx.subcategory_id || '',
-        account_id: series.currentMonthTx.account_id || '',
-        credit_card_id: (series.currentMonthTx as any).credit_card_id || '',
+        category_id: series.currentMonthTx.category_id || undefined,
+        subcategory_id: series.currentMonthTx.subcategory_id || undefined,
+        account_id: series.currentMonthTx.account_id || undefined,
+        credit_card_id: (series.currentMonthTx as any).credit_card_id || undefined,
         date: targetDateStr,
         payment_date: targetDateStr,
         paid: false, // Futuras sempre criadas como pendentes
         recurring: false,
         is_recurring: false,
-        recurrence_type: '',
-        recurrence_period: '',
+        recurrence_type: undefined,
+        recurrence_period: undefined,
         installment_number: n,
         installment_total: total,
-        parent_transaction_id: series.parentId || series.currentMonthTx.parent_transaction_id || '',
+        parent_transaction_id:
+          series.parentId || series.currentMonthTx.parent_transaction_id || undefined,
         notes: 'Gerado automaticamente: parcela da série',
       })
     }

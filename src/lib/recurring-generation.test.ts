@@ -219,6 +219,206 @@ describe('recurring-generation engine', () => {
       expect(candidates.some((c) => c.date.startsWith('2026-11'))).toBe(false)
       expect(candidates[0].date).toBe('2026-12-01 00:00:00.000Z')
     })
+
+    it('creates 12 future occurrences starting in the following month when a new recurring transaction is saved', () => {
+      // Cenário do usuário: acabei de salvar um lançamento recorrente mensal e ele deve criar novos lançamentos futuros
+      const newRec: Transaction = {
+        id: 'tx_rec_aluguel',
+        control_id: 'ctrl_empresa_1',
+        user_id: 'usr_123',
+        type: 'despesa',
+        amount: 2500,
+        description: 'Aluguel do Galpão',
+        category_id: 'cat_imovel',
+        account_id: 'acc_itau',
+        date: '2026-04-10 00:00:00.000Z',
+        payment_date: '2026-04-10',
+        paid: true,
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-04-10T00:00:00.000Z',
+      }
+
+      const planned = planOccurrencesForSingleRecurring({
+        sourceTransaction: newRec,
+        existingTransactions: [newRec],
+        currentCompanyId: 'ctrl_empresa_1',
+        currentUserId: 'usr_123',
+      })
+
+      expect(planned.length).toBe(12)
+      // Mês seguinte: maio/2026 até abril/2027
+      expect(planned[0].date).toBe('2026-05-10 00:00:00.000Z')
+      expect(planned[0].payment_date).toBe('2026-05-10 00:00:00.000Z')
+      expect(planned[11].date).toBe('2027-04-10 00:00:00.000Z')
+      expect(planned[11].payment_date).toBe('2027-04-10 00:00:00.000Z')
+
+      // Todas criadas como pendentes e recorrentes
+      for (const p of planned) {
+        expect(p.paid).toBe(false)
+        expect(p.is_recurring).toBe(true)
+        expect(p.amount).toBe(2500)
+        expect(p.account_id).toBe('acc_itau')
+        expect(p.category_id).toBe('cat_imovel')
+        expect(p.payment_date).toBeTruthy()
+        expect(p.payment_date).not.toBe('')
+        expect(p.parent_transaction_id).toBeUndefined()
+        expect(p.credit_card_id).toBeUndefined()
+      }
+    })
+
+    it('starts in the month following a future recurring transaction date', () => {
+      // Recorrente cadastrado em mês futuro (ex: julho/2026) -> começa em agosto/2026
+      const futureRec: Transaction = {
+        id: 'tx_rec_future',
+        control_id: 'ctrl_empresa_1',
+        user_id: 'usr_123',
+        type: 'receita',
+        amount: 8000,
+        description: 'Contrato Novo Cliente',
+        category_id: 'cat_servicos',
+        account_id: 'acc_bradesco',
+        date: '2026-07-25 00:00:00.000Z',
+        payment_date: '2026-07-28',
+        paid: false,
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-07-25T00:00:00.000Z',
+      }
+
+      const planned = planOccurrencesForSingleRecurring({
+        sourceTransaction: futureRec,
+        existingTransactions: [futureRec],
+        currentCompanyId: 'ctrl_empresa_1',
+        currentUserId: 'usr_123',
+      })
+
+      expect(planned.length).toBe(12)
+      // Mês seguinte: agosto/2026
+      expect(planned[0].date).toBe('2026-08-25 00:00:00.000Z')
+      // payment_date projeta o dia original da data de pagamento (dia 28)
+      expect(planned[0].payment_date).toBe('2026-08-28 00:00:00.000Z')
+      expect(planned[11].date).toBe('2027-07-25 00:00:00.000Z')
+      expect(planned[11].payment_date).toBe('2027-07-28 00:00:00.000Z')
+    })
+
+    it('saving twice does NOT duplicate occurrences (idempotency)', () => {
+      const recTx: Transaction = {
+        id: 'tx_rec_soft',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 99,
+        description: 'Software CRM',
+        category_id: 'cat_ti',
+        account_id: 'acc_corrente',
+        date: '2026-01-15 00:00:00.000Z',
+        payment_date: '2026-01-15',
+        paid: true,
+        is_recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-01-15T00:00:00.000Z',
+      }
+
+      // 1ª vez: gera 12
+      const firstRun = planOccurrencesForSingleRecurring({
+        sourceTransaction: recTx,
+        existingTransactions: [recTx],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+      expect(firstRun.length).toBe(12)
+
+      // Simula que os 12 foram salvos no banco
+      const mockSavedTxList: Transaction[] = [
+        recTx,
+        ...firstRun.map(
+          (p, idx) =>
+            ({
+              ...p,
+              id: `saved_${idx}`,
+              created_at: '2026-01-15T00:00:00.000Z',
+            }) as Transaction,
+        ),
+      ]
+
+      // 2ª vez: executando novamente com as transações salvas
+      const secondRun = planOccurrencesForSingleRecurring({
+        sourceTransaction: recTx,
+        existingTransactions: mockSavedTxList,
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      // Nada deve ser duplicado!
+      expect(secondRun.length).toBe(0)
+    })
+
+    it('does not confuse recurring transactions with same description in different accounts', () => {
+      // Duas contas diferentes com a mesma descrição "Tarifa Bancária"
+      const txContaA: Transaction = {
+        id: 'tx_tarifa_a',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 35,
+        description: 'Tarifa Bancária',
+        category_id: 'cat_tarifas',
+        account_id: 'acc_itau',
+        date: '2026-01-05 00:00:00.000Z',
+        is_recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-01-05T00:00:00.000Z',
+      }
+
+      const txContaB: Transaction = {
+        id: 'tx_tarifa_b',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'despesa',
+        amount: 45,
+        description: 'Tarifa Bancária',
+        category_id: 'cat_tarifas',
+        account_id: 'acc_bradesco',
+        date: '2026-01-05 00:00:00.000Z',
+        is_recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-01-05T00:00:00.000Z',
+      }
+
+      // Já existem ocorrências da Conta A
+      const existingOccurrencesContaA: Transaction[] = []
+      for (let m = 2; m <= 13; m++) {
+        const ym = m <= 12 ? `2026-${String(m).padStart(2, '0')}` : '2027-01'
+        existingOccurrencesContaA.push({
+          id: `tx_tarifa_a_${m}`,
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 35,
+          description: 'Tarifa Bancária',
+          category_id: 'cat_tarifas',
+          account_id: 'acc_itau',
+          date: `${ym}-05 00:00:00.000Z`,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-05T00:00:00.000Z',
+        })
+      }
+
+      // Gerar para Conta B: a existência de ocorrências na Conta A NÃO deve bloquear Conta B
+      const plannedB = planOccurrencesForSingleRecurring({
+        sourceTransaction: txContaB,
+        existingTransactions: [txContaA, txContaB, ...existingOccurrencesContaA],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      expect(plannedB.length).toBe(12)
+      expect(plannedB[0].account_id).toBe('acc_bradesco')
+    })
   })
 
   describe('planNextInstallmentTransactions', () => {
@@ -861,6 +1061,82 @@ describe('recurring-generation engine', () => {
 
       // Todos os 12 meses seguintes (fev/2026 a jan/2027) já têm ocorrências existentes
       expect(candidates.length).toBe(0)
+    })
+  })
+
+  describe('createPlannedTransactionsInPool payload sanitization', () => {
+    it('sanitizes empty relations and empty dates without breaking pocketbase create', async () => {
+      const { createPlannedTransactionsInPool } = await import('./recurring-generation')
+
+      const rawCandidate = {
+        control_id: 'ctrl_test_sanitize',
+        user_id: '', // deve ser omitido
+        type: 'despesa' as const,
+        amount: 199.9,
+        description: 'Assinatura Software',
+        category_id: '', // relação vazia -> omitir
+        subcategory_id: '', // relação vazia -> omitir
+        account_id: '', // relação vazia -> omitir
+        credit_card_id: '', // relação vazia -> omitir
+        parent_transaction_id: '', // omitir
+        date: '2026-06-10 00:00:00.000Z',
+        payment_date: '', // deve recair na própria date ou ser preenchida
+        paid: false,
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        recurrence_period: 'mensal',
+        installment_number: 1,
+        installment_total: 0,
+        notes: '',
+      }
+
+      // Importar mock do pocketbase client
+      const pbModule = await import('@/lib/pocketbase/client')
+      const originalCreate = pbModule.default.collection('transactions').create
+
+      let capturedPayload: any = null
+      pbModule.default.collection = ((coll: string) => {
+        if (coll === 'transactions') {
+          return {
+            create: async (payload: any) => {
+              capturedPayload = payload
+              return {
+                id: 'tx_created_123',
+                ...payload,
+                created: '2026-06-10T00:00:00.000Z',
+              }
+            },
+          }
+        }
+        return originalCreate as any
+      }) as any
+
+      try {
+        const result = await createPlannedTransactionsInPool({
+          plannedItems: [rawCandidate as any],
+        })
+
+        expect(result.created.length).toBe(1)
+        expect(result.failedCount).toBe(0)
+
+        // Verificar que relações vazias NUNCA foram enviadas como ""
+        expect(capturedPayload.user_id).toBeUndefined()
+        expect(capturedPayload.category_id).toBeUndefined()
+        expect(capturedPayload.subcategory_id).toBeUndefined()
+        expect(capturedPayload.account_id).toBeUndefined()
+        expect(capturedPayload.credit_card_id).toBeUndefined()
+        expect(capturedPayload.parent_transaction_id).toBeUndefined()
+
+        // Verificar que payment_date é uma data válida e não vazia
+        expect(capturedPayload.payment_date).toBe('2026-06-10 00:00:00.000Z')
+        expect(capturedPayload.date).toBe('2026-06-10 00:00:00.000Z')
+      } finally {
+        // Restaurar
+        pbModule.default.collection = ((originalName: string) => ({
+          create: originalCreate,
+        })) as any
+      }
     })
   })
 })
