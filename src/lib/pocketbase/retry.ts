@@ -94,29 +94,56 @@ export interface RunInPoolOptions {
   concurrency?: number
   delayBetweenBatchesMs?: number
   tag?: string
+  maxRetries?: number
+  baseDelayMs?: number
+  maxDelayMs?: number
+  onProgress?: (completed: number, total: number) => void
 }
 
 /**
  * Runs a collection of tasks in controlled concurrent batches with backoff on 429.
- * Balances high throughput (concurrency = 3-4) while preserving rate limit headroom.
+ * Balances high throughput (concurrency = 2-4) while preserving rate limit headroom.
  */
 export async function runInPool<TItem, TResult>(
   items: TItem[],
   task: (item: TItem, index: number) => Promise<TResult>,
   options: RunInPoolOptions = {},
 ): Promise<TResult[]> {
-  const { concurrency = 4, delayBetweenBatchesMs = 25, tag = 'POOL' } = options
+  const {
+    concurrency = 4,
+    delayBetweenBatchesMs = 25,
+    tag = 'POOL',
+    maxRetries = 5,
+    baseDelayMs = 500,
+    maxDelayMs = 30000,
+    onProgress,
+  } = options
   if (items.length === 0) return []
 
   const results: TResult[] = new Array(items.length)
   let currentIndex = 0
+  let completedCount = 0
 
   async function worker() {
     while (currentIndex < items.length) {
       const idx = currentIndex++
       const item = items[idx]
-      const res = await executeWithRetry(() => task(item, idx), 5, 500, tag)
+      const res = await executeWithRetry(
+        () => task(item, idx),
+        maxRetries,
+        baseDelayMs,
+        tag,
+        maxDelayMs,
+      )
       results[idx] = res
+      completedCount++
+      if (onProgress) {
+        try {
+          onProgress(completedCount, items.length)
+        } catch {
+          // ignore callback error
+        }
+      }
       if (delayBetweenBatchesMs > 0) {
         await sleep(delayBetweenBatchesMs)
       }

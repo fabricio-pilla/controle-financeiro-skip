@@ -15,7 +15,7 @@ import {
   deleteTransactionWithPropagation,
   isParentTransaction,
 } from '@/lib/transaction-propagation'
-import { executeWithRetry, is429Error, runInPool } from '@/lib/pocketbase/retry'
+import { executeWithRetry, is429Error, runInPool, sleep } from '@/lib/pocketbase/retry'
 import pb from '@/lib/pocketbase/client'
 import {
   cleanDescription,
@@ -121,6 +121,7 @@ export default function TransactionsPage() {
   const [txToDelete, setTxToDelete] = useState<Transaction | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isGeneratingRecurring, setIsGeneratingRecurring] = useState(false)
+  const [generationStepLabel, setGenerationStepLabel] = useState<string | null>(null)
 
   // Available unique month/year options from all transactions (including current month)
   const availableMonths = useMemo(() => {
@@ -474,6 +475,9 @@ export default function TransactionsPage() {
   }
 
   // Gerar ocorrências dos próximos 12 meses para TODAS as transações recorrentes e séries parceladas DO MÊS ATUAL
+  // Executado rigorosamente em DUAS ETAPAS:
+  // Etapa 1: todas as recorrências (receitas e despesas)
+  // Etapa 2: todos os parcelados (somente após concluir a etapa 1)
   const handleGenerateNext12Months = async () => {
     if (!currentCompany?.id) {
       toast.error('Nenhum controle selecionado.')
@@ -481,6 +485,7 @@ export default function TransactionsPage() {
     }
 
     setIsGeneratingRecurring(true)
+    setGenerationStepLabel('Analisando...')
     const toastId = toast.loading('Analisando lançamentos do mês atual...')
 
     try {
@@ -506,8 +511,9 @@ export default function TransactionsPage() {
       const currentUserId = pb.authStore.record?.id || (currentCompany as any).created_by || ''
 
       // ----------------------------------------------------
-      // PARTE 1: RECORRÊNCIAS (12 meses futuros a partir do mês seguinte)
+      // PLANEJAMENTO PURO EM MEMÓRIA (Sem chamadas adicionais de rede)
       // ----------------------------------------------------
+      // ETAPA 1: RECORRÊNCIAS (12 meses futuros a partir do mês seguinte)
       const plannedRecurring = planNextRecurringTransactions({
         currentMonthTransactions: currentMonthTxs,
         existingTransactions: transactions,
@@ -517,9 +523,7 @@ export default function TransactionsPage() {
         currentMonth,
       })
 
-      // ----------------------------------------------------
-      // PARTE 2: PARCELAS (próximas parcelas a partir do mês seguinte, até terminar ou +12)
-      // ----------------------------------------------------
+      // ETAPA 2: PARCELAS (próximas parcelas a partir do mês seguinte, até terminar ou +12)
       const plannedInstallments = planNextInstallmentTransactions({
         currentMonthTransactions: currentMonthTxs,
         allCompanyTransactions: transactions,
@@ -540,107 +544,185 @@ export default function TransactionsPage() {
         return
       }
 
-      toast.loading(`Gerando ${totalPlanned} lançamento(s) futuros em lotes otimizados...`, {
-        id: toastId,
-      })
-
-      const createdList: Transaction[] = []
       let createdIncomeCount = 0
       let createdExpenseCount = 0
       let createdInstallmentCount = 0
-      let rateLimitedCount = 0
+      let recurringRateLimitedCount = 0
+      let installmentRateLimitedCount = 0
 
-      // Criar itens com pool concorrente controlado (concorrência 4) e backoff exponencial anti-429
-      const allCandidates = [
-        ...plannedRecurring.map((item) => ({ item, kind: 'recurring' as const })),
-        ...plannedInstallments.map((item) => ({ item, kind: 'installment' as const })),
-      ]
+      // Helper para mapear registro criado para a tipagem Transaction
+      const mapCreatedRecord = (rec: any, candidate: any): Transaction => ({
+        id: rec.id,
+        control_id: rec.control_id || currentCompany.id,
+        user_id: rec.user_id || currentUserId,
+        type: rec.type,
+        amount: Number(rec.amount),
+        description: rec.description,
+        category_id: rec.category_id || '',
+        subcategory_id: rec.subcategory_id || undefined,
+        account_id: rec.account_id || '',
+        date: rec.date ? String(rec.date).split(/[T\s]/)[0] : candidate.date.split(/[T\s]/)[0],
+        payment_date: rec.payment_date
+          ? String(rec.payment_date).split(/[T\s]/)[0]
+          : rec.date
+            ? String(rec.date).split(/[T\s]/)[0]
+            : candidate.date.split(/[T\s]/)[0],
+        paid: Boolean(rec.paid),
+        is_recurring: Boolean(rec.is_recurring),
+        recurring: Boolean(rec.recurring || rec.is_recurring),
+        recurrence_type: rec.recurrence_type || undefined,
+        installment_number: rec.installment_number ? Number(rec.installment_number) : undefined,
+        installments_total: rec.installment_total
+          ? Number(rec.installment_total)
+          : rec.installments_total
+            ? Number(rec.installments_total)
+            : undefined,
+        parent_transaction_id: rec.parent_transaction_id || undefined,
+        notes: rec.notes || undefined,
+        created_at: rec.created || new Date().toISOString(),
+        account: accounts.find((a) => a.id === rec.account_id),
+        category: categories.find((c) => c.id === rec.category_id),
+      })
 
-      await runInPool(
-        allCandidates,
-        async ({ item, kind }) => {
-          try {
-            const rec = await executeWithRetry(
-              () => pb.collection('transactions').create(item),
-              7,
-              1000,
-              'GerarRecorrentesEParcelas',
-              30000,
-            )
+      // ====================================================
+      // ETAPA 1 DE 2: RECORRÊNCIAS (Receitas e Despesas)
+      // ====================================================
+      if (plannedRecurring.length > 0) {
+        setGenerationStepLabel(`Etapa 1/2: Recorrências (0/${plannedRecurring.length})`)
+        toast.loading(`Etapa 1 de 2: gerando recorrências (0/${plannedRecurring.length})...`, {
+          id: toastId,
+        })
 
-            if (rec) {
-              const mappedTx: Transaction = {
-                id: rec.id,
-                control_id: rec.control_id || currentCompany.id,
-                user_id: rec.user_id || currentUserId,
-                type: rec.type,
-                amount: Number(rec.amount),
-                description: rec.description,
-                category_id: rec.category_id || '',
-                subcategory_id: rec.subcategory_id || undefined,
-                account_id: rec.account_id || '',
-                date: rec.date ? String(rec.date).split(/[T\s]/)[0] : item.date.split(/[T\s]/)[0],
-                payment_date: rec.payment_date
-                  ? String(rec.payment_date).split(/[T\s]/)[0]
-                  : rec.date
-                    ? String(rec.date).split(/[T\s]/)[0]
-                    : item.date.split(/[T\s]/)[0],
-                paid: Boolean(rec.paid),
-                is_recurring: Boolean(rec.is_recurring),
-                recurring: Boolean(rec.recurring || rec.is_recurring),
-                recurrence_type: rec.recurrence_type || undefined,
-                installment_number: rec.installment_number
-                  ? Number(rec.installment_number)
-                  : undefined,
-                installments_total: rec.installment_total
-                  ? Number(rec.installment_total)
-                  : rec.installments_total
-                    ? Number(rec.installments_total)
-                    : undefined,
-                parent_transaction_id: rec.parent_transaction_id || undefined,
-                notes: rec.notes || undefined,
-                created_at: rec.created || new Date().toISOString(),
-                account: accounts.find((a) => a.id === rec.account_id),
-                category: categories.find((c) => c.id === rec.category_id),
-              }
+        const recurringCreatedList: Transaction[] = []
 
-              createdList.push(mappedTx)
-              if (kind === 'recurring') {
+        await runInPool(
+          plannedRecurring,
+          async (item) => {
+            try {
+              const rec = await executeWithRetry(
+                () => pb.collection('transactions').create(item),
+                7,
+                1000,
+                'GerarRecorrentes_Etapa1',
+                30000,
+              )
+
+              if (rec) {
+                const mappedTx = mapCreatedRecord(rec, item)
+                recurringCreatedList.push(mappedTx)
                 if (item.type === 'receita') {
                   createdIncomeCount++
                 } else {
                   createdExpenseCount++
                 }
-              } else {
+              }
+            } catch (err: any) {
+              console.warn(
+                `[handleGenerateNext12Months:Etapa1] Falha ao criar recorrência "${item.description}":`,
+                err?.message || err,
+              )
+              recurringRateLimitedCount++
+            }
+          },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 250,
+            maxRetries: 7,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            tag: 'GERAR_RECORRENTES_POOL',
+            onProgress: (done, total) => {
+              setGenerationStepLabel(`Etapa 1/2: Recorrências (${done}/${total})`)
+              toast.loading(`Etapa 1 de 2: gerando recorrências (${done}/${total})...`, {
+                id: toastId,
+              })
+            },
+          },
+        )
+
+        // Atualização otimista imediata na UI ao término da etapa 1
+        if (recurringCreatedList.length > 0) {
+          applyTransactionsBatchUpdate({ created: recurringCreatedList })
+        }
+      }
+
+      // Pausa estratégica de alívio do servidor entre etapas (500ms)
+      if (plannedRecurring.length > 0 && plannedInstallments.length > 0) {
+        await sleep(500)
+      }
+
+      // ====================================================
+      // ETAPA 2 DE 2: PARCELADOS (somente após concluir a etapa 1)
+      // ====================================================
+      if (plannedInstallments.length > 0) {
+        setGenerationStepLabel(`Etapa 2/2: Parcelados (0/${plannedInstallments.length})`)
+        toast.loading(`Etapa 2 de 2: gerando parcelados (0/${plannedInstallments.length})...`, {
+          id: toastId,
+        })
+
+        const installmentCreatedList: Transaction[] = []
+
+        await runInPool(
+          plannedInstallments,
+          async (item) => {
+            try {
+              const rec = await executeWithRetry(
+                () => pb.collection('transactions').create(item),
+                7,
+                1000,
+                'GerarParcelas_Etapa2',
+                30000,
+              )
+
+              if (rec) {
+                const mappedTx = mapCreatedRecord(rec, item)
+                installmentCreatedList.push(mappedTx)
                 createdInstallmentCount++
               }
+            } catch (err: any) {
+              console.warn(
+                `[handleGenerateNext12Months:Etapa2] Falha ao criar parcela "${item.description}":`,
+                err?.message || err,
+              )
+              installmentRateLimitedCount++
             }
-          } catch (err: any) {
-            console.warn(
-              `[handleGenerateNext12Months] Falha ao criar lançamento "${item.description}":`,
-              err?.message || err,
-            )
-            rateLimitedCount++
-          }
-        },
-        { concurrency: 4, delayBetweenBatchesMs: 25, tag: 'GERAR_12M_POOL' },
-      )
+          },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 250,
+            maxRetries: 7,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            tag: 'GERAR_PARCELAS_POOL',
+            onProgress: (done, total) => {
+              setGenerationStepLabel(`Etapa 2/2: Parcelados (${done}/${total})`)
+              toast.loading(`Etapa 2 de 2: gerando parcelados (${done}/${total})...`, {
+                id: toastId,
+              })
+            },
+          },
+        )
+
+        // Atualização otimista imediata na UI ao término da etapa 2
+        if (installmentCreatedList.length > 0) {
+          applyTransactionsBatchUpdate({ created: installmentCreatedList })
+        }
+      }
 
       toast.dismiss(toastId)
 
-      // Atualização otimista imediata na UI sem bloquear a renderização
-      if (createdList.length > 0) {
-        applyTransactionsBatchUpdate({ created: createdList })
-      }
-
       const totalRecurCreated = createdIncomeCount + createdExpenseCount
       const totalCreated = totalRecurCreated + createdInstallmentCount
+      const totalRateLimited = recurringRateLimitedCount + installmentRateLimitedCount
 
+      // ====================================================
+      // TOAST FINAL E REPORTES DETALHADOS
+      // ====================================================
       if (totalCreated === 0) {
-        if (rateLimitedCount > 0) {
+        if (totalRateLimited > 0) {
           toast.warning(
-            `Nenhum novo lançamento pôde ser salvo devido ao limite temporário do servidor (${rateLimitedCount} pendente(s)). Clique novamente no botão para continuar.`,
-            { duration: 8000 },
+            `Nenhum novo lançamento pôde ser concluído devido ao limite do servidor (${totalRateLimited} pendente(s): ${recurringRateLimitedCount} recorrência(s), ${installmentRateLimitedCount} parcela(s)). Clique novamente para continuar — o processo é idempotente.`,
+            { duration: 9000 },
           )
         } else {
           toast.info('Todas as recorrências e parcelas já estão em dia para os próximos 12 meses.')
@@ -651,27 +733,32 @@ export default function TransactionsPage() {
           parts.push(
             `${totalRecurCreated} recorrência(s) (${createdIncomeCount} receita(s) e ${createdExpenseCount} despesa(s))`,
           )
-        }
-        if (createdInstallmentCount > 0) {
-          parts.push(`${createdInstallmentCount} parcela(s)`)
+        } else if (plannedRecurring.length > 0 && recurringRateLimitedCount > 0) {
+          parts.push('0 recorrências')
         }
 
-        if (rateLimitedCount > 0) {
+        if (createdInstallmentCount > 0) {
+          parts.push(`${createdInstallmentCount} parcela(s)`)
+        } else if (plannedInstallments.length > 0 && installmentRateLimitedCount > 0) {
+          parts.push('0 parcelas')
+        }
+
+        if (totalRateLimited > 0) {
           toast.warning(
-            `Gerados parcialmente: ${parts.join(' e ')}. ${rateLimitedCount} lançamento(s) não foram concluídos por limite de requisições. Clique no botão novamente para gerar os restantes.`,
-            { duration: 9000 },
+            `Geração parcial concluída: ${parts.join(' e ')}. ${totalRateLimited} lançamento(s) ficaram pendentes por limite do servidor (${recurringRateLimitedCount} recorrência(s) e ${installmentRateLimitedCount} parcela(s)). Clique novamente no botão para gerar os restantes sem duplicações.`,
+            { duration: 10000 },
           )
         } else {
           toast.success(
-            `Concluído com sucesso! Gerados a partir do mês seguinte: ${parts.join(' e ')}.`,
-            { duration: 7000 },
+            `Geração em duas etapas concluída com sucesso! Gerados a partir do mês seguinte: ${parts.join(' e ')}.`,
+            { duration: 7500 },
           )
         }
 
-        // Sincronização em segundo plano para consolidar saldos de contas
+        // Consolidação única de saldos das contas em segundo plano ao final das duas etapas
         reloadCompanyData().catch((reloadErr) => {
           console.warn(
-            '[handleGenerateNext12Months] Erro não bloqueante ao atualizar dados da empresa pós-geração:',
+            '[handleGenerateNext12Months] Erro não bloqueante ao consolidar dados da empresa pós-geração:',
             reloadErr,
           )
         })
@@ -685,6 +772,7 @@ export default function TransactionsPage() {
       toast.error(err?.message || 'Erro ao gerar lançamentos.')
     } finally {
       setIsGeneratingRecurring(false)
+      setGenerationStepLabel(null)
     }
   }
 
@@ -707,7 +795,7 @@ export default function TransactionsPage() {
               onClick={handleGenerateNext12Months}
               disabled={isGeneratingRecurring}
               variant="outline"
-              title="Gera on demand as ocorrências dos próximos 12 meses para receitas e despesas recorrentes e parcelas pendentes"
+              title="Gera em 2 etapas (recorrentes e depois parcelados) as ocorrências dos próximos 12 meses"
               className="rounded-xl h-11 px-3.5 font-semibold border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/50 flex items-center gap-2 transition-colors"
             >
               {isGeneratingRecurring ? (
@@ -715,8 +803,14 @@ export default function TransactionsPage() {
               ) : (
                 <RefreshCw className="w-4 h-4 text-indigo-500" />
               )}
-              <span className="hidden lg:inline">Gerar recorrentes e parcelas (12m)</span>
-              <span className="lg:hidden">Recorrentes/Parcelas (12m)</span>
+              {isGeneratingRecurring && generationStepLabel ? (
+                <span className="text-xs font-bold text-indigo-600">{generationStepLabel}</span>
+              ) : (
+                <>
+                  <span className="hidden lg:inline">Gerar recorrentes e parcelas (12m)</span>
+                  <span className="lg:hidden">Recorrentes/Parcelas (12m)</span>
+                </>
+              )}
             </Button>
             <Button
               onClick={() => setAiModalOpen(true)}
