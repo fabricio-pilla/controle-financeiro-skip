@@ -69,11 +69,14 @@ export function TransactionModal({
   const isEditing = Boolean(transaction)
   const isInstallment = Boolean(
     transaction &&
-    (transaction.parent_transaction_id ||
-      (transaction.installment_number && transaction.installment_number > 0)),
+    ((transaction.parent_transaction_id && transaction.parent_transaction_id !== transaction.id) ||
+      (transaction.installment_number &&
+        transaction.installment_number > 0 &&
+        (transaction.installments_total || 0) > 1)),
   )
   const parentTransaction = React.useMemo(() => {
-    if (!transaction?.parent_transaction_id) return null
+    if (!transaction?.parent_transaction_id || transaction.parent_transaction_id === transaction.id)
+      return null
     return transactions.find((t) => t.id === transaction.parent_transaction_id) || null
   }, [transaction, transactions])
 
@@ -299,16 +302,31 @@ export function TransactionModal({
       is_recurring: isRecurring,
       recurrence_type: isRecurring ? recurrenceType : undefined,
       notes: notes.trim(),
-      installments_total: installmentsTotal,
+      installments_total: isRecurring ? 0 : installmentsTotal,
     }
 
     if (isEditing && transaction) {
-      const isTxRecurring = Boolean(transaction.is_recurring || transaction.recurring)
-      const isTxInstallment = Boolean(
-        transaction.parent_transaction_id ||
-        (transaction.installment_number && transaction.installment_number > 0) ||
-        resolvedInstallmentsTotal > 1,
+      const isTxRecurring = Boolean(
+        transaction.is_recurring ||
+        transaction.recurring ||
+        (transaction.recurrence_type && transaction.recurrence_type.trim() !== '') ||
+        Boolean(
+          (transaction as any).recurrence_period &&
+          (transaction as any).recurrence_period.trim() !== '',
+        ),
       )
+      const effectiveParentId =
+        transaction.parent_transaction_id && transaction.parent_transaction_id !== transaction.id
+          ? transaction.parent_transaction_id
+          : ''
+      const isTxInstallment =
+        Boolean(
+          effectiveParentId ||
+          (resolvedInstallmentsTotal > 1 &&
+            transaction.installment_number &&
+            transaction.installment_number > 0) ||
+          resolvedInstallmentsTotal > 1,
+        ) && !isTxRecurring
 
       // Se for recorrente ou parcelado, perguntar ao usuário como propagar antes de aplicar!
       if (isTxRecurring || isTxInstallment) {
@@ -337,7 +355,7 @@ export function TransactionModal({
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
         notes,
-        installments_total: installmentsTotal,
+        installments_total: isRecurring ? 0 : installmentsTotal,
       })
       toast.success(
         installmentsTotal > 1
@@ -833,12 +851,28 @@ export function TransactionModal({
       <RecurrencePropagationModal
         open={propagationModalOpen}
         onOpenChange={setPropagationModalOpen}
-        isInstallment={Boolean(
-          transaction?.parent_transaction_id ||
-          (transaction?.installment_number && transaction?.installment_number > 0) ||
-          resolvedInstallmentsTotal > 1,
+        isInstallment={
+          Boolean(
+            (transaction?.parent_transaction_id &&
+              transaction.parent_transaction_id !== transaction.id) ||
+            (transaction?.installment_number &&
+              transaction?.installment_number > 0 &&
+              resolvedInstallmentsTotal > 1) ||
+            resolvedInstallmentsTotal > 1,
+          ) &&
+          !(
+            transaction?.is_recurring ||
+            transaction?.recurring ||
+            transaction?.recurrence_type ||
+            (transaction as any)?.recurrence_period
+          )
+        }
+        isRecurring={Boolean(
+          transaction?.is_recurring ||
+          transaction?.recurring ||
+          transaction?.recurrence_type ||
+          (transaction as any)?.recurrence_period,
         )}
-        isRecurring={Boolean(transaction?.is_recurring || transaction?.recurring)}
         currentInstallment={resolvedInstallmentNumber}
         totalInstallments={resolvedInstallmentsTotal}
         onConfirm={handlePropagationConfirm}

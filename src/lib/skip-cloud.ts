@@ -1216,9 +1216,8 @@ class SkipCloudService {
           const r = await pb.collection('transactions').create(payload)
           if (i === 1) {
             parentId = r.id
-            // update own parent_transaction_id to self for consistency
-            await pb.collection('transactions').update(r.id, { parent_transaction_id: parentId })
-            r.parent_transaction_id = parentId
+            // Root installment does not reference itself to avoid self-parenting cycles
+            r.parent_transaction_id = ''
             first = mapTransaction(r)
           }
           // adjust account balance
@@ -1228,6 +1227,7 @@ class SkipCloudService {
       }
 
       // Single transaction
+      const isRec = Boolean(data.is_recurring)
       const payload: any = {
         control_id: companyId,
         user_id: userId,
@@ -1240,10 +1240,13 @@ class SkipCloudService {
         date: data.date,
         payment_date: basePaymentDate,
         paid: true,
-        is_recurring: Boolean(data.is_recurring),
-        recurrence_type: data.recurrence_type || '',
-        installments_total: 1,
+        is_recurring: isRec,
+        recurring: isRec,
+        recurrence_type: isRec ? data.recurrence_type || 'mensal' : '',
+        recurrence_period: isRec ? data.recurrence_type || 'mensal' : '',
+        installments_total: isRec ? 0 : 1,
         installment_number: 1,
+        parent_transaction_id: '',
         notes: data.notes?.trim() || '',
       }
       const r = await pb.collection('transactions').create(payload)

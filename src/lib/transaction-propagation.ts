@@ -84,6 +84,19 @@ export function resolveInstallmentInfo(tx: any): {
  */
 export function isInstallmentTransaction(transaction: Transaction): boolean {
   if (!transaction) return false
+  const effectiveParentId =
+    transaction.parent_transaction_id && transaction.parent_transaction_id !== transaction.id
+      ? transaction.parent_transaction_id
+      : ''
+  const isRec = Boolean(
+    transaction.is_recurring ||
+    transaction.recurring ||
+    Boolean(transaction.recurrence_type && transaction.recurrence_type.trim().length > 0) ||
+    Boolean(
+      (transaction as any).recurrence_period &&
+      (transaction as any).recurrence_period.trim().length > 0,
+    ),
+  )
   const total = Number(
     transaction.installments_total ||
       transaction.installment_total ||
@@ -91,12 +104,14 @@ export function isInstallmentTransaction(transaction: Transaction): boolean {
       0,
   )
   const num = Number(transaction.installment_number || 0)
-  return Boolean(
-    transaction.parent_transaction_id ||
-    num > 0 ||
-    total > 1 ||
-    /\(\s*\d+\s*\/\s*\d+\s*\)/.test(transaction.description || ''),
-  )
+  const hasInstallmentPattern = /\(\s*\d+\s*\/\s*\d+\s*\)/.test(transaction.description || '')
+
+  // Se tiver indício explícito de recorrência e não for claramente uma parcela (ex: total <= 1 e sem sufixo x/y)
+  if (isRec && total <= 1 && !hasInstallmentPattern) {
+    return false
+  }
+
+  return Boolean(effectiveParentId || (num > 0 && total > 1) || total > 1 || hasInstallmentPattern)
 }
 
 /**
@@ -148,18 +163,23 @@ export function findInstallmentGroup(
 ): Transaction[] {
   const sourceCleanDesc = cleanDescription(transaction.description || '').toLowerCase()
   const sourceAccountId = transaction.account_id || ''
-  const sourceParentId =
-    transaction.parent_transaction_id || (isParentTransaction(transaction) ? transaction.id : '')
+  const rawParentId = transaction.parent_transaction_id || ''
+  const effectiveParentId =
+    rawParentId && rawParentId !== transaction.id
+      ? rawParentId
+      : isParentTransaction(transaction)
+        ? transaction.id
+        : ''
   const { installmentTotal: sourceTotal } = resolveInstallmentInfo(transaction)
 
-  // 1. Se soubermos o parentId, filtramos por ele (filhas com parent_transaction_id == parentId OU pai com id == parentId)
-  if (sourceParentId) {
+  // 1. Se soubermos o parentId efetivo, filtramos por ele (filhas com parent_transaction_id == parentId OU pai com id == parentId)
+  if (effectiveParentId) {
     const group = allTransactions.filter((t) => {
       if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
         return false
       }
-      if (t.id === sourceParentId) return true
-      if (t.parent_transaction_id && t.parent_transaction_id === sourceParentId) return true
+      if (t.id === effectiveParentId) return true
+      if (t.parent_transaction_id && t.parent_transaction_id === effectiveParentId) return true
       return false
     })
 
@@ -206,8 +226,10 @@ export function findInstallmentGroup(
     // Sempre inclui a transação original
     if (t.id === transaction.id) return true
 
-    // Se o item aponta para OUTRO parent_transaction_id explícito, não agrupa
-    if (t.parent_transaction_id && sourceParentId && t.parent_transaction_id !== sourceParentId) {
+    // Se o item aponta para OUTRO parent_transaction_id explícito (não self-parenting), não agrupa
+    const tEffectiveParent =
+      t.parent_transaction_id && t.parent_transaction_id !== t.id ? t.parent_transaction_id : ''
+    if (tEffectiveParent && effectiveParentId && tEffectiveParent !== effectiveParentId) {
       return false
     }
 
@@ -440,13 +462,8 @@ export async function updateTransactionWithPropagation({
   formData: UpdateTransactionPayload
   choice?: PropagationChoice
 }): Promise<{ updated: Transaction[]; created: Transaction[]; deletedIds: string[] }> {
-  const isInstallment = Boolean(
-    transaction.parent_transaction_id ||
-    (transaction.installment_number && transaction.installment_number > 0) ||
-    (transaction.installments_total && transaction.installments_total > 1),
-  )
-
-  const isRecurring = Boolean(transaction.is_recurring || transaction.recurring)
+  const isRecurring = isRecurringTransaction(transaction)
+  const isInstallment = !isRecurring && isInstallmentTransaction(transaction)
 
   // If it's a simple standalone transaction or choice is 'single'
   if ((!isInstallment && !isRecurring) || choice === 'single') {
@@ -503,7 +520,10 @@ async function handleInstallmentPropagation({
   formData: UpdateTransactionPayload
   choice: PropagationChoice
 }): Promise<{ updated: Transaction[]; created: Transaction[]; deletedIds: string[] }> {
-  const parentId = transaction.parent_transaction_id || transaction.id
+  const parentId =
+    transaction.parent_transaction_id && transaction.parent_transaction_id !== transaction.id
+      ? transaction.parent_transaction_id
+      : ''
   const newBaseDesc = cleanDescription(formData.description)
 
   // Find all sibling transactions in this installment group

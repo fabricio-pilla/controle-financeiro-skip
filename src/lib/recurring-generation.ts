@@ -190,9 +190,19 @@ export async function triggerAutoRecurringGeneration({
   const isRec = Boolean(
     sourceTransaction.is_recurring ||
     sourceTransaction.recurring ||
-    (sourceTransaction.recurrence_type && sourceTransaction.recurrence_type.trim() !== ''),
+    (sourceTransaction.recurrence_type &&
+      String(sourceTransaction.recurrence_type).trim() !== '') ||
+    Boolean(
+      (sourceTransaction as any).recurrence_period &&
+      String((sourceTransaction as any).recurrence_period).trim() !== '',
+    ),
   )
-  if (!isRec) return
+  if (!isRec) {
+    console.warn(
+      `[triggerAutoRecurringGeneration] Transação não identificada como recorrente (id: ${sourceTransaction.id}, desc: "${sourceTransaction.description}").`,
+    )
+    return
+  }
 
   const planned = planOccurrencesForSingleRecurring({
     sourceTransaction,
@@ -201,7 +211,12 @@ export async function triggerAutoRecurringGeneration({
     currentUserId,
   })
 
-  if (planned.length === 0) return
+  if (planned.length === 0) {
+    console.warn(
+      `[triggerAutoRecurringGeneration] Nenhuma ocorrência futura planejada para a transação recorrente: id=${sourceTransaction.id}, desc="${sourceTransaction.description}", recurrence_type=${sourceTransaction.recurrence_type || (sourceTransaction as any).recurrence_period}. Possível motivo: os 12 meses futuros já possuem lançamentos nesta série.`,
+    )
+    return
+  }
 
   const { toast } = await import('sonner')
 
@@ -351,7 +366,12 @@ export function planOccurrencesForSingleRecurring({
   const isRec = Boolean(
     sourceTransaction.is_recurring ||
     sourceTransaction.recurring ||
-    (sourceTransaction.recurrence_type && sourceTransaction.recurrence_type.trim() !== ''),
+    (sourceTransaction.recurrence_type &&
+      String(sourceTransaction.recurrence_type).trim() !== '') ||
+    Boolean(
+      (sourceTransaction as any).recurrence_period &&
+      String((sourceTransaction as any).recurrence_period).trim() !== '',
+    ),
   )
   if (!isRec) return []
 

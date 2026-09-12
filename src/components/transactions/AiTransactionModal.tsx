@@ -308,7 +308,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         payment_date: paymentDate || date,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
-        installments_total: installmentsTotal,
+        installments_total: isRecurring ? 0 : installmentsTotal,
       })
       toast.success(
         installmentsTotal > 1
