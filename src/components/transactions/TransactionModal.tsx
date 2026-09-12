@@ -55,6 +55,7 @@ export function TransactionModal({
   defaultType = 'despesa',
 }: TransactionModalProps) {
   const {
+    currentCompany,
     accounts,
     categories,
     subcategories,
@@ -228,6 +229,39 @@ export function TransactionModal({
       setPendingFormData(null)
       onOpenChange(false)
 
+      // Se a transação agora é recorrente (ativada agora ou já era recorrente) e não gerou ocorrências futuras na propagação,
+      // verificar se há necessidade de gerar as 12 ocorrências futuras automaticamente
+      const wasRecurring = Boolean(transaction.is_recurring || transaction.recurring)
+      const nowRecurring = Boolean(formData.is_recurring)
+      if (nowRecurring && currentCompany) {
+        import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
+          const pb = (await import('@/lib/pocketbase/client')).default
+          const currentUserId =
+            (transaction as any).user_id ||
+            pb.authStore.record?.id ||
+            (currentCompany as any).created_by ||
+            ''
+          const updatedTarget = result.updated.find((u) => u.id === transaction.id) || {
+            ...transaction,
+            ...formData,
+          }
+          triggerAutoRecurringGeneration({
+            sourceTransaction: updatedTarget,
+            existingTransactions: transactions,
+            currentCompanyId: currentCompany.id,
+            currentUserId,
+            onSuccessCreated: (createdList) => {
+              applyTransactionsBatchUpdate({ created: createdList })
+              toast.success(
+                `Foram geradas automaticamente 12 ocorrências futuras para "${formData.description}".`,
+              )
+            },
+          }).catch((err) => {
+            console.warn('[TransactionModal] Erro na geração automática pós-edição:', err)
+          })
+        })
+      }
+
       // Background sync to keep balances fresh
       reloadCompanyData().catch((e) =>
         console.warn('[TransactionModal] Background reloadCompanyData error:', e),
@@ -302,7 +336,7 @@ export function TransactionModal({
     // Criar nova transação
     setIsSubmitting(true)
     try {
-      await createTransaction({
+      const createdTx = await createTransaction({
         description,
         amount: parsedAmount,
         type,
@@ -319,9 +353,37 @@ export function TransactionModal({
       toast.success(
         installmentsTotal > 1
           ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
-          : 'Lançamento criado com sucesso!',
+          : isRecurring
+            ? 'Lançamento recorrente criado com sucesso!'
+            : 'Lançamento criado com sucesso!',
       )
       onOpenChange(false)
+
+      // Geração automática de ocorrências futuras se for recorrente
+      if (isRecurring && createdTx && currentCompany) {
+        import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
+          const pb = (await import('@/lib/pocketbase/client')).default
+          const currentUserId =
+            (createdTx as any).user_id ||
+            pb.authStore.record?.id ||
+            (currentCompany as any).created_by ||
+            ''
+          triggerAutoRecurringGeneration({
+            sourceTransaction: createdTx,
+            existingTransactions: transactions,
+            currentCompanyId: currentCompany.id,
+            currentUserId,
+            onSuccessCreated: (createdList) => {
+              applyTransactionsBatchUpdate({ created: createdList })
+              toast.success(
+                `Foram geradas automaticamente 12 ocorrências futuras para "${createdTx.description}".`,
+              )
+            },
+          }).catch((err) => {
+            console.warn('[TransactionModal] Erro na geração automática:', err)
+          })
+        })
+      }
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao salvar lançamento.')
     } finally {

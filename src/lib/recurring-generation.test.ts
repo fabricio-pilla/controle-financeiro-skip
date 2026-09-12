@@ -3,6 +3,7 @@ import {
   cleanDescription,
   computeTargetDate,
   parseDateParts,
+  planOccurrencesForSingleRecurring,
   planNextRecurringTransactions,
   planNextInstallmentTransactions,
 } from './recurring-generation'
@@ -108,23 +109,114 @@ describe('recurring-generation engine', () => {
       expect(candidates[0].date).toBe('2026-11-10 00:00:00.000Z')
     })
 
-    it('ignores recurring transactions that are not in currentMonthTransactions', () => {
-      // Transação de agosto que não está no mês atual NÃO deve ser usada como seed
+    it('picks recurring transactions from past and future months when allTransactions is provided', () => {
+      // Transação em OUTUBRO/2026 (mês futuro em relação a setembro/2026)
+      const futureSeed: Transaction = {
+        ...mockSeed,
+        id: 'tx_rec_oct_seed',
+        description: 'Vale Alimentação',
+        amount: 1444.91,
+        type: 'receita',
+        date: '2026-10-01 00:00:00.000Z',
+      }
+
+      // Transação em AGOSTO/2026 (mês passado em relação a setembro/2026)
+      const pastSeed: Transaction = {
+        ...mockSeed,
+        id: 'tx_rec_past',
+        description: 'Internet Fibra',
+        amount: 99.9,
+        date: '2026-08-05 00:00:00.000Z',
+      }
+
       const candidates = planNextRecurringTransactions({
-        currentMonthTransactions: [], // mês atual vazio
-        existingTransactions: [
-          {
-            ...mockSeed,
-            date: '2026-08-10 00:00:00.000Z',
-          },
-        ],
+        allTransactions: [futureSeed, pastSeed],
+        existingTransactions: [futureSeed, pastSeed],
         currentCompanyId: 'ctrl_1',
         currentUserId: 'usr_1',
         currentYear: 2026,
-        currentMonth: 9,
+        currentMonth: 9, // Mês atual = setembro/2026
       })
 
-      expect(candidates.length).toBe(0)
+      // Deve gerar 12 ocorrências para Vale Alimentação (começando em novembro/2026)
+      const vaCandidates = candidates.filter((c) => c.description === 'Vale Alimentação')
+      expect(vaCandidates.length).toBe(12)
+      expect(vaCandidates[0].date).toBe('2026-11-01 00:00:00.000Z')
+      expect(vaCandidates[11].date).toBe('2027-10-01 00:00:00.000Z')
+
+      // Deve gerar 12 ocorrências para Internet Fibra (começando no mês seguinte ao atual: outubro/2026)
+      const internetCandidates = candidates.filter((c) => c.description === 'Internet Fibra')
+      expect(internetCandidates.length).toBe(12)
+      expect(internetCandidates[0].date).toBe('2026-10-05 00:00:00.000Z')
+      expect(internetCandidates[11].date).toBe('2027-09-05 00:00:00.000Z')
+    })
+  })
+
+  describe('planOccurrencesForSingleRecurring', () => {
+    it('generates 12 future occurrences starting in the month following the transaction date', () => {
+      const tx = {
+        id: 'rec_va',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'receita' as const,
+        amount: 1444.91,
+        description: 'Vale Alimentação',
+        category_id: 'cat_va',
+        subcategory_id: '',
+        account_id: 'acc_1',
+        date: '2026-10-01 00:00:00.000Z',
+        is_recurring: true,
+        recurrence_type: 'mensal',
+      }
+
+      const candidates = planOccurrencesForSingleRecurring({
+        sourceTransaction: tx,
+        existingTransactions: [tx as any],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      expect(candidates.length).toBe(12)
+      // Mês seguinte a 01/10/2026 é novembro/2026
+      expect(candidates[0].date).toBe('2026-11-01 00:00:00.000Z')
+      expect(candidates[0].amount).toBe(1444.91)
+      expect(candidates[0].type).toBe('receita')
+      expect(candidates[0].paid).toBe(false)
+      expect(candidates[11].date).toBe('2027-10-01 00:00:00.000Z')
+    })
+
+    it('does not duplicate existing occurrences', () => {
+      const tx = {
+        id: 'rec_va',
+        control_id: 'ctrl_1',
+        user_id: 'usr_1',
+        type: 'receita' as const,
+        amount: 1444.91,
+        description: 'Vale Alimentação',
+        category_id: 'cat_va',
+        subcategory_id: '',
+        account_id: 'acc_1',
+        date: '2026-10-01 00:00:00.000Z',
+        is_recurring: true,
+        recurrence_type: 'mensal',
+      }
+
+      const existingNov = {
+        ...tx,
+        id: 'rec_va_nov',
+        date: '2026-11-01 00:00:00.000Z',
+      }
+
+      const candidates = planOccurrencesForSingleRecurring({
+        sourceTransaction: tx,
+        existingTransactions: [tx as any, existingNov as any],
+        currentCompanyId: 'ctrl_1',
+        currentUserId: 'usr_1',
+      })
+
+      expect(candidates.length).toBe(11)
+      expect(candidates.some((c) => c.date.startsWith('2026-11'))).toBe(false)
+      expect(candidates[0].date).toBe('2026-12-01 00:00:00.000Z')
     })
   })
 

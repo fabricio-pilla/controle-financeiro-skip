@@ -494,15 +494,28 @@ export default function TransactionsPage() {
       const currentMonth = now.getMonth() + 1 // 1-12
       const currentYM = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
 
-      // Requisito 1: Base = somente lançamentos do mês atual
-      const currentMonthTxs = transactions.filter(
-        (t) => t.control_id === currentCompany.id && t.date && t.date.startsWith(currentYM),
-      )
+      // Filtrar todas as transações do controle atual
+      const companyTxs = transactions.filter((t) => t.control_id === currentCompany.id)
 
-      if (currentMonthTxs.length === 0) {
+      // Transações do mês atual (usadas para parcelamentos)
+      const currentMonthTxs = companyTxs.filter((t) => t.date && t.date.startsWith(currentYM))
+
+      // Identificar se há alguma recorrência ou parcela no controle
+      const hasAnyRecurring = companyTxs.some((t) =>
+        Boolean(
+          t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+        ),
+      )
+      const hasAnyInstallmentInCurrent = currentMonthTxs.some((t) => {
+        const num = Number(t.installment_number || 0)
+        const total = Number(t.installments_total || (t as any).installment_total || 0)
+        return num >= 1 && total > 1
+      })
+
+      if (!hasAnyRecurring && !hasAnyInstallmentInCurrent) {
         toast.dismiss(toastId)
         toast.info(
-          `Nenhum lançamento recorrente ou parcelado encontrado no mês atual (${currentYM}). Adicione lançamentos no mês corrente antes de gerar os futuros.`,
+          `Nenhum lançamento recorrente ou parcelado encontrado para ser projetado. Adicione lançamentos antes de gerar os futuros.`,
           { duration: 6000 },
         )
         return
@@ -513,8 +526,9 @@ export default function TransactionsPage() {
       // ----------------------------------------------------
       // PLANEJAMENTO PURO EM MEMÓRIA (Sem chamadas adicionais de rede)
       // ----------------------------------------------------
-      // ETAPA 1: RECORRÊNCIAS (12 meses futuros a partir do mês seguinte)
+      // ETAPA 1: RECORRÊNCIAS (varre TODAS as recorrências do controle, incluindo futuras e passadas)
       const plannedRecurring = planNextRecurringTransactions({
+        allTransactions: companyTxs,
         currentMonthTransactions: currentMonthTxs,
         existingTransactions: transactions,
         currentCompanyId: currentCompany.id,
@@ -537,10 +551,9 @@ export default function TransactionsPage() {
 
       if (totalPlanned === 0) {
         toast.dismiss(toastId)
-        toast.info(
-          'Todas as recorrências e parcelas baseadas no mês atual já estão geradas para os próximos 12 meses.',
-          { duration: 6000 },
-        )
+        toast.info('Todas as recorrências e parcelas já estão geradas para os próximos 12 meses.', {
+          duration: 6000,
+        })
         return
       }
 

@@ -61,7 +61,15 @@ const EXAMPLES = [
 ]
 
 export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalProps) {
-  const { accounts, categories, subcategories, createTransaction } = useCompany()
+  const {
+    currentCompany,
+    accounts,
+    categories,
+    subcategories,
+    transactions,
+    createTransaction,
+    applyTransactionsBatchUpdate,
+  } = useCompany()
 
   // Conta principal/padrão do controle: cai nela quando a IA não identificar conta
   const primaryAccount = useMemo(
@@ -289,7 +297,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
 
     setIsSubmitting(true)
     try {
-      await createTransaction({
+      const createdTx = await createTransaction({
         description,
         amount: parsedAmount,
         type,
@@ -309,6 +317,33 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
             ? 'Lançamento recorrente criado com sucesso!'
             : 'Lançamento criado com sucesso!',
       )
+
+      // Geração automática de ocorrências futuras se for recorrente
+      if (isRecurring && createdTx && currentCompany) {
+        import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
+          const pb = (await import('@/lib/pocketbase/client')).default
+          const currentUserId =
+            (createdTx as any).user_id ||
+            pb.authStore.record?.id ||
+            (currentCompany as any).created_by ||
+            ''
+          triggerAutoRecurringGeneration({
+            sourceTransaction: createdTx,
+            existingTransactions: transactions,
+            currentCompanyId: currentCompany.id,
+            currentUserId,
+            onSuccessCreated: (createdList) => {
+              applyTransactionsBatchUpdate({ created: createdList })
+              toast.success(
+                `Foram geradas automaticamente 12 ocorrências futuras para "${createdTx.description}".`,
+              )
+            },
+          }).catch((err) => {
+            console.warn('[AiTransactionModal] Erro na geração automática:', err)
+          })
+        })
+      }
+
       onOpenChange(false)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao salvar lançamento.')
