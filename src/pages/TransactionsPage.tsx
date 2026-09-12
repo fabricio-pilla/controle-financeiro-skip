@@ -15,8 +15,13 @@ import {
   deleteTransactionWithPropagation,
   isParentTransaction,
 } from '@/lib/transaction-propagation'
-import { executeWithRetry, sleep, is429Error } from '@/lib/pocketbase/retry'
+import { executeWithRetry, is429Error, runInPool } from '@/lib/pocketbase/retry'
 import pb from '@/lib/pocketbase/client'
+import {
+  cleanDescription,
+  planNextRecurringTransactions,
+  planNextInstallmentTransactions,
+} from '@/lib/recurring-generation'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Transaction, TransactionType } from '@/types/database'
@@ -468,7 +473,7 @@ export default function TransactionsPage() {
     )
   }
 
-  // Gerar ocorrências dos próximos 12 meses para TODAS as transações recorrentes e séries parceladas do controle ativo
+  // Gerar ocorrências dos próximos 12 meses para TODAS as transações recorrentes e séries parceladas DO MÊS ATUAL
   const handleGenerateNext12Months = async () => {
     if (!currentCompany?.id) {
       toast.error('Nenhum controle selecionado.')
@@ -476,467 +481,169 @@ export default function TransactionsPage() {
     }
 
     setIsGeneratingRecurring(true)
-    const toastId = toast.loading('Identificando lançamentos recorrentes e parcelas pendentes...')
+    const toastId = toast.loading('Analisando lançamentos do mês atual...')
 
     try {
       const now = new Date()
-      const todayStr = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`
+      const currentYear = now.getFullYear()
+      const currentMonth = now.getMonth() + 1 // 1-12
+      const currentYM = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
 
-      // Janela de 12 meses a partir de hoje
-      const windowEnd = new Date(
-        Date.UTC(now.getFullYear(), now.getMonth() + 12, now.getDate(), 23, 59, 59, 999),
-      )
-      const windowEndIso = windowEnd.toISOString()
-
-      // Função auxiliar para adicionar N meses mantendo o dia limite do mês
-      const addMonthsSafe = (dateStr: string, monthsToAdd: number): string => {
-        const d = new Date(dateStr)
-        const origDay = isNaN(d.getUTCDate()) ? 1 : d.getUTCDate()
-        const origYear = isNaN(d.getUTCFullYear()) ? now.getFullYear() : d.getUTCFullYear()
-        const origMonth = isNaN(d.getUTCMonth()) ? now.getMonth() : d.getUTCMonth()
-
-        const targetTotalMonth = origMonth + monthsToAdd
-        const targetYear = origYear + Math.floor(targetTotalMonth / 12)
-        const targetMonth = ((targetTotalMonth % 12) + 12) % 12
-
-        const lastDayOfTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate()
-        const targetDay = Math.min(origDay, lastDayOfTargetMonth)
-
-        const yyyy = String(targetYear).padStart(4, '0')
-        const mm = String(targetMonth + 1).padStart(2, '0')
-        const dd = String(targetDay).padStart(2, '0')
-        return `${yyyy}-${mm}-${dd} 00:00:00.000Z`
-      }
-
-      // Função auxiliar para limpar sufixos da descrição
-      const cleanDesc = (desc: string): string => {
-        if (!desc) return 'Sem descrição'
-        let res = desc.replace(/\s*\(Total:\s*R\$[^)]+\)\s*$/i, '').trim()
-        res = res.replace(/\s*\(\s*\d+\s*\/\s*\d+\s*\)\s*$/i, '').trim()
-        return res || 'Sem descrição'
-      }
-
-      // ----------------------------------------------------
-      // PARTE 1: RECORRÊNCIAS
-      // ----------------------------------------------------
-      const recurringSeeds = transactions.filter(
-        (t) =>
-          Boolean(
-            t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
-          ) &&
-          t.control_id === currentCompany.id &&
-          !isParentTransaction(t),
+      // Requisito 1: Base = somente lançamentos do mês atual
+      const currentMonthTxs = transactions.filter(
+        (t) => t.control_id === currentCompany.id && t.date && t.date.startsWith(currentYM),
       )
 
-      // Agrupar por chave canônica para não duplicar se houver várias ocorrências da mesma série
-      const canonicalMap = new Map<string, Transaction>()
-      for (const t of recurringSeeds) {
-        const cleanD = t.description.trim().toLowerCase()
-        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanD}`
-        if (!canonicalMap.has(key)) {
-          canonicalMap.set(key, t)
-        } else {
-          const existing = canonicalMap.get(key)!
-          if (new Date(t.date).getTime() > new Date(existing.date).getTime()) {
-            canonicalMap.set(key, t)
-          }
-        }
+      if (currentMonthTxs.length === 0) {
+        toast.dismiss(toastId)
+        toast.info(
+          `Nenhum lançamento recorrente ou parcelado encontrado no mês atual (${currentYM}). Adicione lançamentos no mês corrente antes de gerar os futuros.`,
+          { duration: 6000 },
+        )
+        return
       }
 
-      const uniqueRecurringSeries = Array.from(canonicalMap.values())
-
-      // Mapa de ocorrências existentes no controle para checagem rápida de duplicidade
-      const existingOccurrences = new Set<string>()
-      for (const t of transactions) {
-        if (!t.date) continue
-        const ym = t.date.substring(0, 7)
-        const cleanD = t.description.trim().toLowerCase()
-        const key = `${t.type}_${t.account_id || ''}_${t.amount}_${cleanD}_${ym}`
-        existingOccurrences.add(key)
-      }
-
-      let createdIncomeCount = 0
-      let createdExpenseCount = 0
-      let rateLimitedRecurrencesCount = 0
-      let rateLimitedInstallmentsCount = 0
-
-      for (const seed of uniqueRecurringSeries) {
-        const cleanD = seed.description.trim().toLowerCase()
-
-        // Calcular a partir de agora: mês 1 ao mês 12 a partir da data base da seed
-        for (let m = 1; m <= 12; m++) {
-          const nextDate = new Date(Date.UTC(now.getFullYear(), now.getMonth() + m, 1))
-          const origDate = new Date(seed.date)
-          const origDay = isNaN(origDate.getUTCDate()) ? 1 : origDate.getUTCDate()
-          const targetYear = nextDate.getUTCFullYear()
-          const targetMonth = nextDate.getUTCMonth()
-          const lastDayOfTargetMonth = new Date(
-            Date.UTC(targetYear, targetMonth + 1, 0),
-          ).getUTCDate()
-          const targetDay = Math.min(origDay, lastDayOfTargetMonth)
-
-          const yyyy = String(targetYear).padStart(4, '0')
-          const mm = String(targetMonth + 1).padStart(2, '0')
-          const dd = String(targetDay).padStart(2, '0')
-          const nextDateStr = `${yyyy}-${mm}-${dd} 00:00:00.000Z`
-          const ym = nextDateStr.substring(0, 7)
-
-          const checkKey = `${seed.type}_${seed.account_id || ''}_${seed.amount}_${cleanD}_${ym}`
-          if (existingOccurrences.has(checkKey)) {
-            continue
-          }
-
-          const payload = {
-            control_id: currentCompany.id,
-            user_id: pb.authStore.record?.id || (currentCompany as any).created_by || '',
-            type: seed.type,
-            amount: seed.amount,
-            description: seed.description,
-            category_id: seed.category_id || '',
-            subcategory_id: seed.subcategory_id || '',
-            account_id: seed.account_id || '',
-            date: nextDateStr,
-            payment_date: '',
-            paid: false,
-            is_recurring: true,
-            recurring: true,
-            recurrence_type: seed.recurrence_type || 'mensal',
-            recurrence_period: (seed as any).recurrence_period || seed.recurrence_type || 'mensal',
-            installment_number: 1,
-            installment_total: 0,
-            parent_transaction_id: '',
-            notes: seed.notes || '',
-          }
-
-          try {
-            await executeWithRetry(
-              () => pb.collection('transactions').create(payload),
-              7,
-              1000,
-              'GerarRecorrentes',
-              30000,
-            )
-
-            existingOccurrences.add(checkKey)
-            if (seed.type === 'receita') {
-              createdIncomeCount++
-            } else {
-              createdExpenseCount++
-            }
-          } catch (createErr: any) {
-            if (is429Error(createErr)) {
-              console.warn(
-                `[GerarRecorrentes] 429 na recorrência "${seed.description}" (${ym}). Pulando para tentar na próxima execução.`,
-              )
-              rateLimitedRecurrencesCount++
-            } else {
-              console.warn(
-                `[GerarRecorrentes] Falha ao criar recorrência "${seed.description}" (${ym}): ${createErr?.message || 'erro na requisição'}`,
-              )
-              rateLimitedRecurrencesCount++
-            }
-          }
-
-          // Espaçamento entre cada create para não saturar o rate limit do PocketBase
-          await sleep(200)
-        }
-      }
+      const currentUserId = pb.authStore.record?.id || (currentCompany as any).created_by || ''
 
       // ----------------------------------------------------
-      // PARTE 2: PARCELAS DE SÉRIES PARCELADAS
+      // PARTE 1: RECORRÊNCIAS (12 meses futuros a partir do mês seguinte)
       // ----------------------------------------------------
-      toast.loading('Analisando séries parceladas e gerando parcelas pendentes...', {
+      const plannedRecurring = planNextRecurringTransactions({
+        currentMonthTransactions: currentMonthTxs,
+        existingTransactions: transactions,
+        currentCompanyId: currentCompany.id,
+        currentUserId,
+        currentYear,
+        currentMonth,
+      })
+
+      // ----------------------------------------------------
+      // PARTE 2: PARCELAS (próximas parcelas a partir do mês seguinte, até terminar ou +12)
+      // ----------------------------------------------------
+      const plannedInstallments = planNextInstallmentTransactions({
+        currentMonthTransactions: currentMonthTxs,
+        allCompanyTransactions: transactions,
+        currentCompanyId: currentCompany.id,
+        currentUserId,
+        currentYear,
+        currentMonth,
+      })
+
+      const totalPlanned = plannedRecurring.length + plannedInstallments.length
+
+      if (totalPlanned === 0) {
+        toast.dismiss(toastId)
+        toast.info(
+          'Todas as recorrências e parcelas baseadas no mês atual já estão geradas para os próximos 12 meses.',
+          { duration: 6000 },
+        )
+        return
+      }
+
+      toast.loading(`Gerando ${totalPlanned} lançamento(s) futuros em lotes otimizados...`, {
         id: toastId,
       })
 
-      // Buscar registros pais do controle
-      const parentRecords = transactions.filter(
-        (t) =>
-          t.control_id === currentCompany.id &&
-          (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
-          Number(t.installment_total || (t as any).installments_total || 0) > 1,
-      )
-
-      // Também agrupar filhas existentes do controle por série
-      // Chave por parentId OU chave por descrição base + total de parcelas
-      const parentsById = new Map<string, Transaction>()
-      parentRecords.forEach((p) => parentsById.set(p.id, p))
-
-      // Filhas existentes
-      const daughterRecords = transactions.filter(
-        (t) =>
-          t.control_id === currentCompany.id &&
-          Number(t.installment_number) >= 1 &&
-          Number(t.installment_total || (t as any).installments_total || 0) > 1,
-      )
-
-      // Identificar todas as séries únicas do controle
-      interface InstallmentSeries {
-        parentId?: string
-        parentRecord?: Transaction
-        baseDesc: string
-        totalInstallments: number
-        totalAmount?: number
-        account_id: string
-        category_id: string
-        subcategory_id: string
-        credit_card_id?: string
-        user_id: string
-        type: TransactionType
-        // Filhas conhecidas da série
-        daughters: Transaction[]
-        existingNumbers: Set<number>
-        maxNumber: number
-        maxDateStr: string
-        minNumber: number
-        minDateStr: string
-      }
-
-      const seriesList: InstallmentSeries[] = []
-      const processedParentIds = new Set<string>()
-      const processedDaughterIds = new Set<string>()
-
-      // 1. Séries a partir dos registros pais consolidados
-      for (const parent of parentRecords) {
-        processedParentIds.add(parent.id)
-        const total = Number(parent.installment_total || (parent as any).installments_total || 0)
-        const baseD = cleanDesc(parent.description)
-        const daughters = daughterRecords.filter((d) => {
-          if (d.parent_transaction_id === parent.id) return true
-          // Se não tiver parent_transaction_id mas tem descrição e total compatíveis
-          const dTotal = Number(d.installment_total || (d as any).installments_total || 0)
-          if (dTotal === total && cleanDesc(d.description).toLowerCase() === baseD.toLowerCase()) {
-            return true
-          }
-          return false
-        })
-
-        daughters.forEach((d) => processedDaughterIds.add(d.id))
-
-        const existingNumbers = new Set<number>()
-        let maxNum = 0
-        let maxDateStr = parent.date
-        let minNum = 999999
-        let minDateStr = parent.date
-
-        daughters.forEach((d) => {
-          const num = Number(d.installment_number)
-          if (num > 0) {
-            existingNumbers.add(num)
-            if (num > maxNum) {
-              maxNum = num
-              maxDateStr = d.date
-            }
-            if (num < minNum) {
-              minNum = num
-              minDateStr = d.date
-            }
-          }
-        })
-
-        seriesList.push({
-          parentId: parent.id,
-          parentRecord: parent,
-          baseDesc: baseD,
-          totalInstallments: total,
-          totalAmount: parent.amount,
-          account_id: parent.account_id || '',
-          category_id: parent.category_id || '',
-          subcategory_id: parent.subcategory_id || '',
-          credit_card_id: (parent as any).credit_card_id || '',
-          user_id: parent.user_id || pb.authStore.record?.id || '',
-          type: parent.type || 'despesa',
-          daughters,
-          existingNumbers,
-          maxNumber: maxNum,
-          maxDateStr: maxNum > 0 ? maxDateStr : parent.date,
-          minNumber: minNum < 999999 ? minNum : 0,
-          minDateStr: minNum < 999999 ? minDateStr : parent.date,
-        })
-      }
-
-      // 2. Séries órfãs (filhas sem registro pai correspondente)
-      for (const d of daughterRecords) {
-        if (processedDaughterIds.has(d.id)) continue
-
-        const total = Number(d.installment_total || (d as any).installments_total || 0)
-        const baseD = cleanDesc(d.description)
-        const parentId = d.parent_transaction_id || ''
-
-        // Buscar todas as filhas do mesmo grupo
-        const group = daughterRecords.filter((other) => {
-          if (parentId && other.parent_transaction_id === parentId) return true
-          const otherTotal = Number(
-            other.installment_total || (other as any).installments_total || 0,
-          )
-          return (
-            otherTotal === total &&
-            cleanDesc(other.description).toLowerCase() === baseD.toLowerCase()
-          )
-        })
-
-        group.forEach((item) => processedDaughterIds.add(item.id))
-
-        const existingNumbers = new Set<number>()
-        let maxNum = 0
-        let maxDateStr = d.date
-        let minNum = 999999
-        let minDateStr = d.date
-
-        group.forEach((item) => {
-          const num = Number(item.installment_number)
-          if (num > 0) {
-            existingNumbers.add(num)
-            if (num > maxNum) {
-              maxNum = num
-              maxDateStr = item.date
-            }
-            if (num < minNum) {
-              minNum = num
-              minDateStr = item.date
-            }
-          }
-        })
-
-        seriesList.push({
-          parentId: parentId || undefined,
-          baseDesc: baseD,
-          totalInstallments: total,
-          account_id: d.account_id || '',
-          category_id: d.category_id || '',
-          subcategory_id: d.subcategory_id || '',
-          credit_card_id: (d as any).credit_card_id || '',
-          user_id: d.user_id || pb.authStore.record?.id || '',
-          type: d.type || 'despesa',
-          daughters: group,
-          existingNumbers,
-          maxNumber: maxNum,
-          maxDateStr: maxDateStr,
-          minNumber: minNum < 999999 ? minNum : 1,
-          minDateStr: minDateStr,
-        })
-      }
-
+      const createdList: Transaction[] = []
+      let createdIncomeCount = 0
+      let createdExpenseCount = 0
       let createdInstallmentCount = 0
+      let rateLimitedCount = 0
 
-      // Processar cada série para criar parcelas faltantes dentro da janela dos próximos 12 meses
-      for (const series of seriesList) {
-        // Se a série já concluiu todas as parcelas, pular
-        if (series.maxNumber >= series.totalInstallments) {
-          continue
-        }
+      // Criar itens com pool concorrente controlado (concorrência 4) e backoff exponencial anti-429
+      const allCandidates = [
+        ...plannedRecurring.map((item) => ({ item, kind: 'recurring' as const })),
+        ...plannedInstallments.map((item) => ({ item, kind: 'installment' as const })),
+      ]
 
-        // Se a série nunca teve parcela criada (apenas o pai)
-        // A parcela 1 começa na data do pai
-        const referenceNumber = series.maxNumber > 0 ? series.maxNumber : 0
-        const referenceDateStr =
-          series.maxNumber > 0 ? series.maxDateStr : series.parentRecord?.date || series.minDateStr
-
-        // Calcular valor rateado das parcelas
-        let baseParcelAmount = 0
-        let lastParcelAmount = 0
-
-        if (series.totalAmount && series.totalAmount > 0) {
-          baseParcelAmount = Math.round((series.totalAmount / series.totalInstallments) * 100) / 100
-          lastParcelAmount =
-            Math.round(
-              (series.totalAmount - baseParcelAmount * (series.totalInstallments - 1)) * 100,
-            ) / 100
-        } else if (series.daughters.length > 0) {
-          // Usar o valor de uma parcela existente
-          baseParcelAmount = series.daughters[0].amount
-          lastParcelAmount = baseParcelAmount
-        }
-
-        // Gerar as parcelas seguintes (maxNumber + 1 até totalInstallments)
-        for (let n = series.maxNumber + 1; n <= series.totalInstallments; n++) {
-          if (series.existingNumbers.has(n)) {
-            continue // Idempotência garantida
-          }
-
-          // Distância em meses a partir da data de referência
-          const diffMonths = n - referenceNumber
-          const parcelDateStr = addMonthsSafe(referenceDateStr, diffMonths)
-
-          // Checar se a data da parcela cai dentro da janela dos próximos 12 meses (<= windowEndIso)
-          // Se ultrapassar a janela de 12 meses, encerramos a geração desta série
-          if (parcelDateStr > windowEndIso) {
-            break
-          }
-
-          const parcelAmount = n === series.totalInstallments ? lastParcelAmount : baseParcelAmount
-          const parcelDesc = `${series.baseDesc} (${n}/${series.totalInstallments})`
-
-          const payload = {
-            control_id: currentCompany.id,
-            user_id:
-              series.user_id || pb.authStore.record?.id || (currentCompany as any).created_by || '',
-            type: series.type,
-            amount: parcelAmount,
-            description: parcelDesc,
-            category_id: series.category_id || '',
-            subcategory_id: series.subcategory_id || '',
-            account_id: series.account_id || '',
-            credit_card_id: series.credit_card_id || '',
-            date: parcelDateStr,
-            payment_date: parcelDateStr,
-            paid: parcelDateStr.substring(0, 10) <= todayStr, // Futuras pendentes
-            recurring: false,
-            is_recurring: false,
-            recurrence_type: '',
-            recurrence_period: '',
-            installment_number: n,
-            installment_total: series.totalInstallments,
-            parent_transaction_id: series.parentId || '',
-            notes: 'Gerado automaticamente: parcela da série',
-          }
-
+      await runInPool(
+        allCandidates,
+        async ({ item, kind }) => {
           try {
-            await executeWithRetry(
-              () => pb.collection('transactions').create(payload),
+            const rec = await executeWithRetry(
+              () => pb.collection('transactions').create(item),
               7,
               1000,
-              'GerarParcelas',
+              'GerarRecorrentesEParcelas',
               30000,
             )
 
-            series.existingNumbers.add(n)
-            createdInstallmentCount++
-          } catch (createErr: any) {
-            if (is429Error(createErr)) {
-              console.warn(
-                `[GerarParcelas] 429 na parcela ${n}/${series.totalInstallments} de "${series.baseDesc}". Pulando para tentar na próxima execução.`,
-              )
-              rateLimitedInstallmentsCount++
-            } else {
-              console.warn(
-                `[GerarParcelas] Falha ao criar parcela ${n}/${series.totalInstallments} de "${series.baseDesc}": ${createErr?.message || 'erro na requisição'}`,
-              )
-              rateLimitedInstallmentsCount++
-            }
-          }
+            if (rec) {
+              const mappedTx: Transaction = {
+                id: rec.id,
+                control_id: rec.control_id || currentCompany.id,
+                user_id: rec.user_id || currentUserId,
+                type: rec.type,
+                amount: Number(rec.amount),
+                description: rec.description,
+                category_id: rec.category_id || '',
+                subcategory_id: rec.subcategory_id || undefined,
+                account_id: rec.account_id || '',
+                date: rec.date ? String(rec.date).split(/[T\s]/)[0] : item.date.split(/[T\s]/)[0],
+                payment_date: rec.payment_date
+                  ? String(rec.payment_date).split(/[T\s]/)[0]
+                  : rec.date
+                    ? String(rec.date).split(/[T\s]/)[0]
+                    : item.date.split(/[T\s]/)[0],
+                paid: Boolean(rec.paid),
+                is_recurring: Boolean(rec.is_recurring),
+                recurring: Boolean(rec.recurring || rec.is_recurring),
+                recurrence_type: rec.recurrence_type || undefined,
+                installment_number: rec.installment_number
+                  ? Number(rec.installment_number)
+                  : undefined,
+                installments_total: rec.installment_total
+                  ? Number(rec.installment_total)
+                  : rec.installments_total
+                    ? Number(rec.installments_total)
+                    : undefined,
+                parent_transaction_id: rec.parent_transaction_id || undefined,
+                notes: rec.notes || undefined,
+                created_at: rec.created || new Date().toISOString(),
+                account: accounts.find((a) => a.id === rec.account_id),
+                category: categories.find((c) => c.id === rec.category_id),
+              }
 
-          // Espaçamento entre cada create para não saturar o rate limit do PocketBase
-          await sleep(200)
-        }
-      }
+              createdList.push(mappedTx)
+              if (kind === 'recurring') {
+                if (item.type === 'receita') {
+                  createdIncomeCount++
+                } else {
+                  createdExpenseCount++
+                }
+              } else {
+                createdInstallmentCount++
+              }
+            }
+          } catch (err: any) {
+            console.warn(
+              `[handleGenerateNext12Months] Falha ao criar lançamento "${item.description}":`,
+              err?.message || err,
+            )
+            rateLimitedCount++
+          }
+        },
+        { concurrency: 4, delayBetweenBatchesMs: 25, tag: 'GERAR_12M_POOL' },
+      )
 
       toast.dismiss(toastId)
 
-      const totalRecurCreated = createdIncomeCount + createdExpenseCount
-      const totalAllCreated = totalRecurCreated + createdInstallmentCount
-      const totalRateLimited = rateLimitedRecurrencesCount + rateLimitedInstallmentsCount
+      // Atualização otimista imediata na UI sem bloquear a renderização
+      if (createdList.length > 0) {
+        applyTransactionsBatchUpdate({ created: createdList })
+      }
 
-      if (totalAllCreated === 0) {
-        if (totalRateLimited > 0) {
+      const totalRecurCreated = createdIncomeCount + createdExpenseCount
+      const totalCreated = totalRecurCreated + createdInstallmentCount
+
+      if (totalCreated === 0) {
+        if (rateLimitedCount > 0) {
           toast.warning(
-            `Nenhum novo lançamento pôde ser gerado devido ao limite temporário do servidor (${totalRateLimited} pendente(s)). Clique novamente no botão para continuar.`,
+            `Nenhum novo lançamento pôde ser salvo devido ao limite temporário do servidor (${rateLimitedCount} pendente(s)). Clique novamente no botão para continuar.`,
             { duration: 8000 },
           )
         } else {
-          toast.info(
-            'Todas as transações recorrentes e séries parceladas já estão completas para os próximos 12 meses.',
-          )
+          toast.info('Todas as recorrências e parcelas já estão em dia para os próximos 12 meses.')
         }
       } else {
         const parts: string[] = []
@@ -949,22 +656,25 @@ export default function TransactionsPage() {
           parts.push(`${createdInstallmentCount} parcela(s)`)
         }
 
-        if (totalRateLimited > 0) {
+        if (rateLimitedCount > 0) {
           toast.warning(
-            `Gerados parcialmente: ${parts.join(' e ')}. ${totalRateLimited} lançamento(s) não foram gerados por limite de requisições do servidor. Clique no botão novamente para gerar os restantes.`,
+            `Gerados parcialmente: ${parts.join(' e ')}. ${rateLimitedCount} lançamento(s) não foram concluídos por limite de requisições. Clique no botão novamente para gerar os restantes.`,
             { duration: 9000 },
           )
         } else {
-          toast.success(`Concluído! Gerados: ${parts.join(' e ')} para os próximos 12 meses.`, {
-            duration: 7000,
-          })
+          toast.success(
+            `Concluído com sucesso! Gerados a partir do mês seguinte: ${parts.join(' e ')}.`,
+            { duration: 7000 },
+          )
         }
-        // Recarregar dados para refletir na tela imediatamente
-        try {
-          await reloadCompanyData()
-        } catch (reloadErr) {
-          console.warn('Erro não bloqueante ao atualizar dados da empresa pós-geração:', reloadErr)
-        }
+
+        // Sincronização em segundo plano para consolidar saldos de contas
+        reloadCompanyData().catch((reloadErr) => {
+          console.warn(
+            '[handleGenerateNext12Months] Erro não bloqueante ao atualizar dados da empresa pós-geração:',
+            reloadErr,
+          )
+        })
       }
     } catch (err: any) {
       toast.dismiss(toastId)
