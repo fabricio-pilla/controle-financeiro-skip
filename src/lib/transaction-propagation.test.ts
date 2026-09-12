@@ -247,6 +247,157 @@ describe('transaction-propagation', () => {
       expect(result.updated.every((u) => u.amount === 80)).toBe(true)
     })
 
+    it('updates "este e os próximos" of a 12-month recurring series without creating duplicates and preserving month dates', async () => {
+      // 12 monthly occurrences: 2026-01-10 to 2026-12-10
+      const recurringList: Transaction[] = []
+      for (let m = 1; m <= 12; m++) {
+        const mm = String(m).padStart(2, '0')
+        recurringList.push({
+          id: `rec_aluguel_${mm}`,
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 1200,
+          description: 'Aluguel Apartamento',
+          category_id: 'cat_moradia',
+          account_id: 'acc_1',
+          date: `2026-${mm}-10`,
+          payment_date: `2026-${mm}-10`,
+          paid: m < 4,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01T00:00:00.000Z',
+        })
+      }
+
+      // User selects month 4 (April) and updates amount from 1200 to 1400 and day from 10 to 15
+      const targetTx = recurringList[3] // 2026-04-10
+      const result = await updateTransactionWithPropagation({
+        transaction: targetTx,
+        allTransactions: recurringList,
+        formData: {
+          type: 'despesa',
+          amount: 1400,
+          description: 'Aluguel Apartamento',
+          category_id: 'cat_moradia',
+          account_id: 'acc_1',
+          date: '2026-04-15',
+          payment_date: '2026-04-15',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+        },
+        choice: 'future',
+      })
+
+      // Zero new transactions created!
+      expect(result.created.length).toBe(0)
+      // Exactly 9 transactions updated (months 04 to 12)
+      expect(result.updated.length).toBe(9)
+      expect(result.updated.every((u) => u.amount === 1400)).toBe(true)
+
+      // Check dates: month 04 is 2026-04-15, month 05 is 2026-05-15, ..., month 12 is 2026-12-15
+      const updatedDates = result.updated.map((u) => u.date)
+      expect(updatedDates).toEqual([
+        '2026-04-15',
+        '2026-05-15',
+        '2026-06-15',
+        '2026-07-15',
+        '2026-08-15',
+        '2026-09-15',
+        '2026-10-15',
+        '2026-11-15',
+        '2026-12-15',
+      ])
+
+      // Each month must appear only once, never multiple in the same month
+      const months = updatedDates.map((d) => d.substring(0, 7))
+      const uniqueMonths = new Set(months)
+      expect(uniqueMonths.size).toBe(9)
+    })
+
+    it('creates missing future months when window of 12 is incomplete, never duplicating an existing month', async () => {
+      // Only 3 occurrences exist: 2026-01-10, 2026-02-10, 2026-03-10
+      const partialList: Transaction[] = [
+        {
+          id: 'rec_acad_01',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 100,
+          description: 'Academia',
+          category_id: 'cat_saude',
+          account_id: 'acc_1',
+          date: '2026-01-10',
+          paid: true,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'rec_acad_02',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 100,
+          description: 'Academia',
+          category_id: 'cat_saude',
+          account_id: 'acc_1',
+          date: '2026-02-10',
+          paid: true,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'rec_acad_03',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 100,
+          description: 'Academia',
+          category_id: 'cat_saude',
+          account_id: 'acc_1',
+          date: '2026-03-10',
+          paid: false,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+      ]
+
+      // Edit month 03 with 'future': updates month 03 and fills up to 12 months ahead (months 04..12)
+      const result = await updateTransactionWithPropagation({
+        transaction: partialList[2],
+        allTransactions: partialList,
+        formData: {
+          type: 'despesa',
+          amount: 120,
+          description: 'Academia',
+          category_id: 'cat_saude',
+          account_id: 'acc_1',
+          date: '2026-03-10',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+        },
+        choice: 'future',
+      })
+
+      // Updates month 03
+      expect(result.updated.length).toBe(1)
+      expect(result.updated[0].id).toBe('rec_acad_03')
+      expect(result.updated[0].amount).toBe(120)
+
+      // Creates months 04 to 12 (9 months)
+      expect(result.created.length).toBe(9)
+      const createdMonths = result.created.map((c) => c.date.substring(0, 7))
+      const uniqueCreatedMonths = new Set(createdMonths)
+      // Exactly 1 per month, no duplicates in any month
+      expect(uniqueCreatedMonths.size).toBe(9)
+      expect(createdMonths).not.toContain('2026-01')
+      expect(createdMonths).not.toContain('2026-02')
+      expect(createdMonths).not.toContain('2026-03')
+    })
+
     it('updates ONLY the selected transaction when choice is "single"', async () => {
       const tx1: Transaction = {
         id: 'rec_1',

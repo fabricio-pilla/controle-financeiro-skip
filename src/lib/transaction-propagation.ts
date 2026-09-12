@@ -3,6 +3,7 @@ import pb from '@/lib/pocketbase/client'
 import { skipCloud } from '@/lib/skip-cloud'
 import { executeWithRetry, runInPool } from '@/lib/pocketbase/retry'
 import { PropagationChoice } from '@/components/transactions/RecurrencePropagationModal'
+import { computeTargetDate, parseDateParts } from '@/lib/recurring-generation'
 
 export interface UpdateTransactionPayload {
   description: string
@@ -536,19 +537,38 @@ async function handleInstallmentPropagation({
       const desc = newTotal > 1 ? `${newBaseDesc} (${itemNum}/${newTotal})` : newBaseDesc
 
       let itemDate = item.date
+      let itemPaymentDate = item.payment_date || item.date
+
       if (item.id === transaction.id) {
         itemDate = formData.date
-      } else {
+        itemPaymentDate = formData.payment_date || formData.date
+      } else if (choice === 'all') {
         const diffMonths = (item.installment_number || 1) - currentNum
         itemDate = addMonths(formData.date, diffMonths)
-      }
-
-      let itemPaymentDate = item.payment_date || itemDate
-      if (item.id === transaction.id) {
-        itemPaymentDate = formData.payment_date || formData.date
-      } else {
-        const diffMonths = (item.installment_number || 1) - currentNum
         itemPaymentDate = addMonths(formData.payment_date || formData.date, diffMonths)
+      } else {
+        // Quando choice === 'future', se o dia do lançamento foi alterado, preservar o ano/mês original da parcela
+        // ajustando apenas o dia, ou manter item.date se a data não foi deslocada.
+        const origTxParts = parseDateParts(transaction.date)
+        const formTxParts = parseDateParts(formData.date)
+        const dayChanged = origTxParts.day !== formTxParts.day
+        if (dayChanged) {
+          const itemParts = parseDateParts(item.date)
+          itemDate = computeTargetDate(itemParts.year, itemParts.month, formTxParts.day, 0)
+        }
+        if (formData.payment_date && transaction.payment_date) {
+          const origPayParts = parseDateParts(transaction.payment_date)
+          const formPayParts = parseDateParts(formData.payment_date)
+          if (origPayParts.day !== formPayParts.day && item.payment_date) {
+            const itemPayParts = parseDateParts(item.payment_date)
+            itemPaymentDate = computeTargetDate(
+              itemPayParts.year,
+              itemPayParts.month,
+              formPayParts.day,
+              0,
+            )
+          }
+        }
       }
 
       return await skipCloud.updateTransaction(
@@ -710,8 +730,8 @@ async function handleRecurringPropagation({
   if (choice === 'all') {
     targetsToUpdate = series.length > 0 ? series : [transaction]
   } else if (choice === 'future') {
-    const currentDate = new Date(transaction.date).getTime()
-    targetsToUpdate = series.filter((t) => new Date(t.date).getTime() >= currentDate)
+    const currentDate = normalizeDateStr(transaction.date)
+    targetsToUpdate = series.filter((t) => normalizeDateStr(t.date) >= currentDate)
     if (targetsToUpdate.length === 0) targetsToUpdate = [transaction]
   }
 
@@ -719,15 +739,45 @@ async function handleRecurringPropagation({
   affectedAccountIds.add(formData.account_id)
   targetsToUpdate.forEach((t) => affectedAccountIds.add(t.account_id))
 
+  // Preservar as datas reais das outras ocorrências mensais da série recorrente.
+  // Se o usuário alterou o dia da data (ex: mudou de dia 10 para dia 15), ajusta apenas o dia
+  // mantendo o ano e o mês de cada ocorrência futura respectiva (com limite no último dia do mês).
+  const origTxDateParts = parseDateParts(transaction.date)
+  const newTxDateParts = parseDateParts(formData.date)
+  const dayChanged = origTxDateParts.day !== newTxDateParts.day
+
+  const origPayDateParts = transaction.payment_date
+    ? parseDateParts(transaction.payment_date)
+    : null
+  const newPayDateParts = formData.payment_date ? parseDateParts(formData.payment_date) : null
+  const payDayChanged =
+    origPayDateParts && newPayDateParts && origPayDateParts.day !== newPayDateParts.day
+
   // Update in controlled concurrent pool (concurrency = 4)
   const updatedItems = await runInPool(
     targetsToUpdate,
     async (item) => {
-      const targetDate = item.id === transaction.id ? formData.date : item.date
-      const targetPaymentDate =
-        item.id === transaction.id
-          ? formData.payment_date || formData.date
-          : item.payment_date || item.date
+      let targetDate = item.date
+      let targetPaymentDate = item.payment_date || item.date
+
+      if (item.id === transaction.id) {
+        targetDate = formData.date
+        targetPaymentDate = formData.payment_date || formData.date
+      } else {
+        if (dayChanged) {
+          const itemParts = parseDateParts(item.date)
+          targetDate = computeTargetDate(itemParts.year, itemParts.month, newTxDateParts.day, 0)
+        }
+        if (payDayChanged && item.payment_date) {
+          const itemPayParts = parseDateParts(item.payment_date)
+          targetPaymentDate = computeTargetDate(
+            itemPayParts.year,
+            itemPayParts.month,
+            newPayDateParts!.day,
+            0,
+          )
+        }
+      }
 
       return await skipCloud.updateTransaction(
         item.id,

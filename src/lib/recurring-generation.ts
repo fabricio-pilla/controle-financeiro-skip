@@ -335,13 +335,16 @@ export function planOccurrencesForSingleRecurring({
     // Pertence à mesma série se tiver a mesma descrição base e tipo
     if (d === cleanD && t.type === sourceTransaction.type) {
       const ym = t.date.substring(0, 7)
-      existingMonthSet.add(ym)
+      if (ym) existingMonthSet.add(ym)
     }
   }
 
-  // Também não duplicar no próprio mês da transação fonte
+  // Também não duplicar no próprio mês da transação fonte (ambos os formatos)
   const sourceYM = getYearMonth(baseYear, baseMonth)
   existingMonthSet.add(sourceYM)
+  if (sourceTransaction.date) {
+    existingMonthSet.add(sourceTransaction.date.substring(0, 7))
+  }
 
   const planned: RecurringGenerationCandidate[] = []
 
