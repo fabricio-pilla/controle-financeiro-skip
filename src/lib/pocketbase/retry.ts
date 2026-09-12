@@ -4,12 +4,49 @@ export const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
 
 export const is429Error = (error: any): boolean => {
-  return (
-    error?.status === 429 ||
-    error?.statusCode === 429 ||
-    error?.response?.status === 429 ||
-    error?.message?.includes('429')
-  )
+  if (!error) return false
+  const status =
+    error?.status ?? error?.statusCode ?? error?.response?.status ?? error?.originalError?.status
+  if (status === 429) return true
+
+  const message = String(error?.message || '')
+  if (message.includes('429') || /too many requests/i.test(message)) {
+    return true
+  }
+
+  const responseText = String(error?.response?.message || error?.data?.message || '')
+  if (responseText.includes('429') || /too many requests/i.test(responseText)) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Tenta extrair o header Retry-After em milissegundos se retornado pelo servidor
+ */
+export const extractRetryAfterMs = (error: any): number | null => {
+  try {
+    const headers = error?.response?.headers || error?.headers
+    const rawVal =
+      typeof headers?.get === 'function'
+        ? headers.get('retry-after')
+        : headers?.['retry-after'] || headers?.['Retry-After']
+
+    if (rawVal) {
+      const parsedSeconds = parseFloat(rawVal)
+      if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
+        return Math.round(parsedSeconds * 1000)
+      }
+      const parsedDate = new Date(rawVal).getTime()
+      if (!isNaN(parsedDate) && parsedDate > Date.now()) {
+        return parsedDate - Date.now()
+      }
+    }
+  } catch {
+    // Header parsing falhou silenciosamente
+  }
+  return null
 }
 
 export interface RetryOptions {
@@ -21,10 +58,10 @@ export interface RetryOptions {
 
 export const executeWithRetry = async <T>(
   fn: () => Promise<T>,
-  maxRetries = 5,
-  baseDelayMs = 500,
+  maxRetries = 7,
+  baseDelayMs = 1000,
   tag = 'API',
-  maxDelayMs = 8000,
+  maxDelayMs = 30000,
 ): Promise<T> => {
   let attempt = 0
   while (true) {
@@ -33,10 +70,15 @@ export const executeWithRetry = async <T>(
     } catch (error: any) {
       if (is429Error(error) && attempt < maxRetries) {
         attempt++
+        const serverRetryAfter = extractRetryAfterMs(error)
         // Jitter to prevent stampedes when multiple requests get throttled
-        const jitter = Math.random() * 200
-        const calculatedDelay = baseDelayMs * Math.pow(1.8, attempt - 1) + jitter
-        const delay = Math.min(calculatedDelay, maxDelayMs)
+        const jitter = Math.random() * 300
+        // Backoff exponencial: 1s, 2s, 4s, 8s, 16s... até maxDelayMs (~30s)
+        const exponentialDelay = baseDelayMs * Math.pow(2, attempt - 1) + jitter
+        const delay = Math.min(
+          serverRetryAfter && serverRetryAfter > 0 ? serverRetryAfter : exponentialDelay,
+          maxDelayMs,
+        )
         console.warn(
           `[${tag}] 429 detectado. Retentando em ${Math.round(delay)}ms (tentativa ${attempt}/${maxRetries})...`,
         )

@@ -611,9 +611,10 @@ export default function TransactionsPage() {
           try {
             await executeWithRetry(
               () => pb.collection('transactions').create(payload),
-              5,
-              400,
+              7,
+              1000,
               'GerarRecorrentes',
+              30000,
             )
 
             existingOccurrences.add(checkKey)
@@ -625,20 +626,19 @@ export default function TransactionsPage() {
           } catch (createErr: any) {
             if (is429Error(createErr)) {
               console.warn(
-                `[GerarRecorrentes] 429 persistente na recorrência "${seed.description}" (${ym}). Pulando para tentar na próxima execução.`,
+                `[GerarRecorrentes] 429 na recorrência "${seed.description}" (${ym}). Pulando para tentar na próxima execução.`,
               )
               rateLimitedRecurrencesCount++
             } else {
-              console.error(
-                `[GerarRecorrentes] Falha ao criar recorrência "${seed.description}" (${ym}):`,
-                createErr,
+              console.warn(
+                `[GerarRecorrentes] Falha ao criar recorrência "${seed.description}" (${ym}): ${createErr?.message || 'erro na requisição'}`,
               )
-              throw createErr
+              rateLimitedRecurrencesCount++
             }
           }
 
           // Espaçamento entre cada create para não saturar o rate limit do PocketBase
-          await sleep(80)
+          await sleep(200)
         }
       }
 
@@ -894,9 +894,10 @@ export default function TransactionsPage() {
           try {
             await executeWithRetry(
               () => pb.collection('transactions').create(payload),
-              5,
-              400,
+              7,
+              1000,
               'GerarParcelas',
+              30000,
             )
 
             series.existingNumbers.add(n)
@@ -904,20 +905,19 @@ export default function TransactionsPage() {
           } catch (createErr: any) {
             if (is429Error(createErr)) {
               console.warn(
-                `[GerarParcelas] 429 persistente na parcela ${n}/${series.totalInstallments} de "${series.baseDesc}". Pulando para tentar na próxima execução.`,
+                `[GerarParcelas] 429 na parcela ${n}/${series.totalInstallments} de "${series.baseDesc}". Pulando para tentar na próxima execução.`,
               )
               rateLimitedInstallmentsCount++
             } else {
-              console.error(
-                `[GerarParcelas] Falha ao criar parcela ${n}/${series.totalInstallments} de "${series.baseDesc}":`,
-                createErr,
+              console.warn(
+                `[GerarParcelas] Falha ao criar parcela ${n}/${series.totalInstallments} de "${series.baseDesc}": ${createErr?.message || 'erro na requisição'}`,
               )
-              throw createErr
+              rateLimitedInstallmentsCount++
             }
           }
 
           // Espaçamento entre cada create para não saturar o rate limit do PocketBase
-          await sleep(80)
+          await sleep(200)
         }
       }
 
@@ -968,6 +968,10 @@ export default function TransactionsPage() {
       }
     } catch (err: any) {
       toast.dismiss(toastId)
+      console.warn(
+        '[handleGenerateNext12Months] Erro capturado no fluxo geral:',
+        err?.message || err,
+      )
       toast.error(err?.message || 'Erro ao gerar lançamentos.')
     } finally {
       setIsGeneratingRecurring(false)
