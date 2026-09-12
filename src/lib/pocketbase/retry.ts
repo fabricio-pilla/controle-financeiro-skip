@@ -22,6 +22,28 @@ export const is429Error = (error: any): boolean => {
   return false
 }
 
+export const isNetworkError = (error: any): boolean => {
+  if (!error) return false
+  const status =
+    error?.status ?? error?.statusCode ?? error?.response?.status ?? error?.originalError?.status
+  // PocketBase client returns status 0 on network disconnect/aborted request
+  if (status === 0 || status === 502 || status === 503 || status === 504) return true
+
+  const msg = String(error?.message || '').toLowerCase()
+  if (
+    msg.includes('network') ||
+    msg.includes('fetch failed') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('timeout') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout')
+  ) {
+    return true
+  }
+
+  return false
+}
+
 /**
  * Tenta extrair o header Retry-After em milissegundos se retornado pelo servidor
  */
@@ -68,7 +90,10 @@ export const executeWithRetry = async <T>(
     try {
       return await fn()
     } catch (error: any) {
-      if (is429Error(error) && attempt < maxRetries) {
+      const is429 = is429Error(error)
+      const isNet = isNetworkError(error)
+
+      if ((is429 || isNet) && attempt < maxRetries) {
         attempt++
         const serverRetryAfter = extractRetryAfterMs(error)
         // Jitter to prevent stampedes when multiple requests get throttled
@@ -80,7 +105,7 @@ export const executeWithRetry = async <T>(
           maxDelayMs,
         )
         console.warn(
-          `[${tag}] 429 detectado. Retentando em ${Math.round(delay)}ms (tentativa ${attempt}/${maxRetries})...`,
+          `[${tag}] ${is429 ? '429 (Rate Limit)' : 'Erro de rede/servidor'} detectado. Retentando em ${Math.round(delay)}ms (tentativa ${attempt}/${maxRetries})...`,
         )
         await sleep(delay)
         continue

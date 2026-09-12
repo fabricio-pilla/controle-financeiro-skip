@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { runInPool, executeWithRetry, is429Error } from './retry'
+import { runInPool, executeWithRetry, is429Error, isNetworkError } from './retry'
 
 describe('pocketbase/retry helpers', () => {
   describe('is429Error', () => {
@@ -11,6 +11,20 @@ describe('pocketbase/retry helpers', () => {
       expect(is429Error({ response: { message: 'too many requests' } })).toBe(true)
       expect(is429Error({ status: 400 })).toBe(false)
       expect(is429Error(null)).toBe(false)
+    })
+  })
+
+  describe('isNetworkError', () => {
+    it('detects 0, 502, 503, 504 status and network messages', () => {
+      expect(isNetworkError({ status: 0 })).toBe(true)
+      expect(isNetworkError({ status: 502 })).toBe(true)
+      expect(isNetworkError({ status: 503 })).toBe(true)
+      expect(isNetworkError({ message: 'Failed to fetch' })).toBe(true)
+      expect(isNetworkError({ message: 'NetworkError when attempting to fetch resource.' })).toBe(
+        true,
+      )
+      expect(isNetworkError({ status: 404 })).toBe(false)
+      expect(isNetworkError(null)).toBe(false)
     })
   })
 

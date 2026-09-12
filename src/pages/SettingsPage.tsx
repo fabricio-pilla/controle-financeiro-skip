@@ -158,6 +158,41 @@ export default function SettingsPage() {
     navigate('/')
   }
 
+  /**
+   * Helper para buscar exaustivamente todas as transações com paginação garantida em laço
+   */
+  const fetchAllTransactionsByFilter = async (filter: string, tag: string) => {
+    const allRecords: { id: string; account_id?: string }[] = []
+    let page = 1
+    const perPage = 200
+
+    while (true) {
+      const currentPage = page
+      const result = await executeWithRetry(
+        () =>
+          pb
+            .collection('transactions')
+            .getList<{ id: string; account_id?: string }>(currentPage, perPage, {
+              filter,
+              fields: 'id,account_id',
+              sort: '-created',
+            }),
+        7,
+        1000,
+        `${tag}-Pagina-${currentPage}`,
+        30000,
+      )
+
+      allRecords.push(...result.items)
+      if (currentPage >= result.totalPages || result.items.length === 0) {
+        break
+      }
+      page++
+    }
+
+    return allRecords
+  }
+
   const handleDeleteAllTransactions = async () => {
     if (deleteAllConfirmText.trim() !== 'EXCLUIR TUDO') {
       toast.error('Digite "EXCLUIR TUDO" para confirmar.')
@@ -172,52 +207,100 @@ export default function SettingsPage() {
     setDeleteAllProgress(null)
 
     try {
-      // 1. Obter todas as transações do controle ativo com retry
-      const records = await executeWithRetry(
-        () =>
-          pb.collection('transactions').getFullList<{ id: string; account_id?: string }>({
-            filter: `control_id="${currentCompany.id}"`,
-            fields: 'id,account_id',
-          }),
-        5,
-        1000,
-        'Limpeza-Total-Listagem',
-        10000,
-      )
+      const companyId = currentCompany.id
+      const filter = `control_id="${companyId}"`
 
-      setDeleteAllProgress({ current: 0, total: records.length })
-
-      // Atualização otimista imediata na UI: remove todos os registros do estado local
-      const deletedIds = records.map((r) => r.id)
-      applyTransactionsBatchUpdate({ deletedIds })
-
-      let completedDeletions = 0
+      let totalDeletedCount = 0
       let failedDeletions = 0
+      const maxSweeps = 4
 
-      // 2. Excluir lançamentos em pool concorrente controlado (concorrência 4) com retry exponencial em 429
-      if (records.length > 0) {
+      // Varredura em laço com verificação pós-exclusão
+      for (let sweep = 1; sweep <= maxSweeps; sweep++) {
+        // 1. Obter todas as transações com paginação garantida
+        const records = await fetchAllTransactionsByFilter(filter, `Limpeza-Total-Sweep${sweep}`)
+
+        if (records.length === 0) {
+          break
+        }
+
+        if (sweep === 1) {
+          setDeleteAllProgress({ current: 0, total: records.length })
+          // Atualização otimista imediata na UI
+          const deletedIds = records.map((r) => r.id)
+          applyTransactionsBatchUpdate({ deletedIds })
+        } else {
+          // Atualiza progresso da rodada de re-verificação
+          setDeleteAllProgress({ current: 0, total: records.length })
+        }
+
+        let completedInSweep = 0
+        const sweepErrors: string[] = []
+
+        // 2. Excluir lançamentos com taxa controlada (concorrência 2, 80ms entre requisições)
+        // e retry robusto para 429/rede
         await runInPool(
           records,
           async (rec) => {
             try {
               await pb.collection('transactions').delete(rec.id)
-            } catch (itemErr) {
+            } catch (itemErr: any) {
+              const status =
+                itemErr?.status ??
+                itemErr?.statusCode ??
+                itemErr?.response?.status ??
+                itemErr?.originalError?.status
+              // Se já retornar 404, o item já foi removido (não conta como erro)
+              if (status === 404) {
+                return
+              }
               console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
-              failedDeletions++
+              sweepErrors.push(rec.id)
             } finally {
-              completedDeletions++
-              setDeleteAllProgress({ current: completedDeletions, total: records.length })
+              completedInSweep++
+              setDeleteAllProgress({ current: completedInSweep, total: records.length })
             }
           },
-          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Total-Delete' },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 80,
+            maxRetries: 7,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            tag: `Limpeza-Total-Delete-Sweep${sweep}`,
+          },
         )
+
+        totalDeletedCount += completedInSweep - sweepErrors.length
+
+        // Se todos foram removidos nesta rodada sem erros, faz uma pausa curta antes de checar sweep final
+        if (sweepErrors.length === 0) {
+          await sleep(300)
+        } else {
+          failedDeletions = sweepErrors.length
+          await sleep(1000)
+        }
       }
+
+      // Verificação final do banco: checar se sobrou algum registro
+      const remainingCheck = await executeWithRetry(
+        () =>
+          pb.collection('transactions').getList(1, 1, {
+            filter,
+            fields: 'id',
+          }),
+        5,
+        1000,
+        'Limpeza-Total-ChecagemFinal',
+        15000,
+      )
+
+      const remainingTotal = remainingCheck.totalItems || 0
 
       // 3. Zerar o saldo de todas as contas do controle ativo de forma concorrente em lote único
       const accountsList = await executeWithRetry(
         () =>
           pb.collection('accounts').getFullList<{ id: string }>({
-            filter: `control_id="${currentCompany.id}"`,
+            filter: `control_id="${companyId}"`,
             fields: 'id',
           }),
         5,
@@ -238,21 +321,30 @@ export default function SettingsPage() {
               failedAccounts++
             }
           },
-          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Total-ZerarConta' },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 80,
+            maxRetries: 7,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            tag: 'Limpeza-Total-ZerarConta',
+          },
         )
       }
 
-      // 4. Recarregar dados do controle para atualizar dashboard e contas imediatamente
+      // 4. Recarregar dados do controle para sincronizar dashboard e contas
       await reloadCompanyData()
-      if (failedDeletions > 0 || failedAccounts > 0) {
+
+      if (remainingTotal > 0 || failedAccounts > 0) {
         toast.warning(
-          `Limpeza concluída com avisos: ${failedDeletions} lançamentos e ${failedAccounts} contas não puderam ser atualizados.`,
+          `Limpeza parcial: ${remainingTotal} lançamento(s) e ${failedAccounts} conta(s) ainda não puderam ser processados devido a instabilidade/limites do servidor. Execute a limpeza novamente para finalizar os restantes.`,
+          { duration: 8000 },
         )
       } else {
         toast.success('Todos os lançamentos foram removidos e os saldos das contas foram zerados.')
+        setDeleteAllModalOpen(false)
+        setDeleteAllConfirmText('')
       }
-      setDeleteAllModalOpen(false)
-      setDeleteAllConfirmText('')
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao remover lançamentos e zerar contas.')
     } finally {
@@ -271,58 +363,98 @@ export default function SettingsPage() {
     setDeleteMonthProgress(null)
 
     try {
+      const companyId = currentCompany.id
       const padMonth = String(selectedMonth).padStart(2, '0')
       const lastDay = new Date(selectedYear, selectedMonth, 0).getDate()
       const padLastDay = String(lastDay).padStart(2, '0')
       const startDate = `${selectedYear}-${padMonth}-01`
       const endDate = `${selectedYear}-${padMonth}-${padLastDay}`
+      const filter = `control_id="${companyId}" && date>="${startDate}" && date<="${endDate}"`
 
-      // 1. Obter lançamentos do mês selecionado com retry
-      const records = await executeWithRetry(
-        () =>
-          pb.collection('transactions').getFullList<{ id: string; account_id?: string }>({
-            filter: `control_id="${currentCompany.id}" && date>="${startDate}" && date<="${endDate}"`,
-            fields: 'id,account_id',
-          }),
-        5,
-        1000,
-        'Limpeza-Mes-Listagem',
-        10000,
-      )
-
-      setDeleteMonthProgress({ current: 0, total: records.length })
-
-      // Atualização otimista imediata na UI: remove os registros selecionados do mês do estado local
-      const deletedMonthIds = records.map((r) => r.id)
-      applyTransactionsBatchUpdate({ deletedIds: deletedMonthIds })
-
-      let completedDeletions = 0
+      let totalDeletedCount = 0
       let failedDeletions = 0
+      const maxSweeps = 3
 
-      // 2. Excluir lançamentos em pool concorrente controlado (concorrência 4) com retry exponencial em 429
-      if (records.length > 0) {
+      for (let sweep = 1; sweep <= maxSweeps; sweep++) {
+        // 1. Obter lançamentos do mês selecionado com paginação completa
+        const records = await fetchAllTransactionsByFilter(filter, `Limpeza-Mes-Sweep${sweep}`)
+
+        if (records.length === 0) {
+          break
+        }
+
+        if (sweep === 1) {
+          setDeleteMonthProgress({ current: 0, total: records.length })
+          // Atualização otimista imediata na UI
+          const deletedMonthIds = records.map((r) => r.id)
+          applyTransactionsBatchUpdate({ deletedIds: deletedMonthIds })
+        } else {
+          setDeleteMonthProgress({ current: 0, total: records.length })
+        }
+
+        let completedInSweep = 0
+        const sweepErrors: string[] = []
+
+        // 2. Excluir lançamentos com concorrência 2, delay de 80ms e retry anti-429/rede
         await runInPool(
           records,
           async (rec) => {
             try {
               await pb.collection('transactions').delete(rec.id)
-            } catch (itemErr) {
+            } catch (itemErr: any) {
+              const status =
+                itemErr?.status ??
+                itemErr?.statusCode ??
+                itemErr?.response?.status ??
+                itemErr?.originalError?.status
+              if (status === 404) return
               console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
-              failedDeletions++
+              sweepErrors.push(rec.id)
             } finally {
-              completedDeletions++
-              setDeleteMonthProgress({ current: completedDeletions, total: records.length })
+              completedInSweep++
+              setDeleteMonthProgress({ current: completedInSweep, total: records.length })
             }
           },
-          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Mes-Delete' },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 80,
+            maxRetries: 7,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            tag: `Limpeza-Mes-Delete-Sweep${sweep}`,
+          },
         )
+
+        totalDeletedCount += completedInSweep - sweepErrors.length
+
+        if (sweepErrors.length === 0) {
+          await sleep(300)
+        } else {
+          failedDeletions = sweepErrors.length
+          await sleep(1000)
+        }
       }
 
-      // 3. Zerar o saldo de todas as contas do controle ativo de forma concorrente em lote único
+      // Verificação final do mês
+      const remainingCheck = await executeWithRetry(
+        () =>
+          pb.collection('transactions').getList(1, 1, {
+            filter,
+            fields: 'id',
+          }),
+        5,
+        1000,
+        'Limpeza-Mes-ChecagemFinal',
+        15000,
+      )
+
+      const remainingTotal = remainingCheck.totalItems || 0
+
+      // 3. Zerar o saldo de todas as contas do controle ativo
       const accountsList = await executeWithRetry(
         () =>
           pb.collection('accounts').getFullList<{ id: string }>({
-            filter: `control_id="${currentCompany.id}"`,
+            filter: `control_id="${companyId}"`,
             fields: 'id',
           }),
         5,
@@ -343,7 +475,14 @@ export default function SettingsPage() {
               failedAccounts++
             }
           },
-          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Mes-ZerarConta' },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 80,
+            maxRetries: 7,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            tag: 'Limpeza-Mes-ZerarConta',
+          },
         )
       }
 
@@ -351,16 +490,17 @@ export default function SettingsPage() {
       await reloadCompanyData()
       const monthObj = MONTHS.find((m) => m.value === selectedMonth)
       const monthLabel = monthObj ? monthObj.label : `${selectedMonth}`
-      if (failedDeletions > 0 || failedAccounts > 0) {
+      if (remainingTotal > 0 || failedAccounts > 0) {
         toast.warning(
-          `Limpeza de ${monthLabel}/${selectedYear} concluída com avisos: ${failedDeletions} lançamentos e ${failedAccounts} contas não puderam ser atualizados.`,
+          `Limpeza de ${monthLabel}/${selectedYear} parcial: ${remainingTotal} lançamento(s) e ${failedAccounts} conta(s) ainda restam no servidor. Execute novamente para finalizar os restantes.`,
+          { duration: 8000 },
         )
       } else {
         toast.success(
           `Lançamentos de ${monthLabel}/${selectedYear} foram removidos e os saldos das contas foram zerados.`,
         )
+        setDeleteMonthModalOpen(false)
       }
-      setDeleteMonthModalOpen(false)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao remover lançamentos do mês e zerar contas.')
     } finally {
