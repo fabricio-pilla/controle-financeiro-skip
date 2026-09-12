@@ -619,18 +619,31 @@ async function handleInstallmentPropagation({
   const createdItems: Transaction[] = []
   const deletedIds: string[] = []
 
-  // 3. Handle changing the number of installments (increase or decrease)
-  if (newTotal !== oldTotal) {
-    if (newTotal > oldTotal) {
-      // Create missing installments
-      const maxExistingNum = Math.max(...group.map((t) => t.installment_number || 0), oldTotal)
-      const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
-      const baseDate = formData.date
+  // 3. Handle changing the number of installments (increase or decrease) OR creating missing future installments
+  // Regra 1: "Todos" -> Não criar novos lançamentos — exceto se o usuário AUMENTOU o número de parcelas (nesse caso criar as parcelas extras).
+  // Só excluir parcelas se o usuário DIMINUIU o número de parcelas.
+  // Regra 3: "Este e os próximos" -> Só criar novos lançamentos caso não existam lançamentos vinculados futuros (ex: parcelas da série ainda não geradas).
+  const isIncrease = newTotal > oldTotal
+  const isDecrease = newTotal < oldTotal
 
-      const missingIndexes: number[] = []
-      for (let i = maxExistingNum + 1; i <= newTotal; i++) {
+  if (isIncrease || (choice === 'future' && newTotal > 1)) {
+    // Verificar quais números de parcelas futuras (de currentNum + 1 até newTotal) não existem
+    const existingNums = new Set(group.map((t) => t.installment_number || 0).filter((n) => n > 0))
+    existingNums.add(currentNum)
+
+    // Se a opção for 'all', criamos apenas se o usuário aumentou o total (de oldTotal + 1 até newTotal)
+    // Se a opção for 'future', criamos as parcelas faltantes de currentNum + 1 até newTotal
+    const missingIndexes: number[] = []
+    const startCheckNum = choice === 'future' ? currentNum + 1 : oldTotal + 1
+    for (let i = startCheckNum; i <= newTotal; i++) {
+      if (!existingNums.has(i)) {
         missingIndexes.push(i)
       }
+    }
+
+    if (missingIndexes.length > 0) {
+      const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
+      const baseDate = formData.date
 
       const newlyCreated = await runInPool(
         missingIndexes,
@@ -670,14 +683,16 @@ async function handleInstallmentPropagation({
             category_id: rec.category_id,
             subcategory_id: rec.subcategory_id,
             account_id: rec.account_id,
-            date: rec.date,
-            payment_date: rec.payment_date,
-            paid: rec.paid,
-            is_recurring: rec.is_recurring,
-            recurrence_type: rec.recurrence_type,
-            installment_number: rec.installment_number,
-            installments_total: rec.installment_total || rec.installments_total,
-            parent_transaction_id: rec.parent_transaction_id,
+            date: rec.date ? String(rec.date).split(/[T\s]/)[0] : parcelDate,
+            payment_date: rec.payment_date
+              ? String(rec.payment_date).split(/[T\s]/)[0]
+              : addMonths(formData.payment_date || formData.date, diffMonths),
+            paid: false,
+            is_recurring: false,
+            recurrence_type: undefined,
+            installment_number: rec.installment_number || i,
+            installments_total: rec.installment_total || rec.installments_total || newTotal,
+            parent_transaction_id: rec.parent_transaction_id || parentId,
             notes: rec.notes,
             created_at: rec.created,
           } as Transaction
@@ -685,14 +700,19 @@ async function handleInstallmentPropagation({
         { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'CREATE_INSTALLMENT' },
       )
       createdItems.push(...newlyCreated)
-    } else if (newTotal < oldTotal) {
-      // Exceeding installments to remove (e.g. reduced from 10 to 6 -> delete 7, 8, 9, 10)
-      const excessItems = group.filter((t) => (t.installment_number || 0) > newTotal)
-      excessItems.forEach((excess) => {
-        affectedAccountIds.add(excess.account_id)
-        deletedIds.push(excess.id)
-      })
+    }
+  }
 
+  if (isDecrease) {
+    // Só excluir parcelas se o usuário DIMINUIU o número de parcelas (Regra 1)
+    // Exceeding installments to remove (e.g. reduced from 10 to 6 -> delete 7, 8, 9, 10)
+    const excessItems = group.filter((t) => (t.installment_number || 0) > newTotal)
+    excessItems.forEach((excess) => {
+      affectedAccountIds.add(excess.account_id)
+      deletedIds.push(excess.id)
+    })
+
+    if (excessItems.length > 0) {
       await runInPool(
         excessItems,
         async (excess) => {
@@ -728,8 +748,11 @@ async function handleRecurringPropagation({
 
   let targetsToUpdate: Transaction[] = []
   if (choice === 'all') {
+    // Regra 1: "Todos" -> atualizar TODOS os lançamentos referentes ao mexido, SOMENTE isso. Não criar novos.
     targetsToUpdate = series.length > 0 ? series : [transaction]
   } else if (choice === 'future') {
+    // Regra 3: "Este e os próximos" -> atualizar os dados dos lançamentos futuros referentes ao mexido.
+    // Só criar novos lançamentos caso não existam lançamentos vinculados futuros.
     const currentDate = normalizeDateStr(transaction.date)
     targetsToUpdate = series.filter((t) => normalizeDateStr(t.date) >= currentDate)
     if (targetsToUpdate.length === 0) targetsToUpdate = [transaction]
@@ -800,8 +823,99 @@ async function handleRecurringPropagation({
     { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'UPDATE_RECURRING' },
   )
 
+  const createdItems: Transaction[] = []
+
+  // Regra 3 (continuação): Para a opção "Este e os próximos", só criar novos lançamentos caso não existam
+  // lançamentos vinculados futuros (ex.: meses da janela de recorrência ainda sem ocorrência).
+  // Se a opção for 'all', NUNCA criar novos lançamentos (Regra 1: "Não criar novos lançamentos").
+  if (choice === 'future' && formData.is_recurring) {
+    // Identificar meses existentes nesta série
+    // Montamos conjunto com todas as transações da série (incluindo as já atualizadas)
+    const existingSeriesMonths = new Set<string>()
+    for (const t of series) {
+      if (t.date) existingSeriesMonths.add(normalizeDateStr(t.date).substring(0, 7))
+    }
+    // Adicionar mês da transação editada
+    existingSeriesMonths.add(normalizeDateStr(formData.date).substring(0, 7))
+
+    const updatedTxDateParts = parseDateParts(formData.date)
+    const baseYear = updatedTxDateParts.year
+    const baseMonth = updatedTxDateParts.month
+    const origDay = updatedTxDateParts.day
+
+    const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
+    const cleanDesc = cleanDescription(formData.description).trim()
+
+    // Planejar apenas os meses faltantes na janela de 12 meses
+    const missingCandidates: any[] = []
+    for (let m = 1; m <= 12; m++) {
+      const targetDateStr = computeTargetDate(baseYear, baseMonth, origDay, m)
+      const targetYM = targetDateStr.substring(0, 7)
+      if (existingSeriesMonths.has(targetYM)) {
+        continue
+      }
+      existingSeriesMonths.add(targetYM)
+
+      let calcPaymentDate = targetDateStr.split(/[T\s]/)[0]
+      if (formData.payment_date) {
+        const payParts = parseDateParts(formData.payment_date)
+        calcPaymentDate = computeTargetDate(payParts.year, payParts.month, payParts.day, m).split(
+          /[T\s]/,
+        )[0]
+      }
+
+      missingCandidates.push({
+        control_id: transaction.control_id,
+        user_id: userId,
+        type: formData.type,
+        amount: formData.amount,
+        description: cleanDesc,
+        category_id: formData.category_id || '',
+        subcategory_id: formData.subcategory_id || '',
+        account_id: formData.account_id,
+        date: targetDateStr,
+        payment_date: calcPaymentDate,
+        paid: false,
+        is_recurring: true,
+        recurrence_type: formData.recurrence_type || 'mensal',
+        notes: formData.notes?.trim() || 'Gerado automaticamente: recorrência mensal',
+      })
+    }
+
+    if (missingCandidates.length > 0) {
+      const newlyCreated = await runInPool(
+        missingCandidates,
+        async (candidate) => {
+          const rec = await pb.collection('transactions').create(candidate)
+          return {
+            id: rec.id,
+            control_id: rec.control_id,
+            user_id: rec.user_id,
+            type: rec.type,
+            amount: Number(rec.amount),
+            description: rec.description,
+            category_id: rec.category_id,
+            subcategory_id: rec.subcategory_id,
+            account_id: rec.account_id,
+            date: rec.date ? String(rec.date).split(/[T\s]/)[0] : candidate.date.split(/[T\s]/)[0],
+            payment_date: rec.payment_date
+              ? String(rec.payment_date).split(/[T\s]/)[0]
+              : candidate.payment_date,
+            paid: false,
+            is_recurring: true,
+            recurrence_type: rec.recurrence_type,
+            notes: rec.notes,
+            created_at: rec.created,
+          } as Transaction
+        },
+        { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'CREATE_MISSING_RECURRING' },
+      )
+      createdItems.push(...newlyCreated)
+    }
+  }
+
   // Recompute balance once at end for all affected accounts
   await skipCloud.recomputeAccountsBalances(Array.from(affectedAccountIds))
 
-  return { updated: updatedItems, created: [], deletedIds: [] }
+  return { updated: updatedItems, created: createdItems, deletedIds: [] }
 }

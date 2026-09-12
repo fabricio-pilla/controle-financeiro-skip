@@ -237,87 +237,18 @@ export function TransactionModal({
       result.created.forEach((t) => updatedTxMap.set(t.id, t))
       const combinedTransactions = Array.from(updatedTxMap.values())
 
-      // Regra de geração pós-edição:
-      // Se o usuário escolheu "single" (somente esse registro), NÃO disparar geração automática de ocorrências futuras.
-      // Se escolheu 'future' ou 'all' (ou se a transação passou a ser recorrente agora):
-      // apenas disparar a geração se houver meses futuros sem ocorrência (preenchendo a janela de 12 meses),
-      // passando combinedTransactions para que ocorrências já existentes (atualizadas) NUNCA sejam duplicadas.
-      const nowRecurring = Boolean(formData.is_recurring)
-      const shouldCheckRecurringGeneration = nowRecurring && currentCompany && choice !== 'single'
-
-      if (shouldCheckRecurringGeneration) {
-        import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
-          const pb = (await import('@/lib/pocketbase/client')).default
-          const currentUserId =
-            (transaction as any).user_id ||
-            pb.authStore.record?.id ||
-            (currentCompany as any).created_by ||
-            ''
-          const updatedTarget = result.updated.find((u) => u.id === transaction.id) || {
-            ...transaction,
-            ...formData,
-          }
-          triggerAutoRecurringGeneration({
-            sourceTransaction: updatedTarget,
-            existingTransactions: combinedTransactions,
-            currentCompanyId: currentCompany.id,
-            currentUserId,
-            onSuccessCreated: (createdList) => {
-              applyTransactionsBatchUpdate({ created: createdList })
-              toast.success(
-                `Foram geradas automaticamente ${createdList.length} ocorrência(s) futura(s) faltante(s) para "${formData.description}".`,
-              )
-            },
-          }).catch((err) => {
-            console.warn('[TransactionModal] Erro na geração automática pós-edição:', err)
-          })
-        })
-      }
-
-      // Se a transação é parcelada (installment_total > 1) e o usuário não escolheu 'single',
-      // disparar a geração automática apenas para parcelas faltantes da série
-      const resolvedTargetTotal = Number(
-        formData.installments_total ||
-          transaction.installments_total ||
-          resolvedInstallmentsTotal ||
-          1,
-      )
-      const shouldCheckInstallmentGeneration =
-        resolvedTargetTotal > 1 && currentCompany && choice !== 'single'
-
-      if (shouldCheckInstallmentGeneration) {
-        import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
-          const pb = (await import('@/lib/pocketbase/client')).default
-          const currentUserId =
-            (transaction as any).user_id ||
-            pb.authStore.record?.id ||
-            (currentCompany as any).created_by ||
-            ''
-          const updatedTarget = result.updated.find((u) => u.id === transaction.id) || {
-            ...transaction,
-            ...formData,
-            installment_number: resolvedInstallmentNumber,
-            installments_total: resolvedTargetTotal,
-          }
-          triggerAutoInstallmentGeneration({
-            sourceTransaction: updatedTarget,
-            existingTransactions: combinedTransactions,
-            accounts,
-            currentCompanyId: currentCompany.id,
-            currentUserId,
-            onSuccessCreated: (createdList) => {
-              applyTransactionsBatchUpdate({ created: createdList })
-              toast.success(
-                `Foram geradas automaticamente ${createdList.length} parcela(s) seguinte(s) para "${formData.description}".`,
-              )
-            },
-          }).catch((err) => {
-            console.warn(
-              '[TransactionModal] Erro na geração automática de parcelas pós-edição:',
-              err,
-            )
-          })
-        })
+      // Notificação das criações realizadas pela propagação (Regras 1 e 3)
+      if (result.created.length > 0) {
+        const isInst = Boolean(formData.installments_total && formData.installments_total > 1)
+        if (isInst) {
+          toast.success(
+            `Foram criadas ${result.created.length} parcela(s) extra(s) para "${formData.description}".`,
+          )
+        } else {
+          toast.success(
+            `Foram geradas automaticamente ${result.created.length} ocorrência(s) futura(s) faltante(s) para "${formData.description}".`,
+          )
+        }
       }
 
       // Background sync to keep balances fresh
