@@ -24,7 +24,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
-import { sleep, executeWithRetry } from '@/lib/pocketbase/retry'
+import { sleep, executeWithRetry, runInPool } from '@/lib/pocketbase/retry'
 import {
   Dialog,
   DialogContent,
@@ -59,6 +59,7 @@ export default function SettingsPage() {
     deleteCompany,
     selectCompany,
     reloadCompanyData,
+    applyTransactionsBatchUpdate,
   } = useCompany()
   const navigate = useNavigate()
 
@@ -169,17 +170,14 @@ export default function SettingsPage() {
 
     setIsDeletingAll(true)
     setDeleteAllProgress(null)
-    const BATCH_SIZE = 5
-    const BATCH_DELAY_MS = 400
-    const INTER_ITEM_DELAY_MS = 50
 
     try {
       // 1. Obter todas as transações do controle ativo com retry
       const records = await executeWithRetry(
         () =>
-          pb.collection('transactions').getFullList({
+          pb.collection('transactions').getFullList<{ id: string; account_id?: string }>({
             filter: `control_id="${currentCompany.id}"`,
-            fields: 'id',
+            fields: 'id,account_id',
           }),
         5,
         1000,
@@ -189,36 +187,36 @@ export default function SettingsPage() {
 
       setDeleteAllProgress({ current: 0, total: records.length })
 
+      // Atualização otimista imediata na UI: remove todos os registros do estado local
+      const deletedIds = records.map((r) => r.id)
+      applyTransactionsBatchUpdate({ deletedIds })
+
+      let completedDeletions = 0
       let failedDeletions = 0
-      // 2. Excluir lançamentos em lotes espaçados e com retry exponencial em 429
-      for (let i = 0; i < records.length; i++) {
-        const rec = records[i]
-        if (i > 0) {
-          if (i % BATCH_SIZE === 0) {
-            await sleep(BATCH_DELAY_MS)
-          } else {
-            await sleep(INTER_ITEM_DELAY_MS)
-          }
-        }
-        try {
-          await executeWithRetry(
-            () => pb.collection('transactions').delete(rec.id),
-            5,
-            1000,
-            'Limpeza-Total-Delete',
-            10000,
-          )
-        } catch (itemErr) {
-          console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
-          failedDeletions++
-        }
-        setDeleteAllProgress({ current: i + 1, total: records.length })
+
+      // 2. Excluir lançamentos em pool concorrente controlado (concorrência 4) com retry exponencial em 429
+      if (records.length > 0) {
+        await runInPool(
+          records,
+          async (rec) => {
+            try {
+              await pb.collection('transactions').delete(rec.id)
+            } catch (itemErr) {
+              console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+              failedDeletions++
+            } finally {
+              completedDeletions++
+              setDeleteAllProgress({ current: completedDeletions, total: records.length })
+            }
+          },
+          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Total-Delete' },
+        )
       }
 
-      // 3. Zerar o saldo de todas as contas do controle ativo
+      // 3. Zerar o saldo de todas as contas do controle ativo de forma concorrente em lote único
       const accountsList = await executeWithRetry(
         () =>
-          pb.collection('accounts').getFullList({
+          pb.collection('accounts').getFullList<{ id: string }>({
             filter: `control_id="${currentCompany.id}"`,
             fields: 'id',
           }),
@@ -229,23 +227,19 @@ export default function SettingsPage() {
       )
 
       let failedAccounts = 0
-      for (let i = 0; i < accountsList.length; i++) {
-        const acc = accountsList[i]
-        if (i > 0) {
-          await sleep(INTER_ITEM_DELAY_MS)
-        }
-        try {
-          await executeWithRetry(
-            () => pb.collection('accounts').update(acc.id, { balance: 0 }),
-            5,
-            1000,
-            'Limpeza-Total-ZerarConta',
-            10000,
-          )
-        } catch (accErr) {
-          console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
-          failedAccounts++
-        }
+      if (accountsList.length > 0) {
+        await runInPool(
+          accountsList,
+          async (acc) => {
+            try {
+              await pb.collection('accounts').update(acc.id, { balance: 0 })
+            } catch (accErr) {
+              console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+              failedAccounts++
+            }
+          },
+          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Total-ZerarConta' },
+        )
       }
 
       // 4. Recarregar dados do controle para atualizar dashboard e contas imediatamente
@@ -275,9 +269,6 @@ export default function SettingsPage() {
 
     setIsDeletingMonth(true)
     setDeleteMonthProgress(null)
-    const BATCH_SIZE = 5
-    const BATCH_DELAY_MS = 400
-    const INTER_ITEM_DELAY_MS = 50
 
     try {
       const padMonth = String(selectedMonth).padStart(2, '0')
@@ -289,9 +280,9 @@ export default function SettingsPage() {
       // 1. Obter lançamentos do mês selecionado com retry
       const records = await executeWithRetry(
         () =>
-          pb.collection('transactions').getFullList({
+          pb.collection('transactions').getFullList<{ id: string; account_id?: string }>({
             filter: `control_id="${currentCompany.id}" && date>="${startDate}" && date<="${endDate}"`,
-            fields: 'id',
+            fields: 'id,account_id',
           }),
         5,
         1000,
@@ -301,36 +292,36 @@ export default function SettingsPage() {
 
       setDeleteMonthProgress({ current: 0, total: records.length })
 
+      // Atualização otimista imediata na UI: remove os registros selecionados do mês do estado local
+      const deletedMonthIds = records.map((r) => r.id)
+      applyTransactionsBatchUpdate({ deletedIds: deletedMonthIds })
+
+      let completedDeletions = 0
       let failedDeletions = 0
-      // 2. Excluir lançamentos em lotes espaçados e com retry exponencial em 429
-      for (let i = 0; i < records.length; i++) {
-        const rec = records[i]
-        if (i > 0) {
-          if (i % BATCH_SIZE === 0) {
-            await sleep(BATCH_DELAY_MS)
-          } else {
-            await sleep(INTER_ITEM_DELAY_MS)
-          }
-        }
-        try {
-          await executeWithRetry(
-            () => pb.collection('transactions').delete(rec.id),
-            5,
-            1000,
-            'Limpeza-Mes-Delete',
-            10000,
-          )
-        } catch (itemErr) {
-          console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
-          failedDeletions++
-        }
-        setDeleteMonthProgress({ current: i + 1, total: records.length })
+
+      // 2. Excluir lançamentos em pool concorrente controlado (concorrência 4) com retry exponencial em 429
+      if (records.length > 0) {
+        await runInPool(
+          records,
+          async (rec) => {
+            try {
+              await pb.collection('transactions').delete(rec.id)
+            } catch (itemErr) {
+              console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+              failedDeletions++
+            } finally {
+              completedDeletions++
+              setDeleteMonthProgress({ current: completedDeletions, total: records.length })
+            }
+          },
+          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Mes-Delete' },
+        )
       }
 
-      // 3. Zerar o saldo de todas as contas do controle ativo
+      // 3. Zerar o saldo de todas as contas do controle ativo de forma concorrente em lote único
       const accountsList = await executeWithRetry(
         () =>
-          pb.collection('accounts').getFullList({
+          pb.collection('accounts').getFullList<{ id: string }>({
             filter: `control_id="${currentCompany.id}"`,
             fields: 'id',
           }),
@@ -341,23 +332,19 @@ export default function SettingsPage() {
       )
 
       let failedAccounts = 0
-      for (let i = 0; i < accountsList.length; i++) {
-        const acc = accountsList[i]
-        if (i > 0) {
-          await sleep(INTER_ITEM_DELAY_MS)
-        }
-        try {
-          await executeWithRetry(
-            () => pb.collection('accounts').update(acc.id, { balance: 0 }),
-            5,
-            1000,
-            'Limpeza-Mes-ZerarConta',
-            10000,
-          )
-        } catch (accErr) {
-          console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
-          failedAccounts++
-        }
+      if (accountsList.length > 0) {
+        await runInPool(
+          accountsList,
+          async (acc) => {
+            try {
+              await pb.collection('accounts').update(acc.id, { balance: 0 })
+            } catch (accErr) {
+              console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+              failedAccounts++
+            }
+          },
+          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Limpeza-Mes-ZerarConta' },
+        )
       }
 
       // 4. Recarregar dados do controle para atualizar dashboard e contas imediatamente
