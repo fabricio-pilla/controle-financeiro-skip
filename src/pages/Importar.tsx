@@ -587,12 +587,17 @@ const VALID_RECURRENCE_VALUES = new Set(['mensal', 'semanal', 'anual'])
  * Prevents HTTP 400 validation errors (e.g. empty strings in relation/date/select fields, invalid enums).
  */
 function sanitizeTransactionPayload(input: Record<string, any>): Record<string, any> {
+  const validDate =
+    typeof input.date === 'string' && input.date.trim()
+      ? input.date.trim()
+      : new Date().toISOString().slice(0, 10)
+
   const payload: Record<string, any> = {
     control_id: input.control_id,
     type: input.type === 'receita' ? 'receita' : 'despesa',
     amount: typeof input.amount === 'number' && !isNaN(input.amount) ? Math.abs(input.amount) : 0,
     description: String(input.description || 'Sem descrição').trim() || 'Sem descrição',
-    date: input.date,
+    date: validDate,
   }
 
   // Relations (must be non-empty string or omitted, never "")
@@ -662,6 +667,25 @@ function sanitizeTransactionPayload(input: Record<string, any>): Record<string, 
  * Formats error message from PocketBase API response for human display.
  * Extracts individual field validation details when available (e.g. "date: Cannot be blank").
  */
+function sanitizeSubcategoryPayload(input: Record<string, any>): Record<string, any> {
+  const payload: Record<string, any> = {
+    control_id: input.control_id,
+    category_id: input.category_id,
+    name: String(input.name || 'Diversos').trim() || 'Diversos',
+  }
+  if (typeof input.color === 'string' && input.color.trim()) {
+    payload.color = input.color.trim()
+  }
+  if (typeof input.icon === 'string' && input.icon.trim()) {
+    payload.icon = input.icon.trim()
+  }
+  return payload
+}
+
+/**
+ * Formats error message from PocketBase API response for human display.
+ * Extracts individual field validation details when available (e.g. "date: Cannot be blank").
+ */
 function formatPocketBaseError(err: any): string {
   const isRateLimit =
     err?.status === 429 ||
@@ -678,6 +702,22 @@ function formatPocketBaseError(err: any): string {
   if (fieldKeys.length > 0) {
     const details = fieldKeys.map((f) => `${f}: ${fieldErrors[f]}`).join('; ')
     return `Validação recusada (${details})`
+  }
+
+  // Also check raw response.data if extractFieldErrors didn't catch due to structure
+  const rawData = err?.response?.data || err?.data
+  if (rawData && typeof rawData === 'object') {
+    const parts: string[] = []
+    for (const [k, v] of Object.entries(rawData)) {
+      if (v && typeof v === 'object' && 'message' in v && (v as any).message) {
+        parts.push(`${k}: ${(v as any).message}`)
+      } else if (typeof v === 'string') {
+        parts.push(`${k}: ${v}`)
+      }
+    }
+    if (parts.length > 0) {
+      return `Validação recusada (${parts.join('; ')})`
+    }
   }
 
   if (err?.response?.message) {
@@ -1191,411 +1231,451 @@ export default function Importar() {
 
   // Main import execution routine
   const handleExecuteImport = async () => {
-    if (!currentCompany?.id) {
-      setErrorBanner('Nenhum controle selecionado.')
-      return
-    }
-
-    if (parsedRows.length === 0) {
-      setErrorBanner('Nenhum dado encontrado para importar.')
-      return
-    }
-
-    setIsImporting(true)
-    setErrorBanner(null)
-    setImportProgress({ current: 0, total: parsedRows.length })
-
-    const summary: ImportSummary = {
-      totalRows: parsedRows.length,
-      importedCount: 0,
-      skippedCount: 0,
-      errorsCount: 0,
-      createdTransactions: 0,
-      details: [],
-      unimportedRows: [],
-    }
-
-    const currentUserId = pb.authStore.model?.id || ''
-
-    // Helpers for rate limiting and backoff retry on 429 (Too Many Requests)
-    const executeWithRetry = <T,>(fn: () => Promise<T>) =>
-      executeSharedRetry(fn, 5, 1000, 'Importar', 10000)
-
-    // Ensure we have real category & subcategory IDs for this control BEFORE starting import
-    let freshCategories: Category[] = []
-    let freshSubcategories: Subcategory[] = []
-
     try {
-      const results = await Promise.all([
-        executeWithRetry(() =>
-          pb.collection('categories').getFullList<Category>({
-            filter: `control_id="${currentCompany.id}"`,
-          }),
-        ).catch((err) => {
-          console.warn('Não foi possível pré-carregar categorias:', err)
-          return dbCategories
-        }),
-        executeWithRetry(() =>
-          pb.collection('subcategories').getFullList<Subcategory>({
-            filter: `control_id="${currentCompany.id}"`,
-          }),
-        ).catch((err) => {
-          console.warn('Não foi possível pré-carregar subcategorias:', err)
-          return dbSubcategories
-        }),
-      ])
-      freshCategories = results[0]
-      freshSubcategories = results[1]
-    } catch (preloadErr) {
-      console.warn(
-        'Erro ao pré-carregar dados para importação, usando dados locais em cache:',
-        preloadErr,
-      )
-      freshCategories = dbCategories
-      freshSubcategories = dbSubcategories
-    }
+      if (!currentCompany?.id) {
+        setErrorBanner('Nenhum controle selecionado.')
+        return
+      }
 
-    const getCatId = (name: string, _type: 'despesa' | 'receita'): string => {
-      const match =
-        freshCategories.find((c) => normalizeText(c.name) === normalizeText(name)) ||
-        freshCategories.find((c) => normalizeText(c.name).includes(normalizeText(name)))
-      return match ? match.id : ''
-    }
+      if (parsedRows.length === 0) {
+        setErrorBanner('Nenhum dado encontrado para importar.')
+        return
+      }
 
-    // Cache of subcategories so we can dynamically auto-create if missing
-    const subcatsCache: Subcategory[] = [...freshSubcategories]
-    const getOrCreateSubcategoryId = async (
-      categoryId: string,
-      subName: string,
-    ): Promise<string> => {
-      if (!categoryId || !subName.trim()) return ''
-      const existing = subcatsCache.find(
-        (s) => s.category_id === categoryId && normalizeText(s.name) === normalizeText(subName),
-      )
-      if (existing) return existing.id
+      setIsImporting(true)
+      setErrorBanner(null)
+      setImportProgress({ current: 0, total: parsedRows.length })
 
-      // Create new subcategory automatically
+      const summary: ImportSummary = {
+        totalRows: parsedRows.length,
+        importedCount: 0,
+        skippedCount: 0,
+        errorsCount: 0,
+        createdTransactions: 0,
+        details: [],
+        unimportedRows: [],
+      }
+
+      const currentUserId = pb.authStore.model?.id || ''
+
+      // Helpers for rate limiting and backoff retry on 429 (Too Many Requests)
+      const executeWithRetry = <T,>(fn: () => Promise<T>) =>
+        executeSharedRetry(fn, 5, 1000, 'Importar', 10000)
+
+      // Ensure we have real category & subcategory IDs for this control BEFORE starting import
+      let freshCategories: Category[] = []
+      let freshSubcategories: Subcategory[] = []
+
       try {
-        const created = await executeWithRetry(() =>
-          pb.collection('subcategories').create<Subcategory>({
+        const results = await Promise.all([
+          executeWithRetry(() =>
+            pb.collection('categories').getFullList<Category>({
+              filter: `control_id="${currentCompany.id}"`,
+            }),
+          ).catch((err) => {
+            console.warn('Não foi possível pré-carregar categorias:', err)
+            return dbCategories
+          }),
+          executeWithRetry(() =>
+            pb.collection('subcategories').getFullList<Subcategory>({
+              filter: `control_id="${currentCompany.id}"`,
+            }),
+          ).catch((err) => {
+            console.warn('Não foi possível pré-carregar subcategorias:', err)
+            return dbSubcategories
+          }),
+        ])
+        freshCategories = results[0]
+        freshSubcategories = results[1]
+      } catch (preloadErr) {
+        console.warn(
+          'Erro ao pré-carregar dados para importação, usando dados locais em cache:',
+          preloadErr,
+        )
+        freshCategories = dbCategories
+        freshSubcategories = dbSubcategories
+      }
+
+      const getCatId = (name: string, _type: 'despesa' | 'receita'): string => {
+        // 1. Exact match by name & type
+        const exactWithType = freshCategories.find(
+          (c) => normalizeText(c.name) === normalizeText(name) && c.type === _type,
+        )
+        if (exactWithType) return exactWithType.id
+
+        // 2. Exact match by name
+        const exactByName = freshCategories.find(
+          (c) => normalizeText(c.name) === normalizeText(name),
+        )
+        if (exactByName) return exactByName.id
+
+        // 3. Contains match
+        const looseMatch = freshCategories.find(
+          (c) =>
+            normalizeText(c.name).includes(normalizeText(name)) ||
+            normalizeText(name).includes(normalizeText(c.name)),
+        )
+        if (looseMatch) return looseMatch.id
+
+        // 4. Fallback to any category matching the type
+        const fallbackWithType = freshCategories.find((c) => c.type === _type)
+        if (fallbackWithType) return fallbackWithType.id
+
+        // 5. Ultimate fallback to first available category
+        return freshCategories[0]?.id || ''
+      }
+
+      // Cache of subcategories so we can dynamically auto-create if missing
+      const subcatsCache: Subcategory[] = [...freshSubcategories]
+      const getOrCreateSubcategoryId = async (
+        categoryId: string,
+        subName: string,
+      ): Promise<string> => {
+        if (!categoryId || !subName.trim()) return ''
+        const existing = subcatsCache.find(
+          (s) => s.category_id === categoryId && normalizeText(s.name) === normalizeText(subName),
+        )
+        if (existing) return existing.id
+
+        // Create new subcategory automatically
+        try {
+          const subPayload = sanitizeSubcategoryPayload({
             control_id: currentCompany.id,
             category_id: categoryId,
             name: subName.trim(),
-          }),
-        )
-        subcatsCache.push(created)
-        return created.id
-      } catch (err) {
-        console.warn('Erro ao auto-criar subcategoria:', err)
-        return ''
-      }
-    }
-
-    const BATCH_SIZE = 5
-    const BATCH_DELAY_MS = 400
-    const INTER_ROW_DELAY_MS = 50
-
-    for (let i = 0; i < parsedRows.length; i++) {
-      const row = parsedRows[i]
-      setImportProgress({ current: i + 1, total: parsedRows.length })
-
-      // Rate limiting: pause between batches or small delay between rows
-      if (i > 0) {
-        if (i % BATCH_SIZE === 0) {
-          await sleep(BATCH_DELAY_MS)
-        } else {
-          await sleep(INTER_ROW_DELAY_MS)
+          })
+          const created = await executeWithRetry(() =>
+            pb.collection('subcategories').create<Subcategory>(subPayload),
+          )
+          subcatsCache.push(created)
+          return created.id
+        } catch (err) {
+          console.warn('Erro ao auto-criar subcategoria:', formatPocketBaseError(err))
+          return ''
         }
       }
 
-      // Check if row is skippable due to missing account or invalid data
-      if (!row.isValid || !row.matchedAccount) {
-        summary.skippedCount++
-        const reason = row.skipReason || 'Conta não encontrada ou dados insuficientes.'
-        summary.details.push({
-          row: row.rowIndex,
-          description: row.description || 'Linha inválida',
-          status: 'skipped',
-          message: reason,
-        })
-        summary.unimportedRows.push({
-          rowIndex: row.rowIndex,
-          dateFormatted: row.dateFormatted,
-          description: row.description || 'Sem descrição',
-          amount: row.amount,
-          accountRaw: row.accountRaw,
-          categoryRaw: row.categoryRaw,
-          reason,
-          type: 'skipped',
-          rawDetails: row.raw,
-        })
-        continue
-      }
+      const BATCH_SIZE = 5
+      const BATCH_DELAY_MS = 400
+      const INTER_ROW_DELAY_MS = 50
 
-      try {
-        const categoryId =
-          row.matchedCategoryId || getCatId(row.matchedCategoryName, row.matchedCategoryType)
+      for (let i = 0; i < parsedRows.length; i++) {
+        const row = parsedRows[i]
+        setImportProgress({ current: i + 1, total: parsedRows.length })
 
-        let subcategoryId = row.matchedSubcategoryId
-        if (!subcategoryId && categoryId && row.matchedSubcategoryName) {
-          subcategoryId = await getOrCreateSubcategoryId(categoryId, row.matchedSubcategoryName)
+        // Rate limiting: pause between batches or small delay between rows
+        if (i > 0) {
+          if (i % BATCH_SIZE === 0) {
+            await sleep(BATCH_DELAY_MS)
+          } else {
+            await sleep(INTER_ROW_DELAY_MS)
+          }
         }
 
-        // Case A: Installment purchase (e.g. "01/05" or "23/36" or "Crédito parcelado")
-        if (
-          row.totalInstallments &&
-          row.totalInstallments > 1 &&
-          row.installmentNumber !== null &&
-          row.installmentNumber > 0
-        ) {
-          const totalInst = row.totalInstallments
-          const currentInst = row.installmentNumber
-          const unitAmount = row.amount
-          const totalEstimatedAmount = Math.round(unitAmount * totalInst * 100) / 100
-
-          // 1. Create parent record (is_parent = true, installment_number = 0)
-          const rawParentPayload: any = {
-            control_id: currentCompany.id,
-            user_id: currentUserId,
-            type: row.matchedCategoryType,
-            amount: totalEstimatedAmount,
-            description: `${row.description} (Total: ${formatCurrency(totalEstimatedAmount)})`,
-            category_id: categoryId,
-            subcategory_id: subcategoryId,
-            account_id: row.matchedAccount.id,
-            date: row.dateFormatted,
-            payment_date: row.dateFormatted,
-            paid: true,
-            is_recurring: false,
-            recurring: false,
-            installment_total: totalInst,
-            installment_number: 0,
-            notes: `Importado de planilha: registro pai consolidado (${totalInst}x)`,
-          }
-
-          const sanitizedParentPayload = sanitizeTransactionPayload(rawParentPayload)
-          const parentRecord = await executeWithRetry(() =>
-            pb.collection('transactions').create(sanitizedParentPayload),
-          )
-          summary.createdTransactions++
-
-          // 2. Create the current individual installment (e.g. 23/36) with sheet date
-          const rawCurrentInstPayload: any = {
-            control_id: currentCompany.id,
-            user_id: currentUserId,
-            type: row.matchedCategoryType,
-            amount: unitAmount,
-            description: `${row.description} (${currentInst}/${totalInst})`,
-            category_id: categoryId,
-            subcategory_id: subcategoryId,
-            account_id: row.matchedAccount.id,
-            date: row.dateFormatted,
-            payment_date: row.dateFormatted,
-            paid: true,
-            is_recurring: false,
-            recurring: false,
-            installment_total: totalInst,
-            installment_number: currentInst,
-            parent_transaction_id: parentRecord.id,
-            notes: `Importado de planilha: parcela ${currentInst}/${totalInst}`,
-          }
-
-          const sanitizedCurrentInstPayload = sanitizeTransactionPayload(rawCurrentInstPayload)
-          await executeWithRetry(() =>
-            pb.collection('transactions').create(sanitizedCurrentInstPayload),
-          )
-          summary.createdTransactions++
-
-          // Adjust account balance for the created installment
-          try {
-            const acc = await executeWithRetry(() =>
-              pb.collection('accounts').getOne(row.matchedAccount.id),
-            )
-            let newBalance = Number(acc.balance) || 0
-            if (acc.type === 'credito') {
-              newBalance += row.matchedCategoryType === 'despesa' ? unitAmount : -unitAmount
-            } else {
-              newBalance += row.matchedCategoryType === 'receita' ? unitAmount : -unitAmount
-            }
-            await executeWithRetry(() =>
-              pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
-            )
-          } catch (err) {
-            console.warn('Erro ao atualizar saldo da conta:', err)
-          }
-
-          summary.importedCount++
+        // Check if row is skippable due to missing account or invalid data
+        if (!row.isValid || !row.matchedAccount) {
+          summary.skippedCount++
+          const reason = row.skipReason || 'Conta não encontrada ou dados insuficientes.'
           summary.details.push({
             row: row.rowIndex,
-            description: row.description,
-            status: 'imported',
-            message: `Parcela ${currentInst}/${totalInst} criada com vínculo pai.`,
+            description: row.description || 'Linha inválida',
+            status: 'skipped',
+            message: reason,
           })
-        } else if (
-          // Case B: General "Crédito parcelado" without explicit N/M, but has installment total
-          row.totalInstallments &&
-          row.totalInstallments > 1 &&
-          (!row.installmentNumber || row.installmentNumber === 0)
-        ) {
-          const totalInst = row.totalInstallments
-          const baseAmount = Math.round((row.amount / totalInst) * 100) / 100
-          const remainder = Math.round((row.amount - baseAmount * totalInst) * 100) / 100
+          summary.unimportedRows.push({
+            rowIndex: row.rowIndex,
+            dateFormatted: row.dateFormatted,
+            description: row.description || 'Sem descrição',
+            amount: row.amount,
+            accountRaw: row.accountRaw,
+            categoryRaw: row.categoryRaw,
+            reason,
+            type: 'skipped',
+            rawDetails: row.raw,
+          })
+          continue
+        }
 
-          let parentId = ''
-          for (let inst = 1; inst <= totalInst; inst++) {
-            const parcelAmount =
-              inst === 1 ? Math.round((baseAmount + remainder) * 100) / 100 : baseAmount
-            const instDate = addMonths(row.dateFormatted, inst - 1)
+        try {
+          const categoryId =
+            row.matchedCategoryId || getCatId(row.matchedCategoryName, row.matchedCategoryType)
 
-            const rawPayload: any = {
+          let subcategoryId = row.matchedSubcategoryId
+          if (!subcategoryId && categoryId && row.matchedSubcategoryName) {
+            subcategoryId = await getOrCreateSubcategoryId(categoryId, row.matchedSubcategoryName)
+          }
+
+          // Case A: Installment purchase (e.g. "01/05" or "23/36" or "Crédito parcelado")
+          if (
+            row.totalInstallments &&
+            row.totalInstallments > 1 &&
+            row.installmentNumber !== null &&
+            row.installmentNumber > 0
+          ) {
+            const totalInst = row.totalInstallments
+            const currentInst = row.installmentNumber
+            const unitAmount = row.amount
+            const totalEstimatedAmount = Math.round(unitAmount * totalInst * 100) / 100
+
+            // 1. Create parent record (is_parent = true, installment_number = 0)
+            const rawParentPayload: any = {
               control_id: currentCompany.id,
               user_id: currentUserId,
               type: row.matchedCategoryType,
-              amount: parcelAmount,
-              description: `${row.description} (${inst}/${totalInst})`,
+              amount: totalEstimatedAmount,
+              description: `${row.description} (Total: ${formatCurrency(totalEstimatedAmount)})`,
               category_id: categoryId,
               subcategory_id: subcategoryId,
               account_id: row.matchedAccount.id,
-              date: instDate,
-              payment_date: instDate,
+              date: row.dateFormatted,
+              payment_date: row.dateFormatted,
               paid: true,
               is_recurring: false,
               recurring: false,
               installment_total: totalInst,
-              installment_number: inst,
-              notes: 'Importado de planilha via parcelamento automático',
+              installment_number: 0,
+              notes: `Importado de planilha: registro pai consolidado (${totalInst}x)`,
             }
 
-            if (inst !== 1 && parentId) {
-              rawPayload.parent_transaction_id = parentId
-            }
-            const sanitizedPayload = sanitizeTransactionPayload(rawPayload)
-            const rec = await executeWithRetry(() =>
-              pb.collection('transactions').create(sanitizedPayload),
+            const sanitizedParentPayload = sanitizeTransactionPayload(rawParentPayload)
+            const parentRecord = await executeWithRetry(() =>
+              pb.collection('transactions').create(sanitizedParentPayload),
             )
             summary.createdTransactions++
 
-            if (inst === 1) {
-              parentId = rec.id
-              await executeWithRetry(() =>
-                pb.collection('transactions').update(rec.id, { parent_transaction_id: parentId }),
+            // 2. Create the current individual installment (e.g. 23/36) with sheet date
+            const rawCurrentInstPayload: any = {
+              control_id: currentCompany.id,
+              user_id: currentUserId,
+              type: row.matchedCategoryType,
+              amount: unitAmount,
+              description: `${row.description} (${currentInst}/${totalInst})`,
+              category_id: categoryId,
+              subcategory_id: subcategoryId,
+              account_id: row.matchedAccount.id,
+              date: row.dateFormatted,
+              payment_date: row.dateFormatted,
+              paid: true,
+              is_recurring: false,
+              recurring: false,
+              installment_total: totalInst,
+              installment_number: currentInst,
+              parent_transaction_id: parentRecord.id,
+              notes: `Importado de planilha: parcela ${currentInst}/${totalInst}`,
+            }
+
+            const sanitizedCurrentInstPayload = sanitizeTransactionPayload(rawCurrentInstPayload)
+            await executeWithRetry(() =>
+              pb.collection('transactions').create(sanitizedCurrentInstPayload),
+            )
+            summary.createdTransactions++
+
+            // Adjust account balance for the created installment
+            try {
+              const acc = await executeWithRetry(() =>
+                pb.collection('accounts').getOne(row.matchedAccount.id),
               )
+              let newBalance = Number(acc.balance) || 0
+              if (acc.type === 'credito') {
+                newBalance += row.matchedCategoryType === 'despesa' ? unitAmount : -unitAmount
+              } else {
+                newBalance += row.matchedCategoryType === 'receita' ? unitAmount : -unitAmount
+              }
+              await executeWithRetry(() =>
+                pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
+              )
+            } catch (err) {
+              console.warn('Erro ao atualizar saldo da conta:', err)
             }
-          }
 
-          // Adjust balance
-          try {
-            const acc = await executeWithRetry(() =>
-              pb.collection('accounts').getOne(row.matchedAccount.id),
-            )
-            let newBalance = Number(acc.balance) || 0
-            if (acc.type === 'credito') {
-              newBalance += row.matchedCategoryType === 'despesa' ? row.amount : -row.amount
-            } else {
-              newBalance += row.matchedCategoryType === 'receita' ? row.amount : -row.amount
+            summary.importedCount++
+            summary.details.push({
+              row: row.rowIndex,
+              description: row.description,
+              status: 'imported',
+              message: `Parcela ${currentInst}/${totalInst} criada com vínculo pai.`,
+            })
+          } else if (
+            // Case B: General "Crédito parcelado" without explicit N/M, but has installment total
+            row.totalInstallments &&
+            row.totalInstallments > 1 &&
+            (!row.installmentNumber || row.installmentNumber === 0)
+          ) {
+            const totalInst = row.totalInstallments
+            const baseAmount = Math.round((row.amount / totalInst) * 100) / 100
+            const remainder = Math.round((row.amount - baseAmount * totalInst) * 100) / 100
+
+            let parentId = ''
+            for (let inst = 1; inst <= totalInst; inst++) {
+              const parcelAmount =
+                inst === 1 ? Math.round((baseAmount + remainder) * 100) / 100 : baseAmount
+              const instDate = addMonths(row.dateFormatted, inst - 1)
+
+              const rawPayload: any = {
+                control_id: currentCompany.id,
+                user_id: currentUserId,
+                type: row.matchedCategoryType,
+                amount: parcelAmount,
+                description: `${row.description} (${inst}/${totalInst})`,
+                category_id: categoryId,
+                subcategory_id: subcategoryId,
+                account_id: row.matchedAccount.id,
+                date: instDate,
+                payment_date: instDate,
+                paid: true,
+                is_recurring: false,
+                recurring: false,
+                installment_total: totalInst,
+                installment_number: inst,
+                notes: 'Importado de planilha via parcelamento automático',
+              }
+
+              if (inst !== 1 && parentId) {
+                rawPayload.parent_transaction_id = parentId
+              }
+              const sanitizedPayload = sanitizeTransactionPayload(rawPayload)
+              const rec = await executeWithRetry(() =>
+                pb.collection('transactions').create(sanitizedPayload),
+              )
+              summary.createdTransactions++
+
+              if (inst === 1) {
+                parentId = rec.id
+                try {
+                  await executeWithRetry(() =>
+                    pb
+                      .collection('transactions')
+                      .update(rec.id, { parent_transaction_id: parentId }),
+                  )
+                } catch (updateErr) {
+                  console.warn(
+                    `Erro ao auto-vincular parent_transaction_id na parcela 1:`,
+                    updateErr,
+                  )
+                }
+              }
             }
+
+            // Adjust balance
+            try {
+              const acc = await executeWithRetry(() =>
+                pb.collection('accounts').getOne(row.matchedAccount.id),
+              )
+              let newBalance = Number(acc.balance) || 0
+              if (acc.type === 'credito') {
+                newBalance += row.matchedCategoryType === 'despesa' ? row.amount : -row.amount
+              } else {
+                newBalance += row.matchedCategoryType === 'receita' ? row.amount : -row.amount
+              }
+              await executeWithRetry(() =>
+                pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
+              )
+            } catch (err) {
+              console.warn('Erro ao atualizar saldo da conta:', err)
+            }
+
+            summary.importedCount++
+            summary.details.push({
+              row: row.rowIndex,
+              description: row.description,
+              status: 'imported',
+              message: `Plano de ${totalInst} parcelas gerado com sucesso.`,
+            })
+          } else {
+            // Case C: Standard single transaction (or recurring)
+            // Se a linha importada tinha campo Pago = Não/Pendente/Falso, respeitar; padrão é true
+            const isPaid = (row as any).isPaid !== undefined ? (row as any).isPaid : true
+
+            const rawSinglePayload: any = {
+              control_id: currentCompany.id,
+              user_id: currentUserId,
+              type: row.matchedCategoryType,
+              amount: row.amount,
+              description: row.description,
+              category_id: categoryId,
+              subcategory_id: subcategoryId,
+              account_id: row.matchedAccount.id,
+              date: row.dateFormatted,
+              payment_date: row.dateFormatted,
+              paid: isPaid,
+              is_recurring: Boolean(row.isRecurring),
+              recurring: Boolean(row.isRecurring),
+              recurrence_type: row.recurrenceType || undefined,
+              recurrence_period: row.recurrenceType || undefined,
+              installment_number: 1,
+              notes: row.isRecurring
+                ? `Importado de planilha (Recorrente ${row.recurrenceType || 'mensal'})`
+                : 'Importado de planilha',
+            }
+            const sanitizedSinglePayload = sanitizeTransactionPayload(rawSinglePayload)
             await executeWithRetry(() =>
-              pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
+              pb.collection('transactions').create(sanitizedSinglePayload),
             )
-          } catch (err) {
-            console.warn('Erro ao atualizar saldo da conta:', err)
-          }
+            summary.createdTransactions++
 
-          summary.importedCount++
+            // Adjust balance
+            try {
+              const acc = await executeWithRetry(() =>
+                pb.collection('accounts').getOne(row.matchedAccount.id),
+              )
+              let newBalance = Number(acc.balance) || 0
+              if (acc.type === 'credito') {
+                newBalance += row.matchedCategoryType === 'despesa' ? row.amount : -row.amount
+              } else {
+                newBalance += row.matchedCategoryType === 'receita' ? row.amount : -row.amount
+              }
+              await executeWithRetry(() =>
+                pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
+              )
+            } catch (err) {
+              console.warn('Erro ao atualizar saldo da conta:', err)
+            }
+
+            summary.importedCount++
+            summary.details.push({
+              row: row.rowIndex,
+              description: row.description,
+              status: 'imported',
+              message: 'Importado com sucesso.',
+            })
+          }
+        } catch (err: any) {
+          console.error(`Erro ao importar linha ${row.rowIndex}:`, err)
+          summary.errorsCount++
+          const formattedReason = formatPocketBaseError(err)
+
           summary.details.push({
             row: row.rowIndex,
             description: row.description,
-            status: 'imported',
-            message: `Plano de ${totalInst} parcelas gerado com sucesso.`,
+            status: 'error',
+            message: formattedReason,
           })
-        } else {
-          // Case C: Standard single transaction (or recurring)
-          // Se a linha importada tinha campo Pago = Não/Pendente/Falso, respeitar; padrão é true
-          const isPaid = (row as any).isPaid !== undefined ? (row as any).isPaid : true
-
-          const rawSinglePayload: any = {
-            control_id: currentCompany.id,
-            user_id: currentUserId,
-            type: row.matchedCategoryType,
+          summary.unimportedRows.push({
+            rowIndex: row.rowIndex,
+            dateFormatted: row.dateFormatted,
+            description: row.description || 'Sem descrição',
             amount: row.amount,
-            description: row.description,
-            category_id: categoryId,
-            subcategory_id: subcategoryId,
-            account_id: row.matchedAccount.id,
-            date: row.dateFormatted,
-            payment_date: row.dateFormatted,
-            paid: isPaid,
-            is_recurring: Boolean(row.isRecurring),
-            recurring: Boolean(row.isRecurring),
-            recurrence_type: row.recurrenceType || undefined,
-            recurrence_period: row.recurrenceType || undefined,
-            installment_number: 1,
-            notes: row.isRecurring
-              ? `Importado de planilha (Recorrente ${row.recurrenceType || 'mensal'})`
-              : 'Importado de planilha',
-          }
-          const sanitizedSinglePayload = sanitizeTransactionPayload(rawSinglePayload)
-          await executeWithRetry(() => pb.collection('transactions').create(sanitizedSinglePayload))
-          summary.createdTransactions++
-
-          // Adjust balance
-          try {
-            const acc = await executeWithRetry(() =>
-              pb.collection('accounts').getOne(row.matchedAccount.id),
-            )
-            let newBalance = Number(acc.balance) || 0
-            if (acc.type === 'credito') {
-              newBalance += row.matchedCategoryType === 'despesa' ? row.amount : -row.amount
-            } else {
-              newBalance += row.matchedCategoryType === 'receita' ? row.amount : -row.amount
-            }
-            await executeWithRetry(() =>
-              pb.collection('accounts').update(row.matchedAccount.id, { balance: newBalance }),
-            )
-          } catch (err) {
-            console.warn('Erro ao atualizar saldo da conta:', err)
-          }
-
-          summary.importedCount++
-          summary.details.push({
-            row: row.rowIndex,
-            description: row.description,
-            status: 'imported',
-            message: 'Importado com sucesso.',
+            accountRaw: row.accountRaw,
+            categoryRaw: row.categoryRaw,
+            reason: formattedReason,
+            type: 'error',
+            rawDetails: row.raw,
           })
         }
-      } catch (err: any) {
-        console.error(`Erro ao importar linha ${row.rowIndex}:`, err)
-        summary.errorsCount++
-        const formattedReason = formatPocketBaseError(err)
-
-        summary.details.push({
-          row: row.rowIndex,
-          description: row.description,
-          status: 'error',
-          message: formattedReason,
-        })
-        summary.unimportedRows.push({
-          rowIndex: row.rowIndex,
-          dateFormatted: row.dateFormatted,
-          description: row.description || 'Sem descrição',
-          amount: row.amount,
-          accountRaw: row.accountRaw,
-          categoryRaw: row.categoryRaw,
-          reason: formattedReason,
-          type: 'error',
-          rawDetails: row.raw,
-        })
       }
-    }
 
-    setImportSummary(summary)
-    setIsImporting(false)
-    // Reload global company state to reflect new data across Dashboard and Transactions
-    try {
-      await reloadCompanyData()
-    } catch (reloadErr) {
-      console.warn('Erro não bloqueante ao atualizar dados da empresa pós-importação:', reloadErr)
+      setImportSummary(summary)
+      setIsImporting(false)
+      // Reload global company state to reflect new data across Dashboard and Transactions
+      try {
+        await reloadCompanyData()
+      } catch (reloadErr) {
+        console.warn('Erro não bloqueante ao atualizar dados da empresa pós-importação:', reloadErr)
+      }
+    } catch (unexpectedErr: any) {
+      console.error('Erro inesperado no processo de importação:', unexpectedErr)
+      setErrorBanner(formatPocketBaseError(unexpectedErr))
+      setIsImporting(false)
     }
   }
 
