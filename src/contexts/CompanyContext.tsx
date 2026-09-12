@@ -41,7 +41,7 @@ interface CompanyContextType {
   canManageTransactions: boolean // members, admins, owners
 
   // Actions
-  selectCompany: (companyId: string) => Promise<boolean>
+  selectCompany: (companyId?: string) => Promise<boolean>
   reloadCompanyData: () => Promise<void>
   reloadUserCompanies: () => Promise<void>
   createCompany: (
@@ -165,21 +165,49 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   const activeCompanyId = currentCompany?.id
 
-  // Reload user's accessible companies
+  // Carrega sempre o controle único principal da aplicação
   const reloadUserCompanies = useCallback(async () => {
     if (!userId) {
       setUserCompanies([])
       setCurrentCompany(null)
       setCurrentRole(null)
+      setMembers([])
+      setAccounts([])
+      setCategories([])
+      setSubcategories([])
+      setTransactions([])
       setIsLoading(false)
       return
     }
-    // Flip back to loading so consumers (e.g. ProtectedCompanyRoute) know the
-    // access list is being refreshed and don't redirect prematurely.
+
     setIsLoading(true)
     try {
-      const comps = await skipCloud.getUserCompanies(userId)
-      setUserCompanies(comps)
+      const singleComp = await skipCloud.getSingleCompany(userId)
+      if (singleComp) {
+        setUserCompanies([singleComp])
+        setCurrentCompany(singleComp)
+
+        // Carrega papel e dados do controle único
+        const [role, mems, accs, cats, subcats, txs] = await Promise.all([
+          skipCloud.getUserRoleInCompany(singleComp.id, userId),
+          skipCloud.getCompanyMembers(singleComp.id),
+          skipCloud.getAccounts(singleComp.id),
+          skipCloud.getCategories(singleComp.id),
+          skipCloud.getSubcategories(singleComp.id),
+          skipCloud.getTransactions(singleComp.id),
+        ])
+
+        setCurrentRole(role || 'owner')
+        setMembers(mems)
+        setAccounts(accs)
+        setCategories(cats)
+        setSubcategories(subcats)
+        setTransactions(txs)
+      } else {
+        setUserCompanies([])
+        setCurrentCompany(null)
+        setCurrentRole(null)
+      }
     } catch (e) {
       console.error('[CompanyContext] reloadUserCompanies falhou:', e)
       setUserCompanies([])
@@ -195,20 +223,24 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   // Load all data for the active company
   const reloadCompanyData = useCallback(async () => {
-    if (!activeCompanyId || !userId) return
+    const targetControlId = activeCompanyId || currentCompany?.id
+    if (!targetControlId || !userId) return
     setIsCompanyLoading(true)
     try {
       const [role, mems, accs, cats, subcats, txs, freshComp] = await Promise.all([
-        skipCloud.getUserRoleInCompany(activeCompanyId, userId),
-        skipCloud.getCompanyMembers(activeCompanyId),
-        skipCloud.getAccounts(activeCompanyId),
-        skipCloud.getCategories(activeCompanyId),
-        skipCloud.getSubcategories(activeCompanyId),
-        skipCloud.getTransactions(activeCompanyId),
-        skipCloud.getCompany(activeCompanyId),
+        skipCloud.getUserRoleInCompany(targetControlId, userId),
+        skipCloud.getCompanyMembers(targetControlId),
+        skipCloud.getAccounts(targetControlId),
+        skipCloud.getCategories(targetControlId),
+        skipCloud.getSubcategories(targetControlId),
+        skipCloud.getTransactions(targetControlId),
+        skipCloud.getCompany(targetControlId),
       ])
-      if (freshComp) setCurrentCompany(freshComp)
-      setCurrentRole(role)
+      if (freshComp) {
+        setCurrentCompany(freshComp)
+        setUserCompanies([freshComp])
+      }
+      if (role) setCurrentRole(role)
       setMembers(mems)
       setAccounts(accs)
       setCategories(cats)
@@ -220,27 +252,31 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsCompanyLoading(false)
     }
-  }, [activeCompanyId, userId])
+  }, [activeCompanyId, currentCompany?.id, userId])
 
   const selectCompany = useCallback(
-    async (companyId: string): Promise<boolean> => {
+    async (companyId?: string): Promise<boolean> => {
       if (!userId) return false
       setIsCompanyLoading(true)
       try {
-        const comp = await skipCloud.getCompany(companyId)
+        const targetId = companyId || currentCompany?.id
+        const comp = targetId
+          ? await skipCloud.getCompany(targetId)
+          : await skipCloud.getSingleCompany(userId)
+
         if (!comp) return false
-        const role = await skipCloud.getUserRoleInCompany(companyId, userId)
-        if (!role) return false // user does not belong to this company
+        const role = await skipCloud.getUserRoleInCompany(comp.id, userId)
 
         setCurrentCompany(comp)
-        setCurrentRole(role)
+        setUserCompanies([comp])
+        setCurrentRole(role || 'owner')
 
         const [mems, accs, cats, subcats, txs] = await Promise.all([
-          skipCloud.getCompanyMembers(companyId),
-          skipCloud.getAccounts(companyId),
-          skipCloud.getCategories(companyId),
-          skipCloud.getSubcategories(companyId),
-          skipCloud.getTransactions(companyId),
+          skipCloud.getCompanyMembers(comp.id),
+          skipCloud.getAccounts(comp.id),
+          skipCloud.getCategories(comp.id),
+          skipCloud.getSubcategories(comp.id),
+          skipCloud.getTransactions(comp.id),
         ])
         setMembers(mems)
         setAccounts(accs)
@@ -255,7 +291,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setIsCompanyLoading(false)
       }
     },
-    [userId],
+    [userId, currentCompany?.id],
   )
 
   const createCompany = useCallback(

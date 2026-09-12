@@ -40,7 +40,7 @@ export default function Index() {
 
   // Redirect if already logged in
   if (user && !isLoading) {
-    return <Navigate to="/controles" replace />
+    return <Navigate to="/dashboard" replace />
   }
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -60,7 +60,7 @@ export default function Index() {
     try {
       await login(loginEmail, loginPassword)
       toast.success('Login realizado com sucesso! Bem-vindo de volta.')
-      navigate('/controles')
+      navigate('/dashboard')
     } catch (err: any) {
       setLoginError(err?.message || 'Falha ao realizar login.')
       toast.error('Não foi possível entrar no sistema.')
@@ -94,7 +94,7 @@ export default function Index() {
     try {
       await register(regName, regEmail, regPassword)
       toast.success('Conta criada com sucesso! Bem-vindo ao Controle Financeiro.')
-      navigate('/controles')
+      navigate('/dashboard')
     } catch (err: any) {
       const msg = err?.message || 'Falha ao criar conta.'
       // Friendlier message when the registration is blocked because the email

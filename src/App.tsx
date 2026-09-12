@@ -6,7 +6,6 @@ import { AuthProvider } from '@/contexts/AuthContext'
 import { CompanyProvider } from '@/contexts/CompanyContext'
 
 import Index from './pages/Index'
-import ControlsSelection from './pages/CompaniesSelection'
 import Dashboard from './pages/Dashboard'
 import TransactionsPage from './pages/TransactionsPage'
 import Importar from './pages/Importar'
@@ -30,18 +29,30 @@ const App = () => (
             <Route path="/" element={<Index />} />
 
             {/* Selection of Financial Controls */}
-            <Route path="/controles" element={<ControlsSelection />} />
+            {/* Redirecionamento de rotas legadas de seleção */}
+            <Route path="/controles" element={<Navigate to="/dashboard" replace />} />
 
-            {/* Protected Financial Control Routes */}
+            {/* Protected Financial Control Routes (Rotas Diretas sem seleção de múltiplos controles) */}
+            <Route element={<ProtectedCompanyRoute />}>
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/lancamentos" element={<TransactionsPage />} />
+              <Route path="/importar" element={<Importar />} />
+              <Route path="/contas" element={<AccountsPage />} />
+              <Route path="/categorias" element={<CategoriesPage />} />
+              <Route path="/equipe" element={<TeamPage />} />
+              <Route path="/configuracoes" element={<SettingsPage />} />
+            </Route>
+
+            {/* Compatibilidade retroativa para URLs antigas com prefixo /controle/:controleId */}
             <Route path="/controle/:controleId" element={<ProtectedCompanyRoute />}>
-              <Route index element={<Navigate to="dashboard" replace />} />
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="lancamentos" element={<TransactionsPage />} />
-              <Route path="importar" element={<Importar />} />
-              <Route path="contas" element={<AccountsPage />} />
-              <Route path="categorias" element={<CategoriesPage />} />
-              <Route path="equipe" element={<TeamPage />} />
-              <Route path="configuracoes" element={<SettingsPage />} />
+              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route path="dashboard" element={<Navigate to="/dashboard" replace />} />
+              <Route path="lancamentos" element={<Navigate to="/lancamentos" replace />} />
+              <Route path="importar" element={<Navigate to="/importar" replace />} />
+              <Route path="contas" element={<Navigate to="/contas" replace />} />
+              <Route path="categorias" element={<Navigate to="/categorias" replace />} />
+              <Route path="equipe" element={<Navigate to="/equipe" replace />} />
+              <Route path="configuracoes" element={<Navigate to="/configuracoes" replace />} />
             </Route>
 
             {/* Fallback 404 */}

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { NavLink, useNavigate, useParams, useLocation } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import {
@@ -11,12 +11,8 @@ import {
   Users2,
   Settings,
   LogOut,
-  Building2,
   ChevronDown,
   Menu,
-  Check,
-  PlusCircle,
-  ExternalLink,
   Sparkles,
   Wallet,
 } from 'lucide-react'
@@ -24,13 +20,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import { CreateCompanyModal } from '@/components/companies/CreateCompanyModal'
 import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
 import { getInitials } from '@/lib/formatters'
 
@@ -40,62 +34,50 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { user, logout } = useAuth()
-  const { currentCompany, userCompanies, currentRole, selectCompany } = useCompany()
+  const { currentCompany, currentRole } = useCompany()
   const navigate = useNavigate()
   const location = useLocation()
-  const { controleId } = useParams<{ controleId: string }>()
 
-  const [createCompanyOpen, setCreateCompanyOpen] = useState(false)
   const [aiTxOpen, setAiTxOpen] = useState(false)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
-
-  const activeControlId = controleId || currentCompany?.id || ''
 
   const navItems = [
     {
       label: 'Dashboard',
       icon: LayoutDashboard,
-      path: `/controle/${activeControlId}/dashboard`,
+      path: '/dashboard',
     },
     {
       label: 'Lançamentos',
       icon: ReceiptText,
-      path: `/controle/${activeControlId}/lancamentos`,
+      path: '/lancamentos',
     },
     {
       label: 'Importar',
       icon: Upload,
-      path: `/controle/${activeControlId}/importar`,
+      path: '/importar',
     },
     {
       label: 'Contas',
       icon: CreditCard,
-      path: `/controle/${activeControlId}/contas`,
+      path: '/contas',
     },
     {
       label: 'Categorias',
       icon: FolderTree,
-      path: `/controle/${activeControlId}/categorias`,
+      path: '/categorias',
     },
     {
       label: 'Equipe',
       icon: Users2,
-      path: `/controle/${activeControlId}/equipe`,
+      path: '/equipe',
     },
     {
       label: 'Configurações',
       icon: Settings,
-      path: `/controle/${activeControlId}/configuracoes`,
+      path: '/configuracoes',
     },
   ]
-
-  const handleSelectCompany = async (targetId: string) => {
-    const success = await selectCompany(targetId)
-    if (success) {
-      // Re-route to target control dashboard
-      navigate(`/controle/${targetId}/dashboard`)
-    }
-  }
 
   const handleLogout = async () => {
     await logout()
@@ -111,82 +93,25 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Sidebar content (shared by desktop and mobile sheet)
   const SidebarContent = () => (
     <aside className="w-full h-full flex flex-col bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 text-white select-none">
-      {/* Brand & Control Switcher */}
+      {/* Brand & Fixed Single Control Header */}
       <div className="p-4 border-b border-slate-800">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-all text-left">
-              <div className="flex items-center gap-3 min-w-0">
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white shrink-0 text-sm shadow-md"
-                  style={{ backgroundColor: currentCompany?.color || '#6366F1' }}
-                >
-                  {currentCompany ? getInitials(currentCompany.name) : 'CF'}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-100 truncate">
-                    {currentCompany?.name || 'Selecione o controle'}
-                  </p>
-                  <p className="text-[11px] text-slate-400 truncate">{roleLabel}</p>
-                </div>
-              </div>
-              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0 ml-2" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-64 rounded-xl bg-slate-900 border-slate-800 text-white p-1">
-            <DropdownMenuLabel className="text-xs text-slate-400 px-2 py-1.5 font-medium">
-              Meus Controles ({userCompanies.length})
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator className="bg-slate-800" />
-            {userCompanies.map((comp) => {
-              const isSelected = comp.id === currentCompany?.id
-              return (
-                <DropdownMenuItem
-                  key={comp.id}
-                  onClick={() => {
-                    handleSelectCompany(comp.id)
-                    setMobileDrawerOpen(false)
-                  }}
-                  className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-sm ${
-                    isSelected
-                      ? 'bg-indigo-600/30 text-indigo-300 font-semibold'
-                      : 'hover:bg-slate-800 text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 truncate">
-                    <span
-                      className="w-3 h-3 rounded-full shrink-0"
-                      style={{ backgroundColor: comp.color }}
-                    />
-                    <span className="truncate">{comp.name}</span>
-                  </div>
-                  {isSelected && <Check className="w-4 h-4 text-indigo-400 shrink-0" />}
-                </DropdownMenuItem>
-              )
-            })}
-            <DropdownMenuSeparator className="bg-slate-800" />
-            <DropdownMenuItem
-              onClick={() => {
-                setCreateCompanyOpen(true)
-                setMobileDrawerOpen(false)
-              }}
-              className="flex items-center gap-2 p-2 rounded-lg text-sm text-indigo-400 hover:bg-slate-800 hover:text-indigo-300 cursor-pointer font-medium"
+        <div className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60 shadow-sm">
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white shrink-0 text-sm shadow-md"
+              style={{ backgroundColor: currentCompany?.color || '#3B82F6' }}
             >
-              <PlusCircle className="w-4 h-4" />
-              <span>Criar novo controle</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => {
-                navigate('/controles')
-                setMobileDrawerOpen(false)
-              }}
-              className="flex items-center gap-2 p-2 rounded-lg text-sm text-slate-300 hover:bg-slate-800 cursor-pointer"
-            >
-              <Wallet className="w-4 h-4" />
-              <span>Ver todos os controles</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {currentCompany ? getInitials(currentCompany.name) : 'CF'}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-100 truncate">
+                {currentCompany?.name || 'Controle Financeiro'}
+              </p>
+              <p className="text-[11px] text-slate-400 truncate">{roleLabel}</p>
+            </div>
+          </div>
+          <Wallet className="w-4 h-4 text-indigo-400 shrink-0 ml-2" />
+        </div>
       </div>
 
       {/* Navigation links */}
@@ -254,17 +179,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           <DropdownMenuContent className="w-56 rounded-xl bg-slate-900 border-slate-800 text-white p-1">
             <DropdownMenuItem
               onClick={() => {
-                navigate('/controles')
-                setMobileDrawerOpen(false)
-              }}
-              className="flex items-center gap-2 p-2 rounded-lg text-sm text-slate-200 hover:bg-slate-800 cursor-pointer"
-            >
-              <Building2 className="w-4 h-4" />
-              <span>Trocar de Controle</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => {
-                navigate(`/controle/${activeControlId}/configuracoes`)
+                navigate('/configuracoes')
                 setMobileDrawerOpen(false)
               }}
               className="flex items-center gap-2 p-2 rounded-lg text-sm text-slate-200 hover:bg-slate-800 cursor-pointer"
@@ -310,18 +225,19 @@ export function AppLayout({ children }: AppLayoutProps) {
             <Wallet className="w-4 h-4 text-indigo-400 shrink-0" />
             <span
               className="w-3 h-3 rounded-full shrink-0"
-              style={{ backgroundColor: currentCompany?.color || '#6366F1' }}
+              style={{ backgroundColor: currentCompany?.color || '#3B82F6' }}
             />
             <span className="font-bold text-sm truncate">{currentCompany?.name || 'Controle'}</span>
           </div>
         </div>
 
         <button
-          onClick={() => navigate('/controles')}
-          className="text-xs text-indigo-400 font-medium flex items-center gap-1 bg-slate-800 px-2.5 py-1.5 rounded-lg"
+          onClick={handleLogout}
+          className="text-xs text-slate-400 hover:text-rose-400 font-medium flex items-center gap-1 bg-slate-800 px-2.5 py-1.5 rounded-lg"
+          title="Sair do sistema"
         >
-          <span>Trocar</span>
-          <ExternalLink className="w-3 h-3" />
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Sair</span>
         </button>
       </header>
 
@@ -333,7 +249,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       {/* Mobile Bottom Navigation Bar */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 h-16 bg-white border-t border-slate-200 shadow-lg z-40 flex items-center justify-around px-2">
         <NavLink
-          to={`/controle/${activeControlId}/dashboard`}
+          to="/dashboard"
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -345,7 +261,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </NavLink>
 
         <NavLink
-          to={`/controle/${activeControlId}/lancamentos`}
+          to="/lancamentos"
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -366,7 +282,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </button>
 
         <NavLink
-          to={`/controle/${activeControlId}/contas`}
+          to="/contas"
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -378,7 +294,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </NavLink>
 
         <NavLink
-          to={`/controle/${activeControlId}/equipe`}
+          to="/equipe"
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
@@ -389,13 +305,6 @@ export function AppLayout({ children }: AppLayoutProps) {
           <span>Equipe</span>
         </NavLink>
       </nav>
-
-      {/* Global Modals */}
-      <CreateCompanyModal
-        open={createCompanyOpen}
-        onOpenChange={setCreateCompanyOpen}
-        onSuccess={(id) => navigate(`/controle/${id}/dashboard`)}
-      />
 
       <AiTransactionModal open={aiTxOpen} onOpenChange={setAiTxOpen} />
     </div>

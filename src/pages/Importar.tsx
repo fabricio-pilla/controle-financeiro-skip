@@ -1680,7 +1680,7 @@ export default function Importar() {
             <span className="font-semibold">Baixar Modelo (.xlsx)</span>
           </Button>
 
-          <Link to={`/controle/${currentCompany?.id}/lancamentos`}>
+          <Link to="/lancamentos">
             <Button variant="outline" className="rounded-xl h-10 gap-2">
               <Receipt className="w-4 h-4" />
               <span>Ver Lançamentos</span>
@@ -2444,7 +2444,7 @@ export default function Importar() {
                 </p>
               </div>
 
-              <Link to={`/controle/${currentCompany?.id}/lancamentos`}>
+              <Link to="/lancamentos">
                 <Button className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-10 gap-2 w-full sm:w-auto">
                   <span>Abrir Extrato de Lançamentos</span>
                   <ArrowRight className="w-4 h-4" />

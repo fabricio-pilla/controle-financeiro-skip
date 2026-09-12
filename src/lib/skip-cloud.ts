@@ -511,16 +511,61 @@ class SkipCloudService {
   }
 
   // --- FINANCIAL CONTROLS ---
+  /**
+   * Retorna SEMPRE o controle único principal da aplicação.
+   * Prioridade: controle do usuário fabricio.pilla@gmail.com, ou o controle onde o usuário atual é membro,
+   * ou o primeiro controle cadastrado no banco.
+   */
+  async getSingleCompany(userId?: string): Promise<Company | null> {
+    try {
+      // 1. Tentar localizar o controle principal (fabricio.pilla@gmail.com)
+      try {
+        const primaryByEmail = await pb.collection('financial_controls').getList(1, 1, {
+          filter: `owner_email="fabricio.pilla@gmail.com"`,
+        })
+        if (primaryByEmail.items.length > 0) {
+          return mapCompany(primaryByEmail.items[0])
+        }
+      } catch {
+        // Fallback silencioso
+      }
+
+      // 2. Tentar pelo membership do usuário atual, se fornecido
+      if (userId) {
+        try {
+          const members = await pb.collection('control_members').getList(1, 1, {
+            filter: `user_id="${userId}" && status="active"`,
+            sort: 'created',
+          })
+          if (members.items.length > 0 && members.items[0].control_id) {
+            const comp = await pb
+              .collection('financial_controls')
+              .getOne(members.items[0].control_id)
+            if (comp) return mapCompany(comp)
+          }
+        } catch {
+          // Fallback silencioso
+        }
+      }
+
+      // 3. Primeiro controle financeiro existente no banco
+      const allControls = await pb.collection('financial_controls').getList(1, 1, {
+        sort: 'created',
+      })
+      if (allControls.items.length > 0) {
+        return mapCompany(allControls.items[0])
+      }
+
+      return null
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
   async getUserCompanies(userId: string): Promise<Company[]> {
     try {
-      const members = await pb.collection('control_members').getFullList({
-        filter: `user_id="${userId}" && status="active"`,
-      })
-      const controlIds = members.map((m: any) => m.control_id).filter(Boolean)
-      if (controlIds.length === 0) return []
-      const orFilter = controlIds.map((id: string) => `id="${id}"`).join(' || ')
-      const comps = await pb.collection('financial_controls').getFullList({ filter: orFilter })
-      return comps.map(mapCompany)
+      const single = await this.getSingleCompany(userId)
+      return single ? [single] : []
     } catch (e: any) {
       throw pbErr(e)
     }

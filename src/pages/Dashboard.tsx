@@ -452,7 +452,7 @@ export default function Dashboard() {
               <p className="text-xs text-slate-500">Atividades financeiras recentes</p>
             </div>
             <Link
-              to={`/controle/${currentCompany?.id}/lancamentos`}
+              to="/lancamentos"
               className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
             >
               <span>Ver todos</span>
@@ -564,7 +564,7 @@ export default function Dashboard() {
                 <p className="text-xs text-slate-500">Distribuição de liquidez</p>
               </div>
               <Link
-                to={`/controle/${currentCompany?.id}/contas`}
+                to="/contas"
                 className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
               >
                 <span>Gerenciar</span>

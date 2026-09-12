@@ -4,18 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { PALETTE_COLORS } from '@/lib/skip-cloud'
 import { toast } from 'sonner'
-import {
-  Building2,
-  Sliders,
-  LogOut,
-  AlertTriangle,
-  Loader2,
-  Building,
-  CheckCircle2,
-  ExternalLink,
-  Trash2,
-  Calendar,
-} from 'lucide-react'
+import { Building2, Sliders, LogOut, AlertTriangle, Loader2, Trash2, Calendar } from 'lucide-react'
 import pb from '@/lib/pocketbase/client'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -51,16 +40,8 @@ const MONTHS = [
 
 export default function SettingsPage() {
   const { user, logout } = useAuth()
-  const {
-    currentCompany,
-    userCompanies,
-    isOwner,
-    updateCompany,
-    deleteCompany,
-    selectCompany,
-    reloadCompanyData,
-    applyTransactionsBatchUpdate,
-  } = useCompany()
+  const { currentCompany, updateCompany, reloadCompanyData, applyTransactionsBatchUpdate } =
+    useCompany()
   const navigate = useNavigate()
 
   // Tab 1: Controle details
@@ -73,11 +54,6 @@ export default function SettingsPage() {
   const [emailNotifications, setEmailNotifications] = useState(true)
   const [dateFormat] = useState('DD/MM/YYYY')
   const [currency] = useState('BRL (R$)')
-
-  // Danger Zone
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
-  const [deleteConfirmationText, setDeleteConfirmationText] = useState('')
-  const [isDeletingCompany, setIsDeletingCompany] = useState(false)
 
   // Tab 4: Limpeza de Dados
   const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false)
@@ -124,32 +100,6 @@ export default function SettingsPage() {
       toast.error(err?.message || 'Erro ao salvar controle.')
     } finally {
       setIsSavingCompany(false)
-    }
-  }
-
-  const handleDeleteCompany = async () => {
-    if (deleteConfirmationText.trim() !== currentCompany?.name.trim()) {
-      toast.error('O nome digitado não corresponde exatamente ao nome do controle.')
-      return
-    }
-
-    setIsDeletingCompany(true)
-    try {
-      await deleteCompany()
-      toast.success('Controle excluído com sucesso!')
-      setDeleteModalOpen(false)
-      navigate('/controles')
-    } catch (err: any) {
-      toast.error(err?.message || 'Erro ao excluir controle.')
-    } finally {
-      setIsDeletingCompany(false)
-    }
-  }
-
-  const handleSwitchCompany = async (targetId: string) => {
-    const ok = await selectCompany(targetId)
-    if (ok) {
-      navigate(`/controle/${targetId}/dashboard`)
     }
   }
 
@@ -626,30 +576,6 @@ export default function SettingsPage() {
               </div>
             </form>
           </div>
-
-          {/* Danger Zone (Owner Only) */}
-          {isOwner && (
-            <div className="bg-rose-50/50 border border-rose-200 p-6 rounded-2xl shadow-sm space-y-4">
-              <div className="flex items-center gap-2.5 text-rose-700">
-                <AlertTriangle className="w-5 h-5 shrink-0" />
-                <h2 className="text-base font-bold">Zona de Perigo — Exclusão do Controle</h2>
-              </div>
-              <p className="text-xs text-rose-600/90 leading-relaxed">
-                A exclusão deste controle apagará permanentemente todas as contas bancárias,
-                categorias, lançamentos de extrato e revogará o acesso de todos os colaboradores
-                associados. Esta ação <strong>não pode ser desfeita</strong>.
-              </p>
-              <div className="pt-2">
-                <Button
-                  variant="destructive"
-                  onClick={() => setDeleteModalOpen(true)}
-                  className="rounded-xl h-11 bg-rose-600 hover:bg-rose-700 text-white font-semibold"
-                >
-                  Excluir Controle Definitivamente
-                </Button>
-              </div>
-            </div>
-          )}
         </TabsContent>
 
         {/* TAB 2: PREFERENCIAS */}
@@ -701,53 +627,6 @@ export default function SettingsPage() {
 
         {/* TAB 3: SESSAO */}
         <TabsContent value="sessao" className="space-y-6 focus-visible:outline-none">
-          {/* Switch Company Card */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-            <h2 className="text-base font-bold text-slate-900">Meus Outros Controles</h2>
-            <p className="text-xs text-slate-500">
-              Alterne rapidamente para outro controle cadastrado no seu usuário.
-            </p>
-
-            <div className="space-y-2.5">
-              {userCompanies.map((comp) => {
-                const isCurrent = comp.id === currentCompany?.id
-                return (
-                  <div
-                    key={comp.id}
-                    className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span
-                        className="w-3.5 h-3.5 rounded-full"
-                        style={{ backgroundColor: comp.color }}
-                      />
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">{comp.name}</p>
-                      </div>
-                    </div>
-
-                    {isCurrent ? (
-                      <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Controle Atual
-                      </span>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleSwitchCompany(comp.id)}
-                        className="rounded-xl h-8 text-xs font-semibold"
-                      >
-                        <span>Acessar</span>
-                        <ExternalLink className="w-3 h-3 ml-1.5" />
-                      </Button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
           {/* User Session Info */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
             <h2 className="text-base font-bold text-slate-900">Sessão do Usuário</h2>
@@ -756,14 +635,6 @@ export default function SettingsPage() {
             </p>
 
             <div className="pt-2 flex items-center gap-3">
-              <Button
-                variant="outline"
-                onClick={() => navigate('/controles')}
-                className="rounded-xl h-11"
-              >
-                <Building className="w-4 h-4 mr-2" />
-                Trocar Controle
-              </Button>
               <Button
                 variant="destructive"
                 onClick={handleLogout}
@@ -1035,70 +906,6 @@ export default function SettingsPage() {
                 </>
               ) : (
                 'Excluir Lançamentos e Zerar Contas'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Modal Confirm Delete Company with Type-Name Security */}
-      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
-        <DialogContent className="sm:max-w-[480px] rounded-2xl">
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div>
-                <DialogTitle className="text-xl font-bold text-slate-900">
-                  Excluir Controle
-                </DialogTitle>
-                <DialogDescription className="text-xs text-slate-500 mt-1">
-                  Esta operação é irreversível. Todos os lançamentos e contas serão destruídos.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="space-y-4 py-3">
-            <p className="text-xs text-slate-600">
-              Para confirmar a exclusão de <strong>{currentCompany?.name}</strong>, digite o nome
-              exato do controle no campo abaixo:
-            </p>
-
-            <Input
-              placeholder={currentCompany?.name}
-              value={deleteConfirmationText}
-              onChange={(e) => setDeleteConfirmationText(e.target.value)}
-              className="rounded-xl h-11 border-rose-300 focus-visible:ring-rose-500 font-medium"
-            />
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDeleteModalOpen(false)}
-              className="rounded-xl h-11"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={
-                deleteConfirmationText.trim() !== currentCompany?.name.trim() || isDeletingCompany
-              }
-              onClick={handleDeleteCompany}
-              className="rounded-xl h-11 bg-rose-600 hover:bg-rose-700 text-white font-semibold"
-            >
-              {isDeletingCompany ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Excluindo...
-                </>
-              ) : (
-                'Excluir Controle Definitivamente'
               )}
             </Button>
           </DialogFooter>

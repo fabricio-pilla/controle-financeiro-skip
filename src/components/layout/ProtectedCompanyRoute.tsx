@@ -21,7 +21,7 @@ export default function ProtectedCompanyRoute() {
   const { currentCompany, userCompanies, isLoading: isCompanyLoading, selectCompany } = useCompany()
   const { controleId } = useParams<{ controleId: string }>()
 
-  if (authLoading) {
+  if (authLoading || isCompanyLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
@@ -33,32 +33,8 @@ export default function ProtectedCompanyRoute() {
     return <Navigate to="/" replace />
   }
 
-  // While the user's controls are still being fetched we cannot know whether
-  // they have access, so show a loading state instead of risking a false
-  // redirect to /controles.
-  if (isCompanyLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
-      </div>
-    )
-  }
-
-  // Only validate access once we actually have the control list. An empty list
-  // here means the user genuinely has no controls — redirect to /controles.
-  if (controleId && userCompanies.length === 0) {
-    return <Navigate to="/controles" replace />
-  }
-
-  if (controleId && userCompanies.length > 0) {
-    const hasAccess = userCompanies.some((c) => c.id === controleId)
-    if (!hasAccess) {
-      return <Navigate to="/controles" replace />
-    }
-  }
-
-  // Kick off control selection whenever the route param changes. The
-  // `!== controleId` guard inside selectCompany avoids re-selecting.
+  // Se a rota tiver controleId diferente do controle principal atual,
+  // ou se currentCompany ainda não estiver carregado, seleciona o controle principal
   if (controleId && (!currentCompany || currentCompany.id !== controleId)) {
     selectCompany(controleId)
     return (
@@ -69,6 +45,8 @@ export default function ProtectedCompanyRoute() {
   }
 
   if (!currentCompany) {
+    // Tenta selecionar automaticamente o único controle existente
+    selectCompany()
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
