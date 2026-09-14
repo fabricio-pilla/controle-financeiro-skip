@@ -74,5 +74,23 @@ describe('pocketbase/retry helpers', () => {
       expect(res).toBe('success')
       expect(callCount).toBe(2)
     })
+
+    it('does not reject entire pool when a single item throws after exhausting retries', async () => {
+      const items = ['ok1', 'fail', 'ok2']
+      const results = await runInPool(
+        items,
+        async (item) => {
+          if (item === 'fail') {
+            throw { status: 429, message: 'Too Many Requests.' }
+          }
+          return `done-${item}`
+        },
+        { concurrency: 2, maxRetries: 1, baseDelayMs: 10, maxDelayMs: 50 },
+      )
+
+      expect(results[0]).toBe('done-ok1')
+      expect(results[1]).toBeUndefined()
+      expect(results[2]).toBe('done-ok2')
+    })
   })
 })

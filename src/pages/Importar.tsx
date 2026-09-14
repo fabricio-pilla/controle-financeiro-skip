@@ -1255,7 +1255,11 @@ export default function Importar() {
       }
 
       for (const { categoryId, subName } of missingSubcatMap.values()) {
-        await getOrCreateSubcategoryId(categoryId, subName)
+        try {
+          await getOrCreateSubcategoryId(categoryId, subName)
+        } catch (subErr) {
+          console.warn(`Erro não bloqueante ao pré-criar subcategoria ${subName}:`, subErr)
+        }
       }
 
       // 2. Preparar todas as linhas em memória (validação prévia, payloads sanitizados)
@@ -1560,7 +1564,7 @@ export default function Importar() {
               })
             }
 
-            // Acumular deltas das contas afetadas
+            // Acumular deltas das contas afetadas apenas se a linha foi gravada com êxito
             for (const b of balanceDeltas) {
               const current = accountBalanceDeltas.get(b.accountId) || 0
               accountBalanceDeltas.set(b.accountId, current + b.delta)
@@ -1569,7 +1573,7 @@ export default function Importar() {
             console.error(`Erro ao importar linha ${row.rowIndex}:`, err)
             summary.errorsCount++
             const formattedReason = is429Error(err)
-              ? 'Limite de requisições do servidor atingido — reimporte esta linha ou tente novamente em instantes'
+              ? 'Limite de requisições do servidor atingido — tente novamente em instantes'
               : formatPocketBaseError(err)
 
             summary.details.push({
@@ -1600,23 +1604,27 @@ export default function Importar() {
       // 4. Recálculo agregado final de saldos das contas em uma única passada concorrente
       if (accountBalanceDeltas.size > 0) {
         const deltaEntries = Array.from(accountBalanceDeltas.entries())
-        await runInPool(
-          deltaEntries,
-          async ([accountId, delta]) => {
-            try {
-              const acc = await executeWithRetry(() =>
-                pb.collection('accounts').getOne<{ id: string; balance: number }>(accountId),
-              )
-              const newBalance = Math.round(((Number(acc.balance) || 0) + delta) * 100) / 100
-              await executeWithRetry(() =>
-                pb.collection('accounts').update(accountId, { balance: newBalance }),
-              )
-            } catch (accErr) {
-              console.warn(`Erro ao atualizar saldo consolidado da conta ${accountId}:`, accErr)
-            }
-          },
-          { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Importar-SaldoConsolidado' },
-        )
+        try {
+          await runInPool(
+            deltaEntries,
+            async ([accountId, delta]) => {
+              try {
+                const acc = await executeWithRetry(() =>
+                  pb.collection('accounts').getOne<{ id: string; balance: number }>(accountId),
+                )
+                const newBalance = Math.round(((Number(acc.balance) || 0) + delta) * 100) / 100
+                await executeWithRetry(() =>
+                  pb.collection('accounts').update(accountId, { balance: newBalance }),
+                )
+              } catch (accErr) {
+                console.warn(`Erro ao atualizar saldo consolidado da conta ${accountId}:`, accErr)
+              }
+            },
+            { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Importar-SaldoConsolidado' },
+          )
+        } catch (poolBalanceErr) {
+          console.warn('Erro não bloqueante no pool de atualização de saldos:', poolBalanceErr)
+        }
       }
 
       setImportSummary(summary)
@@ -1629,7 +1637,10 @@ export default function Importar() {
       }
     } catch (unexpectedErr: any) {
       console.error('Erro inesperado no processo de importação:', unexpectedErr)
-      setErrorBanner(formatPocketBaseError(unexpectedErr))
+      const userMessage = is429Error(unexpectedErr)
+        ? 'Limite de requisições do servidor atingido — tente novamente em instantes'
+        : formatPocketBaseError(unexpectedErr)
+      setErrorBanner(userMessage)
       setIsImporting(false)
     }
   }

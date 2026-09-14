@@ -153,24 +153,33 @@ export async function runInPool<TItem, TResult>(
     while (currentIndex < items.length) {
       const idx = currentIndex++
       const item = items[idx]
-      const res = await executeWithRetry(
-        () => task(item, idx),
-        maxRetries,
-        baseDelayMs,
-        tag,
-        maxDelayMs,
-      )
-      results[idx] = res
-      completedCount++
-      if (onProgress) {
-        try {
-          onProgress(completedCount, items.length)
-        } catch {
-          // ignore callback error
+      try {
+        const res = await executeWithRetry(
+          () => task(item, idx),
+          maxRetries,
+          baseDelayMs,
+          tag,
+          maxDelayMs,
+        )
+        results[idx] = res
+      } catch (workerErr) {
+        // Se a tarefa do item falhou mesmo após esgotar o retry,
+        // não quebramos os demais workers do pool: registramos o erro no índice
+        // e permitimos que o pool conclua o processamento dos demais itens.
+        console.warn(`[${tag}] Falha no processamento do item ${idx} no pool:`, workerErr)
+        results[idx] = undefined as unknown as TResult
+      } finally {
+        completedCount++
+        if (onProgress) {
+          try {
+            onProgress(completedCount, items.length)
+          } catch {
+            // ignore callback error
+          }
         }
-      }
-      if (delayBetweenBatchesMs > 0) {
-        await sleep(delayBetweenBatchesMs)
+        if (delayBetweenBatchesMs > 0) {
+          await sleep(delayBetweenBatchesMs)
+        }
       }
     }
   }
