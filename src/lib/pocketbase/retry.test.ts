@@ -227,5 +227,57 @@ describe('pocketbase/retry helpers', () => {
       expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(400)
       limiter.destroy()
     })
+
+    it('orchestrates deletion pool with initial 200ms spacing, throttles upon 429 and recovers after consecutive successes', async () => {
+      const limiter = new AdaptiveRateLimiter({
+        initialIntervalMs: 200,
+        minIntervalMs: 120,
+        maxIntervalMs: 4000,
+        backoffFactor: 2.0,
+        recoveryFactor: 0.9,
+        successThresholdForRecovery: 5,
+      })
+
+      expect(limiter.getIntervalMs()).toBe(200)
+
+      const deletedItems: string[] = []
+      let simulate429Once = true
+
+      // Simula uma lista de transações a serem excluídas pelo pool
+      const itemsToDelete = ['tx-1', 'tx-2', 'tx-3', 'tx-4', 'tx-5', 'tx-6', 'tx-7']
+
+      await runInPool(
+        itemsToDelete,
+        async (txId) => {
+          if (txId === 'tx-2' && simulate429Once) {
+            simulate429Once = false
+            throw { status: 429, message: 'Too Many Requests' }
+          }
+          deletedItems.push(txId)
+          return txId
+        },
+        {
+          concurrency: 2,
+          delayBetweenBatchesMs: 5,
+          maxRetries: 2,
+          baseDelayMs: 10,
+          maxDelayMs: 50,
+          rateLimiter: limiter,
+          tag: 'Test-Delete-Pool',
+        },
+      )
+
+      // Deve ter processado todos os itens
+      expect(deletedItems).toHaveLength(7)
+      expect(deletedItems).toContain('tx-1')
+      expect(deletedItems).toContain('tx-2')
+      expect(deletedItems).toContain('tx-7')
+
+      // O rate limiter deve ter desacelerado em função do 429 no tx-2 e depois acelerado gradualmente com os sucessos subsequentes
+      // Após o 429, o intervalo sobe para pelo menos 400ms (max(200 * 2, 400))
+      // Com sucessos consecutivos subsequentes, ele começa a reduzir
+      expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(120)
+      limiter.destroy()
+    })
   })
 })

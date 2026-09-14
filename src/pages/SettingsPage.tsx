@@ -13,7 +13,13 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
-import { sleep, executeWithRetry, runInPool, is429Error } from '@/lib/pocketbase/retry'
+import {
+  sleep,
+  executeWithRetry,
+  runInPool,
+  is429Error,
+  AdaptiveRateLimiter,
+} from '@/lib/pocketbase/retry'
 import {
   Dialog,
   DialogContent,
@@ -111,33 +117,50 @@ export default function SettingsPage() {
   /**
    * Helper para buscar exaustivamente todas as transações com paginação garantida em laço
    */
-  const fetchAllTransactionsByFilter = async (filter: string, tag: string) => {
+  const fetchAllTransactionsByFilter = async (
+    filter: string,
+    tag: string,
+    rateLimiter?: AdaptiveRateLimiter,
+  ) => {
     const allRecords: { id: string; account_id?: string }[] = []
     let page = 1
     const perPage = 200
 
     while (true) {
       const currentPage = page
-      const result = await executeWithRetry(
-        () =>
-          pb
-            .collection('transactions')
-            .getList<{ id: string; account_id?: string }>(currentPage, perPage, {
-              filter,
-              fields: 'id,account_id',
-              sort: '-created',
-            }),
-        7,
-        1000,
-        `${tag}-Pagina-${currentPage}`,
-        30000,
-      )
-
-      allRecords.push(...result.items)
-      if (currentPage >= result.totalPages || result.items.length === 0) {
-        break
+      if (rateLimiter) {
+        await rateLimiter.waitTurn()
       }
-      page++
+      try {
+        const result = await executeWithRetry(
+          () =>
+            pb
+              .collection('transactions')
+              .getList<{ id: string; account_id?: string }>(currentPage, perPage, {
+                filter,
+                fields: 'id,account_id',
+                sort: '-created',
+              }),
+          7,
+          1000,
+          `${tag}-Pagina-${currentPage}`,
+          30000,
+        )
+        if (rateLimiter) {
+          rateLimiter.recordSuccess()
+        }
+
+        allRecords.push(...result.items)
+        if (currentPage >= result.totalPages || result.items.length === 0) {
+          break
+        }
+        page++
+      } catch (pageErr: any) {
+        if (rateLimiter && is429Error(pageErr)) {
+          rateLimiter.recordThrottle()
+        }
+        throw pageErr
+      }
     }
 
     return allRecords
@@ -156,6 +179,18 @@ export default function SettingsPage() {
     setIsDeletingAll(true)
     setDeleteAllProgress(null)
 
+    // Rate limiter adaptativo compartilhado para exclusão em massa:
+    // Concorrência reduzida para 2, espaçamento preventivo de 200ms entre disparos,
+    // desaceleração imediata ao primeiro 429 e aceleração progressiva após sucessos
+    const deleteRateLimiter = new AdaptiveRateLimiter({
+      initialIntervalMs: 200,
+      minIntervalMs: 120,
+      maxIntervalMs: 4000,
+      backoffFactor: 2.0,
+      recoveryFactor: 0.9,
+      successThresholdForRecovery: 5,
+    })
+
     try {
       const companyId = currentCompany.id
       const filter = `control_id="${companyId}"`
@@ -166,8 +201,12 @@ export default function SettingsPage() {
 
       // Varredura em laço com verificação pós-exclusão
       for (let sweep = 1; sweep <= maxSweeps; sweep++) {
-        // 1. Obter todas as transações com paginação garantida
-        const records = await fetchAllTransactionsByFilter(filter, `Limpeza-Total-Sweep${sweep}`)
+        // 1. Obter todas as transações com paginação garantida respeitando o rate limiter
+        const records = await fetchAllTransactionsByFilter(
+          filter,
+          `Limpeza-Total-Sweep${sweep}`,
+          deleteRateLimiter,
+        )
 
         if (records.length === 0) {
           break
@@ -186,7 +225,7 @@ export default function SettingsPage() {
         let completedInSweep = 0
         const sweepErrors: string[] = []
 
-        // 2. Excluir lançamentos com taxa controlada (concorrência 2, 80ms entre requisições)
+        // 2. Excluir lançamentos com taxa adaptativa controlada (concorrência 2, espaçamento preventivo de 200ms)
         // e retry robusto para 429/rede
         await runInPool(
           records,
@@ -225,10 +264,11 @@ export default function SettingsPage() {
           },
           {
             concurrency: 2,
-            delayBetweenBatchesMs: 80,
+            delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
             maxDelayMs: 30000,
+            rateLimiter: deleteRateLimiter,
             tag: `Limpeza-Total-Delete-Sweep${sweep}`,
           },
         )
@@ -245,6 +285,7 @@ export default function SettingsPage() {
       }
 
       // Verificação final do banco: checar se sobrou algum registro
+      await deleteRateLimiter.waitTurn()
       const remainingCheck = await executeWithRetry(
         () =>
           pb.collection('transactions').getList(1, 1, {
@@ -256,10 +297,12 @@ export default function SettingsPage() {
         'Limpeza-Total-ChecagemFinal',
         15000,
       )
+      deleteRateLimiter.recordSuccess()
 
       const remainingTotal = remainingCheck.totalItems || 0
 
       // 3. Zerar o saldo de todas as contas do controle ativo de forma concorrente em lote único
+      await deleteRateLimiter.waitTurn()
       const accountsList = await executeWithRetry(
         () =>
           pb.collection('accounts').getFullList<{ id: string }>({
@@ -271,6 +314,7 @@ export default function SettingsPage() {
         'Limpeza-Total-Contas',
         10000,
       )
+      deleteRateLimiter.recordSuccess()
 
       let failedAccounts = 0
       if (accountsList.length > 0) {
@@ -295,10 +339,11 @@ export default function SettingsPage() {
           },
           {
             concurrency: 2,
-            delayBetweenBatchesMs: 80,
+            delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
             maxDelayMs: 30000,
+            rateLimiter: deleteRateLimiter,
             tag: 'Limpeza-Total-ZerarConta',
           },
         )
@@ -320,6 +365,7 @@ export default function SettingsPage() {
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao remover lançamentos e zerar contas.')
     } finally {
+      deleteRateLimiter.destroy()
       setIsDeletingAll(false)
       setDeleteAllProgress(null)
     }
@@ -333,6 +379,18 @@ export default function SettingsPage() {
 
     setIsDeletingMonth(true)
     setDeleteMonthProgress(null)
+
+    // Rate limiter adaptativo compartilhado para exclusão mensal:
+    // Concorrência 2, espaçamento preventivo de 200ms entre disparos,
+    // desaceleração imediata ao primeiro 429 e aceleração progressiva após sucessos
+    const deleteMonthRateLimiter = new AdaptiveRateLimiter({
+      initialIntervalMs: 200,
+      minIntervalMs: 120,
+      maxIntervalMs: 4000,
+      backoffFactor: 2.0,
+      recoveryFactor: 0.9,
+      successThresholdForRecovery: 5,
+    })
 
     try {
       const companyId = currentCompany.id
@@ -348,8 +406,12 @@ export default function SettingsPage() {
       const maxSweeps = 3
 
       for (let sweep = 1; sweep <= maxSweeps; sweep++) {
-        // 1. Obter lançamentos do mês selecionado com paginação completa
-        const records = await fetchAllTransactionsByFilter(filter, `Limpeza-Mes-Sweep${sweep}`)
+        // 1. Obter lançamentos do mês selecionado com paginação completa respeitando o rate limiter
+        const records = await fetchAllTransactionsByFilter(
+          filter,
+          `Limpeza-Mes-Sweep${sweep}`,
+          deleteMonthRateLimiter,
+        )
 
         if (records.length === 0) {
           break
@@ -367,7 +429,7 @@ export default function SettingsPage() {
         let completedInSweep = 0
         const sweepErrors: string[] = []
 
-        // 2. Excluir lançamentos com concorrência 2, delay de 80ms e retry anti-429/rede
+        // 2. Excluir lançamentos com concorrência 2, espaçamento preventivo de 200ms e retry anti-429/rede
         await runInPool(
           records,
           async (rec) => {
@@ -400,10 +462,11 @@ export default function SettingsPage() {
           },
           {
             concurrency: 2,
-            delayBetweenBatchesMs: 80,
+            delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
             maxDelayMs: 30000,
+            rateLimiter: deleteMonthRateLimiter,
             tag: `Limpeza-Mes-Delete-Sweep${sweep}`,
           },
         )
@@ -419,6 +482,7 @@ export default function SettingsPage() {
       }
 
       // Verificação final do mês
+      await deleteMonthRateLimiter.waitTurn()
       const remainingCheck = await executeWithRetry(
         () =>
           pb.collection('transactions').getList(1, 1, {
@@ -430,10 +494,12 @@ export default function SettingsPage() {
         'Limpeza-Mes-ChecagemFinal',
         15000,
       )
+      deleteMonthRateLimiter.recordSuccess()
 
       const remainingTotal = remainingCheck.totalItems || 0
 
       // 3. Zerar o saldo de todas as contas do controle ativo
+      await deleteMonthRateLimiter.waitTurn()
       const accountsList = await executeWithRetry(
         () =>
           pb.collection('accounts').getFullList<{ id: string }>({
@@ -445,6 +511,7 @@ export default function SettingsPage() {
         'Limpeza-Mes-Contas',
         10000,
       )
+      deleteMonthRateLimiter.recordSuccess()
 
       let failedAccounts = 0
       if (accountsList.length > 0) {
@@ -469,10 +536,11 @@ export default function SettingsPage() {
           },
           {
             concurrency: 2,
-            delayBetweenBatchesMs: 80,
+            delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
             maxDelayMs: 30000,
+            rateLimiter: deleteMonthRateLimiter,
             tag: 'Limpeza-Mes-ZerarConta',
           },
         )
@@ -496,6 +564,7 @@ export default function SettingsPage() {
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao remover lançamentos do mês e zerar contas.')
     } finally {
+      deleteMonthRateLimiter.destroy()
       setIsDeletingMonth(false)
       setDeleteMonthProgress(null)
     }
