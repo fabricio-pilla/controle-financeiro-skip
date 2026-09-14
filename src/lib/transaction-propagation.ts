@@ -956,13 +956,19 @@ async function handleRecurringPropagation({
       ? transaction.parent_transaction_id
       : ''
 
-  if (
-    choice === 'future' &&
-    !isGenericFormDesc &&
-    (formData.is_recurring ||
-      (formData.recurrence_type && formData.recurrence_type.trim() !== '') ||
-      isRecurringTransaction(transaction))
-  ) {
+  const shouldProjectFuture =
+    choice === 'future' && isEffectiveRecurring && (!isGenericFormDesc || isEffectiveRecurring)
+
+  console.info('[handleRecurringPropagation] Gate de criação de meses futuros:', {
+    choice,
+    isEffectiveRecurring,
+    isGenericFormDesc,
+    shouldProjectFuture,
+    txId: transaction.id,
+    description: effectiveDescription,
+  })
+
+  if (shouldProjectFuture) {
     // Identificar meses existentes nesta série
     // Montamos conjunto com todas as transações da série (incluindo as já atualizadas)
     const existingSeriesMonths = new Set<string>()

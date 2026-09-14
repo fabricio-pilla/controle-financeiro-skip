@@ -255,6 +255,17 @@ export function TransactionModal({
             `Foram geradas automaticamente ${result.created.length} ocorrência(s) futura(s) faltante(s) para "${formData.description}".`,
           )
         }
+      } else if (choice === 'future') {
+        const isTxRecurring = Boolean(
+          formData.is_recurring ||
+          (formData.recurrence_type && formData.recurrence_type.trim() !== '') ||
+          isRecurringTransaction(transaction),
+        )
+        if (isTxRecurring) {
+          toast.info(
+            'Nenhuma nova ocorrência precisou ser criada: as ocorrências futuras desta série já existem no período.',
+          )
+        }
       }
 
       // Background sync to keep balances fresh

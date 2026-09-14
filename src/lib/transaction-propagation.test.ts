@@ -2044,21 +2044,25 @@ describe('transaction-propagation', () => {
         expect(result.updated.every((u) => u.amount === 220)).toBe(true)
       })
 
-      it('descrição genérica com "Este e os próximos" gera 0 criações para não poluir com lançamentos vazios', async () => {
+      it('editar recorrente com descrição "Sem descrição" + "Este e os próximos" cria 12 ocorrências out/2026..set/2027, nada no mês atual/passados', async () => {
         const genericTx: Transaction = {
-          id: 'tx_generic_rec',
-          control_id: 'ctrl_1',
-          user_id: 'usr_1',
+          id: '7oi7uddggnyidpz',
+          control_id: 'y9ewjfbhzoihnq0',
+          user_id: 'uc5jp6hewxu9yio',
           type: 'despesa',
-          amount: 50,
+          amount: 50.21,
           description: 'Sem descrição',
-          category_id: 'cat_diversos',
-          account_id: 'acc_1',
-          date: '2026-05-10',
-          paid: false,
+          category_id: 'igcs6scks4fiurl',
+          subcategory_id: 'lsncfd6fvzn8h6o',
+          account_id: '4xftudvb9g7gnfy',
+          date: '2026-09-05',
+          payment_date: '2026-09-05',
+          paid: true,
           is_recurring: true,
+          recurring: true,
           recurrence_type: 'mensal',
-          created_at: '2026-05-10T00:00:00.000Z',
+          notes: 'Importado de planilha (Recorrente mensal)',
+          created_at: '2026-09-14T17:14:37.236Z',
         }
 
         const result = await updateTransactionWithPropagation({
@@ -2066,19 +2070,188 @@ describe('transaction-propagation', () => {
           allTransactions: [genericTx],
           formData: {
             description: 'Sem descrição',
-            amount: 60,
+            amount: 50.21,
             type: 'despesa',
-            account_id: 'acc_1',
-            category_id: 'cat_diversos',
-            date: '2026-05-10',
+            account_id: '4xftudvb9g7gnfy',
+            category_id: 'igcs6scks4fiurl',
+            subcategory_id: 'lsncfd6fvzn8h6o',
+            date: '2026-09-05',
+            payment_date: '2026-09-05',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+            notes: 'Importado de planilha (Recorrente mensal)',
+          },
+          choice: 'future',
+        })
+
+        // 1. Atualizou a original
+        expect(result.updated).toHaveLength(1)
+        expect(result.updated[0].id).toBe('7oi7uddggnyidpz')
+
+        // 2. Criou 12 ocorrências (outubro/2026 até setembro/2027)
+        expect(result.created).toHaveLength(12)
+
+        // 3. NADA criado no mês de setembro/2026 nem antes
+        const septOrBefore = result.created.filter((t) => t.date <= '2026-09-30')
+        expect(septOrBefore).toHaveLength(0)
+
+        // 4. Todas as ocorrências criadas herdam propriedades essenciais
+        expect(result.created[0].date).toBe('2026-10-05')
+        expect(result.created[11].date).toBe('2027-09-05')
+        expect(result.created.every((t) => t.amount === 50.21)).toBe(true)
+        expect(result.created.every((t) => t.type === 'despesa')).toBe(true)
+        expect(result.created.every((t) => t.account_id === '4xftudvb9g7gnfy')).toBe(true)
+        expect(result.created.every((t) => t.category_id === 'igcs6scks4fiurl')).toBe(true)
+        expect(result.created.every((t) => t.subcategory_id === 'lsncfd6fvzn8h6o')).toBe(true)
+        expect(result.created.every((t) => t.is_recurring === true)).toBe(true)
+        expect(result.created.every((t) => t.recurrence_type === 'mensal')).toBe(true)
+        expect(result.created.every((t) => t.paid === false)).toBe(true)
+      })
+
+      it('repetir a mesma edição é idempotente (0 criações adicionais)', async () => {
+        const genericTx: Transaction = {
+          id: '7oi7uddggnyidpz',
+          control_id: 'y9ewjfbhzoihnq0',
+          user_id: 'uc5jp6hewxu9yio',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Sem descrição',
+          category_id: 'igcs6scks4fiurl',
+          subcategory_id: 'lsncfd6fvzn8h6o',
+          account_id: '4xftudvb9g7gnfy',
+          date: '2026-09-05',
+          payment_date: '2026-09-05',
+          paid: true,
+          is_recurring: true,
+          recurring: true,
+          recurrence_type: 'mensal',
+          notes: 'Importado de planilha (Recorrente mensal)',
+          created_at: '2026-09-14T17:14:37.236Z',
+        }
+
+        // Executa primeira vez
+        const firstResult = await updateTransactionWithPropagation({
+          transaction: genericTx,
+          allTransactions: [genericTx],
+          formData: {
+            description: 'Sem descrição',
+            amount: 50.21,
+            type: 'despesa',
+            account_id: '4xftudvb9g7gnfy',
+            category_id: 'igcs6scks4fiurl',
+            date: '2026-09-05',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+        expect(firstResult.created).toHaveLength(12)
+
+        // Segunda execução com a lista de transações completa (original + criadas)
+        const allWithCreated = [firstResult.updated[0], ...firstResult.created]
+        const secondResult = await updateTransactionWithPropagation({
+          transaction: firstResult.updated[0],
+          allTransactions: allWithCreated,
+          formData: {
+            description: 'Sem descrição',
+            amount: 55.0,
+            type: 'despesa',
+            account_id: '4xftudvb9g7gnfy',
+            category_id: 'igcs6scks4fiurl',
+            date: '2026-09-05',
             is_recurring: true,
             recurrence_type: 'mensal',
           },
           choice: 'future',
         })
 
+        // Idempotência estrita: 0 novas criações
+        expect(secondResult.created).toHaveLength(0)
+      })
+
+      it('despesa avulsa sem flags de recorrência e sem descrição não gera nada no salvamento simples (guard mantido)', async () => {
+        const nonRecurringGenericTx: Transaction = {
+          id: 'tx_avulsa_sem_desc',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 35,
+          description: 'Sem descrição',
+          category_id: 'cat_lanche',
+          account_id: 'acc_1',
+          date: '2026-09-10',
+          paid: true,
+          is_recurring: false,
+          created_at: '2026-09-10T10:00:00.000Z',
+        }
+
+        const result = await updateTransactionWithPropagation({
+          transaction: nonRecurringGenericTx,
+          allTransactions: [nonRecurringGenericTx],
+          formData: {
+            description: 'Sem descrição',
+            amount: 40,
+            type: 'despesa',
+            account_id: 'acc_1',
+            category_id: 'cat_lanche',
+            date: '2026-09-10',
+            is_recurring: false,
+          },
+          choice: 'single',
+        })
+
         expect(result.updated).toHaveLength(1)
         expect(result.created).toHaveLength(0)
+      })
+
+      it('lançamentos independentes de mesmo valor não são tocados ao propagar recorrente', async () => {
+        const recTx: Transaction = {
+          id: 'rec_1',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Sem descrição',
+          category_id: 'cat_rec',
+          account_id: 'acc_1',
+          date: '2026-09-05',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-09-05T00:00:00.000Z',
+        }
+
+        const independentTx: Transaction = {
+          id: 'indep_1',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 50.21, // mesmo valor!
+          description: 'Padaria',
+          category_id: 'cat_alim',
+          account_id: 'acc_1',
+          date: '2026-10-15',
+          is_recurring: false,
+          created_at: '2026-10-15T00:00:00.000Z',
+        }
+
+        const result = await updateTransactionWithPropagation({
+          transaction: recTx,
+          allTransactions: [recTx, independentTx],
+          formData: {
+            description: 'Sem descrição',
+            amount: 60.0,
+            type: 'despesa',
+            account_id: 'acc_1',
+            category_id: 'cat_rec',
+            date: '2026-09-05',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+
+        const updatedIds = result.updated.map((t) => t.id)
+        expect(updatedIds).not.toContain('indep_1')
       })
     })
   })
