@@ -1853,5 +1853,233 @@ describe('transaction-propagation', () => {
         expect(currentMonthCreated).toHaveLength(0)
       })
     })
+
+    describe('Resiliência de recorrência efetiva e geração de meses futuros (v0.0.96+)', () => {
+      it('cria os meses futuros faltantes quando o registro tem is_recurring: false mas recurrence_type: "mensal" e é editado com "future"', async () => {
+        // Cenário do bug relatado: registro no banco tem is_recurring: false, mas recurrence_type: 'mensal'
+        // e o formData veio com is_recurring: false porque o modal antigo não detectava.
+        const targetTx: Transaction = {
+          id: 'tx_rec_legado',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 89.9,
+          description: 'Internet Fibra',
+          category_id: 'cat_moradia',
+          account_id: 'acc_1',
+          date: '2026-03-05',
+          payment_date: '2026-03-05',
+          paid: false,
+          is_recurring: false, // flag false no banco
+          recurrence_type: 'mensal', // mas tipo mensal presente
+          created_at: '2026-03-05T00:00:00.000Z',
+        }
+
+        const allTransactions = [targetTx]
+
+        // Payload simula o caso do modal ou de chamada direta com is_recurring: false
+        const formData: UpdateTransactionPayload = {
+          description: 'Internet Fibra 500MB',
+          amount: 99.9,
+          type: 'despesa',
+          account_id: 'acc_1',
+          category_id: 'cat_moradia',
+          date: '2026-03-05',
+          payment_date: '2026-03-05',
+          is_recurring: false, // form sem flag
+          recurrence_type: undefined,
+        }
+
+        const result = await updateTransactionWithPropagation({
+          transaction: targetTx,
+          allTransactions,
+          formData,
+          choice: 'future',
+        })
+
+        // 1. targetTx foi atualizado com is_recurring: true preservado
+        expect(result.updated.length).toBe(1)
+        expect(result.updated[0].id).toBe('tx_rec_legado')
+        expect(result.updated[0].is_recurring).toBe(true)
+        expect(result.updated[0].recurrence_type).toBe('mensal')
+
+        // 2. Meses futuros faltantes foram criados (12 meses na janela, exceto o mês do lançamento 2026-03)
+        // Deve ter criado ocorrências para os meses 2026-04 até 2027-03
+        expect(result.created.length).toBeGreaterThan(0)
+        expect(result.created.length).toBe(12)
+
+        // Nenhuma criação no mês original (2026-03)
+        const marchCreated = result.created.filter((t) => t.date.startsWith('2026-03'))
+        expect(marchCreated).toHaveLength(0)
+
+        // Todas as criadas têm is_recurring: true e recurrence_type: 'mensal'
+        expect(result.created.every((t) => t.is_recurring === true)).toBe(true)
+        expect(result.created.every((t) => t.recurrence_type === 'mensal')).toBe(true)
+      })
+
+      it('cria os meses futuros faltantes quando o registro tem recurring: true mas is_recurring: false', async () => {
+        const targetTx: Transaction = {
+          id: 'tx_rec_flag_antiga',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 150,
+          description: 'Plano de Saúde',
+          category_id: 'cat_saude',
+          account_id: 'acc_1',
+          date: '2026-04-10',
+          payment_date: '2026-04-10',
+          paid: false,
+          is_recurring: false,
+          recurring: true, // flag legada
+          created_at: '2026-04-10T00:00:00.000Z',
+        }
+
+        const allTransactions = [targetTx]
+
+        const result = await updateTransactionWithPropagation({
+          transaction: targetTx,
+          allTransactions,
+          formData: {
+            description: 'Plano de Saúde Unimed',
+            amount: 160,
+            type: 'despesa',
+            account_id: 'acc_1',
+            category_id: 'cat_saude',
+            date: '2026-04-10',
+            payment_date: '2026-04-10',
+            is_recurring: false,
+            recurrence_type: undefined,
+          },
+          choice: 'future',
+        })
+
+        expect(result.updated[0].is_recurring).toBe(true)
+        expect(result.created.length).toBe(12)
+        const aprilCreated = result.created.filter((t) => t.date.startsWith('2026-04'))
+        expect(aprilCreated).toHaveLength(0)
+      })
+
+      it('NÃO apaga a recorrência no banco ao editar um registro recorrente com choice "single"', async () => {
+        const targetTx: Transaction = {
+          id: 'tx_rec_single_edit',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 100,
+          description: 'Conta de Água',
+          category_id: 'cat_util',
+          account_id: 'acc_1',
+          date: '2026-05-01',
+          paid: false,
+          is_recurring: false,
+          recurrence_type: 'mensal',
+          created_at: '2026-05-01T00:00:00.000Z',
+        }
+
+        const result = await updateTransactionWithPropagation({
+          transaction: targetTx,
+          allTransactions: [targetTx],
+          formData: {
+            description: 'Conta de Água',
+            amount: 110,
+            type: 'despesa',
+            account_id: 'acc_1',
+            category_id: 'cat_util',
+            date: '2026-05-01',
+            is_recurring: false, // se form enviou false por bug prévio
+          },
+          choice: 'single',
+        })
+
+        expect(result.updated.length).toBe(1)
+        expect(result.updated[0].is_recurring).toBe(true)
+        expect(result.updated[0].recurrence_type).toBe('mensal')
+        expect(result.created).toHaveLength(0)
+      })
+
+      it('regressão: recorrente com todos os 12 futuros existentes gera 0 criações e apenas atualiza', async () => {
+        const fullSeries: Transaction[] = []
+        for (let m = 1; m <= 12; m++) {
+          const mm = String(m).padStart(2, '0')
+          fullSeries.push({
+            id: `tx_full_${mm}`,
+            control_id: 'ctrl_1',
+            user_id: 'usr_1',
+            type: 'despesa',
+            amount: 200,
+            description: 'Condomínio',
+            category_id: 'cat_moradia',
+            account_id: 'acc_1',
+            date: `2026-${mm}-15`,
+            payment_date: `2026-${mm}-15`,
+            paid: m < 3,
+            is_recurring: true,
+            recurrence_type: 'mensal',
+            created_at: '2026-01-01T00:00:00.000Z',
+          })
+        }
+
+        const targetTx = fullSeries[2] // 2026-03-15
+        const result = await updateTransactionWithPropagation({
+          transaction: targetTx,
+          allTransactions: fullSeries,
+          formData: {
+            description: 'Condomínio Reajustado',
+            amount: 220,
+            type: 'despesa',
+            account_id: 'acc_1',
+            category_id: 'cat_moradia',
+            date: '2026-03-15',
+            payment_date: '2026-03-15',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+
+        // 0 novas ocorrências criadas, atualizou meses 03..12 (10 itens)
+        expect(result.created).toHaveLength(0)
+        expect(result.updated).toHaveLength(10)
+        expect(result.updated.every((u) => u.amount === 220)).toBe(true)
+      })
+
+      it('descrição genérica com "Este e os próximos" gera 0 criações para não poluir com lançamentos vazios', async () => {
+        const genericTx: Transaction = {
+          id: 'tx_generic_rec',
+          control_id: 'ctrl_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 50,
+          description: 'Sem descrição',
+          category_id: 'cat_diversos',
+          account_id: 'acc_1',
+          date: '2026-05-10',
+          paid: false,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-05-10T00:00:00.000Z',
+        }
+
+        const result = await updateTransactionWithPropagation({
+          transaction: genericTx,
+          allTransactions: [genericTx],
+          formData: {
+            description: 'Sem descrição',
+            amount: 60,
+            type: 'despesa',
+            account_id: 'acc_1',
+            category_id: 'cat_diversos',
+            date: '2026-05-10',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+
+        expect(result.updated).toHaveLength(1)
+        expect(result.created).toHaveLength(0)
+      })
+    })
   })
 })

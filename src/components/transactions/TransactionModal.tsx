@@ -38,6 +38,7 @@ import { RecurrencePropagationModal, PropagationChoice } from './RecurrencePropa
 import {
   updateTransactionWithPropagation,
   UpdateTransactionPayload,
+  isRecurringTransaction,
 } from '@/lib/transaction-propagation'
 import { isCategoryAllowedForType } from '@/lib/nlp-parser'
 
@@ -133,7 +134,9 @@ export function TransactionModal({
   const [paymentDate, setPaymentDate] = useState(
     transaction?.payment_date || transaction?.date || new Date().toISOString().split('T')[0],
   )
-  const [isRecurring, setIsRecurring] = useState(transaction?.is_recurring || false)
+  const [isRecurring, setIsRecurring] = useState(
+    transaction ? isRecurringTransaction(transaction) : false,
+  )
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(
     transaction?.recurrence_type || 'mensal',
   )
@@ -154,7 +157,7 @@ export function TransactionModal({
       setSubcategoryId(transaction.subcategory_id || '')
       setDate(transaction.date)
       setPaymentDate(transaction.payment_date || transaction.date)
-      setIsRecurring(Boolean(transaction.is_recurring))
+      setIsRecurring(isRecurringTransaction(transaction))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
       setNotes(transaction.notes || '')
       setInstallmentsTotal(resolvedInstallmentsTotal)
@@ -300,13 +303,15 @@ export function TransactionModal({
       date,
       payment_date: paymentDate || date,
       is_recurring: isRecurring,
-      recurrence_type: isRecurring ? recurrenceType : undefined,
+      recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
       notes: notes.trim(),
       installments_total: isRecurring ? 0 : installmentsTotal,
     }
 
     if (isEditing && transaction) {
       const isTxRecurring = Boolean(
+        isRecurringTransaction(transaction) ||
+        isRecurring ||
         transaction.is_recurring ||
         transaction.recurring ||
         (transaction.recurrence_type && transaction.recurrence_type.trim() !== '') ||
@@ -353,7 +358,7 @@ export function TransactionModal({
         date,
         payment_date: paymentDate || date,
         is_recurring: isRecurring,
-        recurrence_type: isRecurring ? recurrenceType : undefined,
+        recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
         notes,
         installments_total: isRecurring ? 0 : installmentsTotal,
       })

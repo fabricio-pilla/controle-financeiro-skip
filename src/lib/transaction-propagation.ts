@@ -504,11 +504,26 @@ export async function updateTransactionWithPropagation({
   formData: UpdateTransactionPayload
   choice?: PropagationChoice
 }): Promise<{ updated: Transaction[]; created: Transaction[]; deletedIds: string[] }> {
-  const isRecurring = isRecurringTransaction(transaction)
+  const isRecurring =
+    isRecurringTransaction(transaction) ||
+    Boolean(
+      formData.is_recurring || (formData.recurrence_type && formData.recurrence_type.trim() !== ''),
+    )
   const isInstallment = !isRecurring && isInstallmentTransaction(transaction)
 
   // If it's a simple standalone transaction or choice is 'single'
   if ((!isInstallment && !isRecurring) || choice === 'single') {
+    // Preservar recorrência caso o registro original já fosse recorrente no banco
+    // e o usuário não tenha explicitamente alterado para outra coisa em edição individual
+    const effectiveIsRecurring = Boolean(
+      formData.is_recurring ||
+      (formData.recurrence_type && formData.recurrence_type.trim() !== '') ||
+      isRecurringTransaction(transaction),
+    )
+    const effectiveRecurrenceType = effectiveIsRecurring
+      ? formData.recurrence_type || transaction.recurrence_type || 'mensal'
+      : undefined
+
     const updated = await skipCloud.updateTransaction(transaction.id, {
       description: formData.description.trim(),
       amount: formData.amount,
@@ -519,8 +534,8 @@ export async function updateTransactionWithPropagation({
       date: formData.date,
       payment_date: formData.payment_date || formData.date,
       notes: formData.notes?.trim() || '',
-      is_recurring: formData.is_recurring,
-      recurrence_type: formData.is_recurring ? formData.recurrence_type : undefined,
+      is_recurring: effectiveIsRecurring,
+      recurrence_type: effectiveRecurrenceType,
     })
     return { updated: [updated], created: [], deletedIds: [] }
   }
@@ -714,27 +729,46 @@ async function handleInstallmentPropagation({
           const parcelDate = addMonths(baseDate, diffMonths)
           const parcelDesc = `${newBaseDesc} (${i}/${newTotal})`
 
-          const payload: any = {
+          const payload: Record<string, any> = {
             control_id: transaction.control_id,
-            user_id: userId,
             type: formData.type,
             amount: formData.amount,
             description: parcelDesc,
-            category_id: formData.category_id || '',
-            subcategory_id: formData.subcategory_id || '',
-            account_id: formData.account_id,
             date: parcelDate,
             payment_date: addMonths(formData.payment_date || formData.date, diffMonths),
             paid: false, // Future created parcels default to pending
             is_recurring: false,
-            recurrence_type: '',
             installments_total: newTotal,
             installment_total: newTotal,
             installment_number: i,
-            parent_transaction_id: parentId,
-            notes: formData.notes?.trim() || '',
           }
-          const rec = await pb.collection('transactions').create(payload)
+
+          if (userId && userId.trim() !== '') {
+            payload.user_id = userId.trim()
+          }
+          if (formData.category_id && formData.category_id.trim() !== '') {
+            payload.category_id = formData.category_id.trim()
+          }
+          if (formData.subcategory_id && formData.subcategory_id.trim() !== '') {
+            payload.subcategory_id = formData.subcategory_id.trim()
+          }
+          if (formData.account_id && formData.account_id.trim() !== '') {
+            payload.account_id = formData.account_id.trim()
+          }
+          if (parentId && parentId.trim() !== '') {
+            payload.parent_transaction_id = parentId.trim()
+          }
+          if (formData.notes && formData.notes.trim() !== '') {
+            payload.notes = formData.notes.trim()
+          }
+
+          const rec = await executeWithRetry(
+            () => pb.collection('transactions').create(payload),
+            7,
+            1000,
+            'CREATE_INSTALLMENT',
+            30000,
+          )
           return {
             id: rec.id,
             control_id: rec.control_id,
@@ -838,6 +872,17 @@ async function handleRecurringPropagation({
   const payDayChanged =
     origPayDateParts && newPayDateParts && origPayDateParts.day !== newPayDateParts.day
 
+  // Determina a recorrência efetiva da série / formulário para evitar que uma edição
+  // apague a recorrência de um registro que já era recorrente no banco.
+  const isEffectiveRecurring = Boolean(
+    formData.is_recurring ||
+    (formData.recurrence_type && formData.recurrence_type.trim() !== '') ||
+    isRecurringTransaction(transaction),
+  )
+  const effectiveRecurrenceType: RecurrenceType = isEffectiveRecurring
+    ? formData.recurrence_type || transaction.recurrence_type || 'mensal'
+    : 'mensal'
+
   // Update in controlled concurrent pool (concurrency = 4)
   const updatedItems = await runInPool(
     targetsToUpdate,
@@ -864,6 +909,12 @@ async function handleRecurringPropagation({
         }
       }
 
+      // Preservar a recorrência: se a série/transação ou o form for recorrente, nunca desmarcar
+      const itemIsRecurring = isEffectiveRecurring || isRecurringTransaction(item)
+      const itemRecurrenceType = itemIsRecurring
+        ? effectiveRecurrenceType || item.recurrence_type || 'mensal'
+        : undefined
+
       return await skipCloud.updateTransaction(
         item.id,
         {
@@ -876,8 +927,8 @@ async function handleRecurringPropagation({
           date: targetDate,
           payment_date: targetPaymentDate,
           notes: formData.notes?.trim() || '',
-          is_recurring: formData.is_recurring,
-          recurrence_type: formData.is_recurring ? formData.recurrence_type : undefined,
+          is_recurring: itemIsRecurring,
+          recurrence_type: itemRecurrenceType,
         },
         true, // skip per-request balance update
       )
@@ -890,21 +941,35 @@ async function handleRecurringPropagation({
   // Regra 3 (continuação): Para a opção "Este e os próximos", só criar novos lançamentos caso não existam
   // lançamentos vinculados futuros (ex.: meses da janela de recorrência ainda sem ocorrência).
   // Se a opção for 'all', NUNCA criar novos lançamentos (Regra 1: "Não criar novos lançamentos").
-  // Se a descrição for genérica ("Sem descrição"), NUNCA autogerar novos lançamentos para evitar proliferar registros sem identificação.
-  const rawDescTrim = (formData.description || '').trim()
+  // Se o lançamento for recorrente (ou marcado como recorrente no form), projetar suas ocorrências futuras.
+  // Mesmo quando a descrição for genérica ("Sem descrição"), o lançamento editado em si ainda deve gerar
+  // suas próprias ocorrências futuras faltantes (ele não agrupa outras independentes, mas gera as suas).
   const cleanDesc = cleanDescription(formData.description).trim()
+  const effectiveDescription = formData.description?.trim() || cleanDesc || 'Sem descrição'
   const isGenericFormDesc =
     !cleanDesc ||
     cleanDesc.toLowerCase() === 'sem descrição' ||
     cleanDesc.toLowerCase() === 'sem descricao'
 
-  if (choice === 'future' && formData.is_recurring && !isGenericFormDesc) {
+  const effectiveParentId =
+    transaction.parent_transaction_id && transaction.parent_transaction_id !== transaction.id
+      ? transaction.parent_transaction_id
+      : ''
+
+  if (
+    choice === 'future' &&
+    !isGenericFormDesc &&
+    (formData.is_recurring ||
+      (formData.recurrence_type && formData.recurrence_type.trim() !== '') ||
+      isRecurringTransaction(transaction))
+  ) {
     // Identificar meses existentes nesta série
     // Montamos conjunto com todas as transações da série (incluindo as já atualizadas)
     const existingSeriesMonths = new Set<string>()
     for (const t of series) {
       if (t.date) existingSeriesMonths.add(normalizeDateStr(t.date).substring(0, 7))
     }
+
     // Garantir que o mês do formData.date, o mês original de transaction.date E o mês do relógio atual estejam registrados
     // no conjunto existingSeriesMonths antes do loop de preenchimento de meses futuros.
     const formYM = normalizeDateStr(formData.date).substring(0, 7)
@@ -913,20 +978,21 @@ async function handleRecurringPropagation({
 
     if (formYM) existingSeriesMonths.add(formYM)
     if (origYM) existingSeriesMonths.add(origYM)
-    if (todayYM) existingSeriesMonths.add(todayYM)
 
     const updatedTxDateParts = parseDateParts(formData.date)
     const baseYear = updatedTxDateParts.year
     const baseMonth = updatedTxDateParts.month
     const origDay = updatedTxDateParts.day
 
-    // O mês do lançamento editado, o mês original e o mês atual do calendário JAMAIS podem receber novas ocorrências.
-    // Usamos o maior entre formYM, origYM e todayYM como limite inferior estrito.
+    // Blindagem (v0.0.93): O mês do lançamento editado (formYM), o mês original (origYM) e o mês atual
+    // do calendário JAMAIS podem receber novas ocorrências.
+    // Lançamentos novos são criados rigorosamente a partir do mês seguinte ao do lançamento editado (e nunca no mês atual nem passados).
     let minAllowedYM = formYM
     if (origYM > minAllowedYM) minAllowedYM = origYM
     if (todayYM > minAllowedYM) minAllowedYM = todayYM
 
-    const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
+    const userId =
+      transaction.user_id || (pb.authStore.model as any)?.id || (formData as any)?.user_id || ''
 
     // Planejar apenas os meses faltantes na janela de 12 meses
     const missingCandidates: any[] = []
@@ -957,7 +1023,7 @@ async function handleRecurringPropagation({
         user_id: userId,
         type: formData.type,
         amount: formData.amount,
-        description: cleanDesc,
+        description: effectiveDescription,
         category_id: formData.category_id || '',
         subcategory_id: formData.subcategory_id || '',
         account_id: formData.account_id,
@@ -965,15 +1031,17 @@ async function handleRecurringPropagation({
         payment_date: calcPaymentDate,
         paid: false,
         is_recurring: true,
-        recurrence_type: formData.recurrence_type || 'mensal',
+        recurrence_type: effectiveRecurrenceType,
+        parent_transaction_id: effectiveParentId || undefined,
         notes: formData.notes?.trim() || 'Gerado automaticamente: recorrência mensal',
       })
     }
 
     if (missingCandidates.length > 0) {
       // Antes de criar qualquer ocorrência nova, verificar contra TODAS as transações do controle
-      // se já existe ocorrência com mesmo tipo + account_id + descrição limpa + mesma categoria + mesmo ano-mês
-      // Se existir, atualizar em vez de criar.
+      // se já existe ocorrência vinculada (por parent_transaction_id ou tipo + conta + descrição base + categoria + ano-mês).
+      // Se a descrição for genérica, NUNCA agrupar transações independentes por valor nem por categoria;
+      // apenas atualiza se houver vínculo explícito de parent_transaction_id.
       const normalizedDesc = cleanDesc.toLowerCase()
       const candidatesToCreate: any[] = []
 
@@ -984,6 +1052,20 @@ async function handleRecurringPropagation({
             return false
           }
           if (t.type !== candidate.type) return false
+          const tYM = normalizeDateStr(t.date).substring(0, 7)
+          if (tYM !== candidateYM) return false
+
+          // Vínculo explícito tem precedência total
+          if (effectiveParentId && t.parent_transaction_id === effectiveParentId) {
+            return true
+          }
+
+          // Se a descrição for genérica e não tiver vínculo explícito, NÃO agrupa com outras
+          // despesas independentes para evitar alterar lançamentos de outros gastos da mesma conta/mês
+          if (isGenericFormDesc) {
+            return false
+          }
+
           if ((t.account_id || '') !== (candidate.account_id || '')) return false
           if (candidate.category_id && t.category_id && t.category_id !== candidate.category_id) {
             return false
@@ -991,9 +1073,7 @@ async function handleRecurringPropagation({
           const tCleanDesc = cleanDescription(t.description || '')
             .trim()
             .toLowerCase()
-          if (tCleanDesc !== normalizedDesc) return false
-          const tYM = normalizeDateStr(t.date).substring(0, 7)
-          return tYM === candidateYM
+          return tCleanDesc === normalizedDesc
         })
 
         if (existingTxInControl) {
@@ -1022,20 +1102,63 @@ async function handleRecurringPropagation({
       }
 
       if (candidatesToCreate.length > 0) {
+        // Sanitizar payload para o PocketBase:
+        // - Relações vazias omitidas (category_id, subcategory_id, account_id, parent_transaction_id)
+        // - user_id só enviado se não for vazio
+        // - payment_date nunca vazio (cai para date)
+        // - Execução com retry anti-429 resiliente
         const newlyCreated = await runInPool(
           candidatesToCreate,
           async (candidate) => {
-            const rec = await pb.collection('transactions').create(candidate)
-            return {
+            const payload: Record<string, any> = {
+              control_id: candidate.control_id,
+              type: candidate.type,
+              amount: candidate.amount,
+              description: candidate.description,
+              date: candidate.date,
+              payment_date: candidate.payment_date || candidate.date,
+              paid: false,
+              is_recurring: true,
+              recurrence_type: candidate.recurrence_type || effectiveRecurrenceType || 'mensal',
+            }
+
+            if (candidate.user_id && candidate.user_id.trim() !== '') {
+              payload.user_id = candidate.user_id.trim()
+            }
+            if (candidate.category_id && candidate.category_id.trim() !== '') {
+              payload.category_id = candidate.category_id.trim()
+            }
+            if (candidate.subcategory_id && candidate.subcategory_id.trim() !== '') {
+              payload.subcategory_id = candidate.subcategory_id.trim()
+            }
+            if (candidate.account_id && candidate.account_id.trim() !== '') {
+              payload.account_id = candidate.account_id.trim()
+            }
+            if (candidate.parent_transaction_id && candidate.parent_transaction_id.trim() !== '') {
+              payload.parent_transaction_id = candidate.parent_transaction_id.trim()
+            }
+            if (candidate.notes && candidate.notes.trim() !== '') {
+              payload.notes = candidate.notes.trim()
+            }
+
+            const rec = await executeWithRetry(
+              () => pb.collection('transactions').create(payload),
+              7,
+              1000,
+              'CREATE_MISSING_RECURRING',
+              30000,
+            )
+
+            const mapped: Transaction = {
               id: rec.id,
-              control_id: rec.control_id,
-              user_id: rec.user_id,
+              control_id: rec.control_id || candidate.control_id,
+              user_id: rec.user_id || candidate.user_id,
               type: rec.type,
               amount: Number(rec.amount),
               description: rec.description,
-              category_id: rec.category_id,
-              subcategory_id: rec.subcategory_id,
-              account_id: rec.account_id,
+              category_id: rec.category_id || '',
+              subcategory_id: rec.subcategory_id || undefined,
+              account_id: rec.account_id || '',
               date: rec.date
                 ? String(rec.date).split(/[T\s]/)[0]
                 : candidate.date.split(/[T\s]/)[0],
@@ -1045,11 +1168,19 @@ async function handleRecurringPropagation({
               paid: false,
               is_recurring: true,
               recurrence_type: rec.recurrence_type,
-              notes: rec.notes,
-              created_at: rec.created,
-            } as Transaction
+              notes: rec.notes || undefined,
+              created_at: rec.created || new Date().toISOString(),
+            }
+            return mapped
           },
-          { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'CREATE_MISSING_RECURRING' },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 200,
+            maxRetries: 7,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            tag: 'CREATE_MISSING_RECURRING',
+          },
         )
         createdItems.push(...newlyCreated)
       }
