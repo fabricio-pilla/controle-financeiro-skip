@@ -855,13 +855,21 @@ async function handleRecurringPropagation({
     for (const t of series) {
       if (t.date) existingSeriesMonths.add(normalizeDateStr(t.date).substring(0, 7))
     }
-    // Adicionar mês da transação editada
-    existingSeriesMonths.add(normalizeDateStr(formData.date).substring(0, 7))
+    // Garantir que o mês do formData.date E o mês original de transaction.date estejam registrados
+    // no conjunto existingSeriesMonths antes do loop de preenchimento de meses futuros.
+    const formYM = normalizeDateStr(formData.date).substring(0, 7)
+    const origYM = normalizeDateStr(transaction.date).substring(0, 7)
+    if (formYM) existingSeriesMonths.add(formYM)
+    if (origYM) existingSeriesMonths.add(origYM)
 
     const updatedTxDateParts = parseDateParts(formData.date)
     const baseYear = updatedTxDateParts.year
     const baseMonth = updatedTxDateParts.month
     const origDay = updatedTxDateParts.day
+
+    // O mês do lançamento editado e qualquer mês anterior a ele JAMAIS podem receber novas ocorrências.
+    // Usamos o maior entre formYM e origYM como limite inferior estrito.
+    const currentTxYM = formYM >= origYM ? formYM : origYM
 
     const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
     const cleanDesc = cleanDescription(formData.description).trim()
@@ -871,6 +879,12 @@ async function handleRecurringPropagation({
     for (let m = 1; m <= 12; m++) {
       const targetDateStr = computeTargetDate(baseYear, baseMonth, origDay, m)
       const targetYM = targetDateStr.substring(0, 7)
+
+      // Bloqueio explícito: o mês do lançamento editado e qualquer mês anterior JAMAIS podem receber novas ocorrências
+      if (targetYM <= currentTxYM) {
+        continue
+      }
+
       if (existingSeriesMonths.has(targetYM)) {
         continue
       }
@@ -903,34 +917,86 @@ async function handleRecurringPropagation({
     }
 
     if (missingCandidates.length > 0) {
-      const newlyCreated = await runInPool(
-        missingCandidates,
-        async (candidate) => {
-          const rec = await pb.collection('transactions').create(candidate)
-          return {
-            id: rec.id,
-            control_id: rec.control_id,
-            user_id: rec.user_id,
-            type: rec.type,
-            amount: Number(rec.amount),
-            description: rec.description,
-            category_id: rec.category_id,
-            subcategory_id: rec.subcategory_id,
-            account_id: rec.account_id,
-            date: rec.date ? String(rec.date).split(/[T\s]/)[0] : candidate.date.split(/[T\s]/)[0],
-            payment_date: rec.payment_date
-              ? String(rec.payment_date).split(/[T\s]/)[0]
-              : candidate.payment_date,
-            paid: false,
-            is_recurring: true,
-            recurrence_type: rec.recurrence_type,
-            notes: rec.notes,
-            created_at: rec.created,
-          } as Transaction
-        },
-        { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'CREATE_MISSING_RECURRING' },
-      )
-      createdItems.push(...newlyCreated)
+      // Antes de criar qualquer ocorrência nova, verificar contra TODAS as transações do controle
+      // (não só a série filtrada) se já existe ocorrência com mesmo tipo + account_id + descrição limpa + mesmo ano-mês
+      // (usando normalização de data via normalizeDateStr, sem depender de fuso horário).
+      // Se existir, atualizar em vez de criar.
+      const normalizedDesc = cleanDesc.toLowerCase()
+      const candidatesToCreate: any[] = []
+
+      for (const candidate of missingCandidates) {
+        const candidateYM = candidate.date.substring(0, 7)
+        const existingTxInControl = allTransactions.find((t) => {
+          if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+            return false
+          }
+          if (t.type !== candidate.type) return false
+          if ((t.account_id || '') !== (candidate.account_id || '')) return false
+          const tCleanDesc = cleanDescription(t.description || '')
+            .trim()
+            .toLowerCase()
+          if (tCleanDesc !== normalizedDesc) return false
+          const tYM = normalizeDateStr(t.date).substring(0, 7)
+          return tYM === candidateYM
+        })
+
+        if (existingTxInControl) {
+          // Atualizar o registro existente em vez de criar duplicata
+          const updatedExisting = await skipCloud.updateTransaction(
+            existingTxInControl.id,
+            {
+              description: candidate.description,
+              amount: candidate.amount,
+              type: candidate.type,
+              account_id: candidate.account_id,
+              category_id: candidate.category_id,
+              subcategory_id: candidate.subcategory_id || '',
+              date: candidate.date,
+              payment_date: candidate.payment_date,
+              notes: candidate.notes,
+              is_recurring: true,
+              recurrence_type: candidate.recurrence_type,
+            },
+            true,
+          )
+          updatedItems.push(updatedExisting)
+        } else {
+          candidatesToCreate.push(candidate)
+        }
+      }
+
+      if (candidatesToCreate.length > 0) {
+        const newlyCreated = await runInPool(
+          candidatesToCreate,
+          async (candidate) => {
+            const rec = await pb.collection('transactions').create(candidate)
+            return {
+              id: rec.id,
+              control_id: rec.control_id,
+              user_id: rec.user_id,
+              type: rec.type,
+              amount: Number(rec.amount),
+              description: rec.description,
+              category_id: rec.category_id,
+              subcategory_id: rec.subcategory_id,
+              account_id: rec.account_id,
+              date: rec.date
+                ? String(rec.date).split(/[T\s]/)[0]
+                : candidate.date.split(/[T\s]/)[0],
+              payment_date: rec.payment_date
+                ? String(rec.payment_date).split(/[T\s]/)[0]
+                : candidate.payment_date,
+              paid: false,
+              is_recurring: true,
+              recurrence_type: rec.recurrence_type,
+              notes: rec.notes,
+              created_at: rec.created,
+            } as Transaction
+          },
+          { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'CREATE_MISSING_RECURRING' },
+        )
+        createdItems.push(...newlyCreated)
+      }
     }
   }
 

@@ -646,6 +646,341 @@ describe('transaction-propagation', () => {
   })
 
   // =========================================================================
+  // CENÁRIOS ESPECÍFICOS DO BUG: EDIÇÃO RECORRENTE E BLINDAGEM DE MESES
+  // =========================================================================
+  describe('Cenários específicos de edição recorrente e blindagem', () => {
+    it('Edição recorrente com "Este e os próximos" quando todos os futuros existem -> 0 criadas, apenas atualizadas', async () => {
+      // 12 meses existentes para uma série recorrente (ex: 2026-01 a 2026-12)
+      const fullSeries: Transaction[] = []
+      for (let m = 1; m <= 12; m++) {
+        const mm = String(m).padStart(2, '0')
+        fullSeries.push({
+          id: `tx_rec_${mm}`,
+          control_id: 'y9ewjfbhzoihnq0',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 840,
+          description: 'Sem descrição',
+          category_id: 'cat_1',
+          account_id: '4xftudvb9g7gnfy',
+          date: `2026-${mm}-07 00:00:00.000Z`,
+          payment_date: `2026-${mm}-07 00:00:00.000Z`,
+          paid: false,
+          is_recurring: true,
+          recurring: true,
+          recurrence_type: 'mensal',
+          installment_number: 1,
+          installment_total: 0,
+          created_at: '2026-01-01T00:00:00.000Z',
+        })
+      }
+
+      // Edita a transação de setembro (mês 9) com "future"
+      const septTx = fullSeries[8] // 2026-09-07
+      expect(septTx.id).toBe('tx_rec_09')
+
+      const result = await updateTransactionWithPropagation({
+        transaction: septTx,
+        allTransactions: fullSeries,
+        formData: {
+          description: 'Sem descrição',
+          amount: 900, // alterou valor
+          type: 'despesa',
+          account_id: '4xftudvb9g7gnfy',
+          category_id: 'cat_1',
+          date: '2026-09-07 00:00:00.000Z',
+          payment_date: '2026-09-07 00:00:00.000Z',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+        },
+        choice: 'future',
+      })
+
+      // EXATAMENTE 0 criadas, apenas atualizadas
+      expect(result.created.length).toBe(0)
+      // Meses 09, 10, 11, 12 atualizados (4 transações)
+      expect(result.updated.length).toBe(4)
+      expect(result.updated.map((t) => t.id)).toEqual([
+        'tx_rec_09',
+        'tx_rec_10',
+        'tx_rec_11',
+        'tx_rec_12',
+      ])
+      expect(result.updated.every((t) => t.amount === 900)).toBe(true)
+    })
+
+    it('Quando falta algum mês futuro -> cria SOMENTE nos meses futuros faltantes, NUNCA no mês atual', async () => {
+      // Cenário: temos meses 09, 10 e 12 (falta o mês 11 e faltam os meses além de 12)
+      const existingList: Transaction[] = [
+        {
+          id: 'tx_rec_09',
+          control_id: 'y9ewjfbhzoihnq0',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 840,
+          description: 'Sem descrição',
+          category_id: 'cat_1',
+          account_id: '4xftudvb9g7gnfy',
+          date: '2026-09-07 00:00:00.000Z',
+          payment_date: '2026-09-07 00:00:00.000Z',
+          paid: false,
+          is_recurring: true,
+          recurring: true,
+          recurrence_type: 'mensal',
+          installment_number: 1,
+          installment_total: 0,
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+        {
+          id: 'tx_rec_10',
+          control_id: 'y9ewjfbhzoihnq0',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 840,
+          description: 'Sem descrição',
+          category_id: 'cat_1',
+          account_id: '4xftudvb9g7gnfy',
+          date: '2026-10-07 00:00:00.000Z',
+          payment_date: '2026-10-07 00:00:00.000Z',
+          paid: false,
+          is_recurring: true,
+          recurring: true,
+          recurrence_type: 'mensal',
+          installment_number: 1,
+          installment_total: 0,
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+        {
+          id: 'tx_rec_12',
+          control_id: 'y9ewjfbhzoihnq0',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 840,
+          description: 'Sem descrição',
+          category_id: 'cat_1',
+          account_id: '4xftudvb9g7gnfy',
+          date: '2026-12-07 00:00:00.000Z',
+          payment_date: '2026-12-07 00:00:00.000Z',
+          paid: false,
+          is_recurring: true,
+          recurring: true,
+          recurrence_type: 'mensal',
+          installment_number: 1,
+          installment_total: 0,
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ]
+
+      const septTx = existingList[0] // 2026-09-07
+
+      const result = await updateTransactionWithPropagation({
+        transaction: septTx,
+        allTransactions: existingList,
+        formData: {
+          description: 'Sem descrição',
+          amount: 850,
+          type: 'despesa',
+          account_id: '4xftudvb9g7gnfy',
+          category_id: 'cat_1',
+          date: '2026-09-07 00:00:00.000Z',
+          payment_date: '2026-09-07 00:00:00.000Z',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+        },
+        choice: 'future',
+      })
+
+      // Transações existentes atualizadas: 09, 10, 12
+      expect(result.updated.map((t) => t.id)).toEqual(['tx_rec_09', 'tx_rec_10', 'tx_rec_12'])
+
+      // Criadas: deve conter mês 11 (2026-11) e os seguintes até completar a janela de 12 meses
+      // MAS NUNCA no mês atual (2026-09) nem anterior
+      const createdMonths = result.created.map((c) => c.date.substring(0, 7))
+      expect(createdMonths).not.toContain('2026-09') // NUNCA no mês atual
+      expect(createdMonths).not.toContain('2026-08') // NUNCA anterior
+      expect(createdMonths).not.toContain('2026-10') // Já existia
+      expect(createdMonths).not.toContain('2026-12') // Já existia
+      expect(createdMonths).toContain('2026-11') // Mês futuro faltante criado!
+
+      // Todas as criadas devem ter targetYM > '2026-09'
+      for (const ym of createdMonths) {
+        expect(ym > '2026-09').toBe(true)
+      }
+    })
+
+    it('Se já existir registro com mesmo tipo + conta + cleanDesc + ano-mês no controle (fora da série filtrada), atualiza em vez de criar', async () => {
+      // Registro na mesma conta, mesmo tipo, mesma descrição e mesmo ano-mês (ex: 2026-10),
+      // mas que não estava marcado como recorrente antes ou com ID separado
+      const targetTx: Transaction = {
+        id: 'tx_rec_base',
+        control_id: 'ctrl_dup_check',
+        user_id: 'u1',
+        type: 'despesa',
+        amount: 300,
+        description: 'Internet Fibra',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-10 00:00:00.000Z',
+        paid: false,
+        is_recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-09-01T00:00:00.000Z',
+      }
+
+      const existingInControlNotInSeries: Transaction = {
+        id: 'tx_other_in_control',
+        control_id: 'ctrl_dup_check',
+        user_id: 'u1',
+        type: 'despesa',
+        amount: 300,
+        description: 'Internet Fibra',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-10-10 00:00:00.000Z',
+        paid: false,
+        is_recurring: false, // não estava na série filtrada
+        created_at: '2026-09-01T00:00:00.000Z',
+      }
+
+      const result = await updateTransactionWithPropagation({
+        transaction: targetTx,
+        allTransactions: [targetTx, existingInControlNotInSeries],
+        formData: {
+          description: 'Internet Fibra',
+          amount: 350,
+          type: 'despesa',
+          category_id: 'cat_1',
+          account_id: 'acc_1',
+          date: '2026-09-10 00:00:00.000Z',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+        },
+        choice: 'future',
+      })
+
+      // O registro em 2026-10 foi atualizado em vez de criar uma duplicata naquele mês!
+      expect(result.updated.some((u) => u.id === 'tx_other_in_control')).toBe(true)
+      const createdMonths = result.created.map((c) => c.date.substring(0, 7))
+      expect(createdMonths).not.toContain('2026-09')
+      expect(createdMonths).not.toContain('2026-10')
+    })
+
+    it('"Todos" -> 0 criações', async () => {
+      const series: Transaction[] = [
+        {
+          id: 'rec_t1',
+          control_id: 'ctrl_1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 100,
+          description: 'Academia',
+          category_id: 'cat_1',
+          account_id: 'acc_1',
+          date: '2026-01-10',
+          paid: true,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01',
+        },
+        {
+          id: 'rec_t2',
+          control_id: 'ctrl_1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 100,
+          description: 'Academia',
+          category_id: 'cat_1',
+          account_id: 'acc_1',
+          date: '2026-02-10',
+          paid: false,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01',
+        },
+      ]
+
+      const result = await updateTransactionWithPropagation({
+        transaction: series[0],
+        allTransactions: series,
+        formData: {
+          description: 'Academia Nova',
+          amount: 120,
+          type: 'despesa',
+          category_id: 'cat_1',
+          account_id: 'acc_1',
+          date: '2026-01-10',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+        },
+        choice: 'all',
+      })
+
+      // Regra: "Todos" -> 0 criações
+      expect(result.created.length).toBe(0)
+      expect(result.updated.length).toBe(2)
+      expect(result.updated.every((u) => u.description === 'Academia Nova')).toBe(true)
+    })
+
+    it('"Somente esse" -> só o registro alvo é tocado', async () => {
+      const series: Transaction[] = [
+        {
+          id: 'rec_s1',
+          control_id: 'ctrl_1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50,
+          description: 'Serviço Streaming',
+          category_id: 'cat_1',
+          account_id: 'acc_1',
+          date: '2026-01-15',
+          paid: true,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01',
+        },
+        {
+          id: 'rec_s2',
+          control_id: 'ctrl_1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50,
+          description: 'Serviço Streaming',
+          category_id: 'cat_1',
+          account_id: 'acc_1',
+          date: '2026-02-15',
+          paid: false,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-01',
+        },
+      ]
+
+      const result = await updateTransactionWithPropagation({
+        transaction: series[1],
+        allTransactions: series,
+        formData: {
+          description: 'Serviço Streaming VIP',
+          amount: 80,
+          type: 'despesa',
+          category_id: 'cat_1',
+          account_id: 'acc_1',
+          date: '2026-02-15',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+        },
+        choice: 'single',
+      })
+
+      // Só o registro alvo é tocado
+      expect(result.created.length).toBe(0)
+      expect(result.updated.length).toBe(1)
+      expect(result.updated[0].id).toBe('rec_s2')
+      expect(result.updated[0].description).toBe('Serviço Streaming VIP')
+      expect(result.updated[0].amount).toBe(80)
+    })
+  })
+
+  // =========================================================================
   // AUDITORIA DAS 6 REGRAS EXPLÍCITAS DEFINIDAS PELO USUÁRIO
   // =========================================================================
   describe('Auditoria das 6 Regras Explícitas de Propagação', () => {

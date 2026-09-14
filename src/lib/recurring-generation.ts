@@ -407,17 +407,21 @@ export function planOccurrencesForSingleRecurring({
     const tAccountId = t.account_id || ''
     // Pertence à mesma série se tiver a mesma conta, tipo e descrição base
     if (d === cleanD && t.type === sourceTransaction.type && tAccountId === sourceAccountId) {
-      const ym = t.date.substring(0, 7)
+      const cleanTDate = String(t.date).split(/[T\s]/)[0]
+      const ym = cleanTDate.substring(0, 7)
       if (ym) existingMonthSet.add(ym)
     }
   }
 
-  // Também não duplicar no próprio mês da transação fonte
-  const sourceYM = getYearMonth(baseYear, baseMonth)
+  // Normalização de datas sem depender de fuso horário
+  const cleanSourceDate = sourceTransaction.date
+    ? String(sourceTransaction.date).split(/[T\s]/)[0]
+    : ''
+  const sourceYM = cleanSourceDate
+    ? cleanSourceDate.substring(0, 7)
+    : getYearMonth(baseYear, baseMonth)
   existingMonthSet.add(sourceYM)
-  if (sourceTransaction.date) {
-    existingMonthSet.add(sourceTransaction.date.substring(0, 7))
-  }
+  existingMonthSet.add(getYearMonth(baseYear, baseMonth))
 
   // Projetar dia de pagamento original da transação cadastrada
   // Se a fonte possui payment_date válida, respeitar o dia dela (ou recair na própria targetDate)
@@ -432,6 +436,11 @@ export function planOccurrencesForSingleRecurring({
   for (let m = 1; m <= 12; m++) {
     const targetDateStr = computeTargetDate(baseYear, baseMonth, origDay, m)
     const targetYM = targetDateStr.substring(0, 7)
+
+    // Blindagem: NUNCA criar ocorrência no mês do lançamento base ou anterior
+    if (targetYM <= sourceYM) {
+      continue
+    }
 
     if (existingMonthSet.has(targetYM)) {
       continue // Idempotente: mês já possui ocorrência desta série
@@ -873,7 +882,8 @@ export function planNextRecurringTransactions({
   const existingSet = new Set<string>()
   for (const t of existingTransactions) {
     if (!t.date || t.control_id !== currentCompanyId) continue
-    const ym = t.date.substring(0, 7)
+    const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
+    const ym = cleanDateOnly.substring(0, 7)
     const cleanD = cleanDescription(t.description).toLowerCase()
     const key = `${t.type}_${t.account_id || ''}_${cleanD}_${ym}`
     existingSet.add(key)
@@ -886,7 +896,10 @@ export function planNextRecurringTransactions({
   for (const seed of canonicalMap.values()) {
     const cleanD = cleanDescription(seed.description).toLowerCase()
     const origParts = parseDateParts(seed.date)
-    const seedYM = getYearMonth(origParts.year, origParts.month)
+    const seedCleanDate = seed.date ? String(seed.date).split(/[T\s]/)[0] : ''
+    const seedYM = seedCleanDate
+      ? seedCleanDate.substring(0, 7)
+      : getYearMonth(origParts.year, origParts.month)
     const origDay = origParts.day
 
     // Determinar ano e mês base para a geração dos 12 meses:
@@ -896,6 +909,8 @@ export function planNextRecurringTransactions({
     const isFutureSeed = seedYM > currentYM
     const startBaseYear = isFutureSeed ? origParts.year : currentYear
     const startBaseMonth = isFutureSeed ? origParts.month : currentMonth
+    // Limite mínimo: nunca gerar no mês do lançamento base ou anterior, nem no mês atual ou anterior
+    const minYM = seedYM >= currentYM ? seedYM : currentYM
 
     // Projetar dia de pagamento respeitando o original de seed.payment_date quando existir
     let seedPayOrigDay = origDay
@@ -907,6 +922,12 @@ export function planNextRecurringTransactions({
     for (let m = 1; m <= 12; m++) {
       const targetDateStr = computeTargetDate(startBaseYear, startBaseMonth, origDay, m)
       const targetYM = targetDateStr.substring(0, 7)
+
+      // Blindagem: nunca criar ocorrência no mês do seed, ou no mês atual, ou anterior a eles
+      if (targetYM <= minYM || targetYM <= seedYM) {
+        continue
+      }
+
       const checkKey = `${seed.type}_${seed.account_id || ''}_${cleanD}_${targetYM}`
 
       if (existingSet.has(checkKey)) {
