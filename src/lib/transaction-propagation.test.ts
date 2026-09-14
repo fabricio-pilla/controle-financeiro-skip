@@ -1687,5 +1687,171 @@ describe('transaction-propagation', () => {
         expect(deletedIds).not.toContain(parentId)
       })
     })
+
+    // -----------------------------------------------------------------------
+    // REGRA 7: Independência de lançamentos com mesmo valor (Bug v0.0.93)
+    // -----------------------------------------------------------------------
+    describe('Regra 7: Lançamentos independentes com mesmo valor (Bug v0.0.93)', () => {
+      it('findRecurringSeries não agrupa despesas com mesmo valor mas descrições diferentes ou sem descrição', () => {
+        const txTarget: Transaction = {
+          id: 'tx_alvo',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: '',
+          account_id: 'acc1',
+          category_id: 'cat1',
+          date: '2026-08-10',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-08-10',
+        }
+
+        const independentTx1: Transaction = {
+          id: 'tx_indep1',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: '',
+          account_id: 'acc1',
+          category_id: 'cat2', // categoria diferente
+          date: '2026-08-08',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-08-08',
+        }
+
+        const independentTx2: Transaction = {
+          id: 'tx_indep2',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Café da manhã',
+          account_id: 'acc1',
+          category_id: 'cat3',
+          date: '2026-08-09',
+          is_recurring: false,
+          created_at: '2026-08-09',
+        }
+
+        // Lançamento com descrição genérica/vazia e sem parent_transaction_id NÃO deve agrupar independentes
+        const series = findRecurringSeries(txTarget, [txTarget, independentTx1, independentTx2])
+        expect(series).toHaveLength(1)
+        expect(series[0].id).toBe('tx_alvo')
+      })
+
+      it('findRecurringSeries diferencia categorias distintas mesmo se ambas forem recorrentes', () => {
+        const tx1: Transaction = {
+          id: 'tx1',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Serviço',
+          account_id: 'acc1',
+          category_id: 'cat_servico_a',
+          date: '2026-08-10',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-08-10',
+        }
+
+        const tx2: Transaction = {
+          id: 'tx2',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Serviço',
+          account_id: 'acc1',
+          category_id: 'cat_servico_b', // categoria diferente
+          date: '2026-09-10',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-09-10',
+        }
+
+        const series = findRecurringSeries(tx1, [tx1, tx2])
+        expect(series).toHaveLength(1)
+        expect(series[0].id).toBe('tx1')
+      })
+
+      it('updateTransactionWithPropagation com escolha future nunca cria ocorrências no mês atual nem altera independentes', async () => {
+        const targetTx: Transaction = {
+          id: 'tx_alvo',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Netflix',
+          account_id: 'acc1',
+          category_id: 'cat_stream',
+          date: '2026-09-10',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-09-10',
+        }
+
+        const otherSameAmount: Transaction = {
+          id: 'tx_outra',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Farmácia',
+          account_id: 'acc1',
+          category_id: 'cat_saude',
+          date: '2026-09-08',
+          is_recurring: false,
+          created_at: '2026-09-08',
+        }
+
+        const futureTx: Transaction = {
+          id: 'tx_futura',
+          control_id: 'c1',
+          user_id: 'u1',
+          type: 'despesa',
+          amount: 50.21,
+          description: 'Netflix',
+          account_id: 'acc1',
+          category_id: 'cat_stream',
+          date: '2026-10-10',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-09-10',
+        }
+
+        const allTransactions = [targetTx, otherSameAmount, futureTx]
+
+        const result = await updateTransactionWithPropagation({
+          transaction: targetTx,
+          allTransactions,
+          formData: {
+            description: 'Netflix Premium',
+            amount: 55.9,
+            type: 'despesa',
+            account_id: 'acc1',
+            category_id: 'cat_stream',
+            date: '2026-09-10',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+
+        // 1. targetTx e futureTx foram atualizados
+        const updatedIds = result.updated.map((t) => t.id)
+        expect(updatedIds).toContain('tx_alvo')
+        expect(updatedIds).toContain('tx_futura')
+        // 2. otherSameAmount NÃO foi alterado
+        expect(updatedIds).not.toContain('tx_outra')
+        // 3. ZERO criações no mês atual (2026-09)
+        const currentMonthCreated = result.created.filter((t) => t.date.startsWith('2026-09'))
+        expect(currentMonthCreated).toHaveLength(0)
+      })
+    })
   })
 })

@@ -1138,5 +1138,49 @@ describe('recurring-generation engine', () => {
         })) as any
       }
     })
+
+    it('planNextRecurringTransactions ignora seeds com descrição genérica/vazia ("Sem descrição")', () => {
+      const genericSeed: Transaction = {
+        id: 'seed_generic',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 50.21,
+        description: 'Sem descrição',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-10',
+        is_recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-09-10',
+      }
+
+      const emptySeed: Transaction = {
+        id: 'seed_empty',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 50.21,
+        description: '',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-08',
+        is_recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-09-08',
+      }
+
+      const planned = planNextRecurringTransactions({
+        currentMonthTransactions: [genericSeed, emptySeed],
+        existingTransactions: [genericSeed, emptySeed],
+        currentCompanyId: 'comp_1',
+        currentUserId: 'u_1',
+        currentYear: 2026,
+        currentMonth: 9,
+      })
+
+      // Nenhuma ocorrência futura deve ser gerada para seeds sem descrição
+      expect(planned).toHaveLength(0)
+    })
   })
 })

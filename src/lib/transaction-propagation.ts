@@ -273,11 +273,43 @@ export function findRecurringSeries(
   transaction: Transaction,
   allTransactions: Transaction[],
 ): Transaction[] {
+  const rawSourceDesc = (transaction.description || '').trim()
   const cleanSourceDesc = cleanDescription(transaction.description || '')
     .trim()
     .toLowerCase()
+  const isGenericDesc =
+    !cleanSourceDesc || cleanSourceDesc === 'sem descrição' || cleanSourceDesc === 'sem descricao'
+
   const currentType = transaction.type
   const currentAccountId = transaction.account_id || ''
+  const currentCategoryId = transaction.category_id || ''
+  const currentSubcategoryId = transaction.subcategory_id || ''
+
+  // 1. Se houver vínculo explícito de recorrência (parent_transaction_id), usar prioridade máxima
+  const rawParentId = transaction.parent_transaction_id || ''
+  const effectiveParentId = rawParentId && rawParentId !== transaction.id ? rawParentId : ''
+
+  if (effectiveParentId) {
+    const linked = allTransactions.filter((t) => {
+      if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+        return false
+      }
+      if (t.id === transaction.id) return true
+      if (t.type !== currentType) return false
+      return t.id === effectiveParentId || t.parent_transaction_id === effectiveParentId
+    })
+    if (linked.length > 0) {
+      linked.sort((a, b) => normalizeDateStr(a.date).localeCompare(normalizeDateStr(b.date)))
+      return linked
+    }
+  }
+
+  // 2. Se a descrição for genérica ("Sem descrição" ou vazia) e não houver vínculo explícito,
+  // lançamentos de mesmo valor ou de mesma conta NÃO formam uma série compartilhada de recorrência,
+  // pois são despesas/receitas independentes. Retorna somente a transação atual.
+  if (isGenericDesc) {
+    return [transaction]
+  }
 
   const series = allTransactions.filter((t) => {
     if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
@@ -312,6 +344,16 @@ export function findRecurringSeries(
 
     // Mesma conta (se ambas tiverem conta definida)
     if (currentAccountId && t.account_id && t.account_id !== currentAccountId) {
+      return false
+    }
+
+    // Se ambas tiverem categoria definida, devem coincidir
+    if (currentCategoryId && t.category_id && t.category_id !== currentCategoryId) {
+      return false
+    }
+
+    // Se ambas tiverem subcategoria definida, devem coincidir
+    if (currentSubcategoryId && t.subcategory_id && t.subcategory_id !== currentSubcategoryId) {
       return false
     }
 
@@ -848,31 +890,43 @@ async function handleRecurringPropagation({
   // Regra 3 (continuação): Para a opção "Este e os próximos", só criar novos lançamentos caso não existam
   // lançamentos vinculados futuros (ex.: meses da janela de recorrência ainda sem ocorrência).
   // Se a opção for 'all', NUNCA criar novos lançamentos (Regra 1: "Não criar novos lançamentos").
-  if (choice === 'future' && formData.is_recurring) {
+  // Se a descrição for genérica ("Sem descrição"), NUNCA autogerar novos lançamentos para evitar proliferar registros sem identificação.
+  const rawDescTrim = (formData.description || '').trim()
+  const cleanDesc = cleanDescription(formData.description).trim()
+  const isGenericFormDesc =
+    !cleanDesc ||
+    cleanDesc.toLowerCase() === 'sem descrição' ||
+    cleanDesc.toLowerCase() === 'sem descricao'
+
+  if (choice === 'future' && formData.is_recurring && !isGenericFormDesc) {
     // Identificar meses existentes nesta série
     // Montamos conjunto com todas as transações da série (incluindo as já atualizadas)
     const existingSeriesMonths = new Set<string>()
     for (const t of series) {
       if (t.date) existingSeriesMonths.add(normalizeDateStr(t.date).substring(0, 7))
     }
-    // Garantir que o mês do formData.date E o mês original de transaction.date estejam registrados
+    // Garantir que o mês do formData.date, o mês original de transaction.date E o mês do relógio atual estejam registrados
     // no conjunto existingSeriesMonths antes do loop de preenchimento de meses futuros.
     const formYM = normalizeDateStr(formData.date).substring(0, 7)
     const origYM = normalizeDateStr(transaction.date).substring(0, 7)
+    const todayYM = new Date().toISOString().substring(0, 7)
+
     if (formYM) existingSeriesMonths.add(formYM)
     if (origYM) existingSeriesMonths.add(origYM)
+    if (todayYM) existingSeriesMonths.add(todayYM)
 
     const updatedTxDateParts = parseDateParts(formData.date)
     const baseYear = updatedTxDateParts.year
     const baseMonth = updatedTxDateParts.month
     const origDay = updatedTxDateParts.day
 
-    // O mês do lançamento editado e qualquer mês anterior a ele JAMAIS podem receber novas ocorrências.
-    // Usamos o maior entre formYM e origYM como limite inferior estrito.
-    const currentTxYM = formYM >= origYM ? formYM : origYM
+    // O mês do lançamento editado, o mês original e o mês atual do calendário JAMAIS podem receber novas ocorrências.
+    // Usamos o maior entre formYM, origYM e todayYM como limite inferior estrito.
+    let minAllowedYM = formYM
+    if (origYM > minAllowedYM) minAllowedYM = origYM
+    if (todayYM > minAllowedYM) minAllowedYM = todayYM
 
     const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
-    const cleanDesc = cleanDescription(formData.description).trim()
 
     // Planejar apenas os meses faltantes na janela de 12 meses
     const missingCandidates: any[] = []
@@ -880,8 +934,8 @@ async function handleRecurringPropagation({
       const targetDateStr = computeTargetDate(baseYear, baseMonth, origDay, m)
       const targetYM = targetDateStr.substring(0, 7)
 
-      // Bloqueio explícito: o mês do lançamento editado e qualquer mês anterior JAMAIS podem receber novas ocorrências
-      if (targetYM <= currentTxYM) {
+      // Bloqueio explícito: nunca criar no mês do lançamento ou mês atual ou qualquer mês anterior
+      if (targetYM <= minAllowedYM) {
         continue
       }
 
@@ -918,8 +972,7 @@ async function handleRecurringPropagation({
 
     if (missingCandidates.length > 0) {
       // Antes de criar qualquer ocorrência nova, verificar contra TODAS as transações do controle
-      // (não só a série filtrada) se já existe ocorrência com mesmo tipo + account_id + descrição limpa + mesmo ano-mês
-      // (usando normalização de data via normalizeDateStr, sem depender de fuso horário).
+      // se já existe ocorrência com mesmo tipo + account_id + descrição limpa + mesma categoria + mesmo ano-mês
       // Se existir, atualizar em vez de criar.
       const normalizedDesc = cleanDesc.toLowerCase()
       const candidatesToCreate: any[] = []
@@ -932,6 +985,9 @@ async function handleRecurringPropagation({
           }
           if (t.type !== candidate.type) return false
           if ((t.account_id || '') !== (candidate.account_id || '')) return false
+          if (candidate.category_id && t.category_id && t.category_id !== candidate.category_id) {
+            return false
+          }
           const tCleanDesc = cleanDescription(t.description || '')
             .trim()
             .toLowerCase()

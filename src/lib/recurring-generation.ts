@@ -847,25 +847,33 @@ export function planNextRecurringTransactions({
       : currentMonthTransactions || existingTransactions
 
   // 1. Filtrar seeds recorrentes
-  const recurringSeeds = candidatePool.filter(
-    (t) =>
-      t.control_id === currentCompanyId &&
-      Boolean(
-        t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
-      ) &&
-      // Não é pai consolidado de parcelamento
-      !(
-        (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
-        Number(t.installments_total || (t as any).installment_total || 0) > 1
-      ),
-  )
+  // Transações sem descrição ("Sem descrição" ou vazia) NÃO devem autogerar séries no background
+  const recurringSeeds = candidatePool.filter((t) => {
+    if (t.control_id !== currentCompanyId) return false
+    const isRec = Boolean(
+      t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+    )
+    if (!isRec) return false
+    // Não é pai consolidado de parcelamento
+    if (
+      (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
+      Number(t.installments_total || (t as any).installment_total || 0) > 1
+    ) {
+      return false
+    }
+    const cleanD = cleanDescription(t.description || '')
+      .trim()
+      .toLowerCase()
+    if (!cleanD || cleanD === 'sem descrição' || cleanD === 'sem descricao') return false
+    return true
+  })
 
-  // 2. Desduplicar seeds por série canônica (tipo + conta + cleanDesc)
+  // 2. Desduplicar seeds por série canônica (tipo + conta + categoria + cleanDesc)
   // Independente do valor, ocorrências da mesma série pertencem à mesma recorrência.
   const canonicalMap = new Map<string, Transaction>()
   for (const t of recurringSeeds) {
     const cleanD = cleanDescription(t.description).toLowerCase()
-    const key = `${t.type}_${t.account_id || ''}_${cleanD}`
+    const key = `${t.type}_${t.account_id || ''}_${t.category_id || ''}_${cleanD}`
     if (!canonicalMap.has(key)) {
       canonicalMap.set(key, t)
     } else {
@@ -878,15 +886,17 @@ export function planNextRecurringTransactions({
   }
 
   // 3. Montar conjunto de checagem rápida de ocorrências existentes por série e mês
-  // Chave: type_account_cleanDesc_ym
+  // Chave: type_account_cleanDesc_ym e também type_account_category_cleanDesc_ym
   const existingSet = new Set<string>()
   for (const t of existingTransactions) {
     if (!t.date || t.control_id !== currentCompanyId) continue
     const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
     const ym = cleanDateOnly.substring(0, 7)
     const cleanD = cleanDescription(t.description).toLowerCase()
-    const key = `${t.type}_${t.account_id || ''}_${cleanD}_${ym}`
-    existingSet.add(key)
+    existingSet.add(`${t.type}_${t.account_id || ''}_${cleanD}_${ym}`)
+    if (t.category_id) {
+      existingSet.add(`${t.type}_${t.account_id || ''}_${t.category_id}_${cleanD}_${ym}`)
+    }
   }
 
   const planned: RecurringGenerationCandidate[] = []
@@ -929,13 +939,17 @@ export function planNextRecurringTransactions({
       }
 
       const checkKey = `${seed.type}_${seed.account_id || ''}_${cleanD}_${targetYM}`
+      const checkKeyWithCat = seed.category_id
+        ? `${seed.type}_${seed.account_id || ''}_${seed.category_id}_${cleanD}_${targetYM}`
+        : checkKey
 
-      if (existingSet.has(checkKey)) {
+      if (existingSet.has(checkKey) || existingSet.has(checkKeyWithCat)) {
         continue // Idempotente
       }
 
       // Marcar no existingSet para não duplicar se houver colisão interna
       existingSet.add(checkKey)
+      existingSet.add(checkKeyWithCat)
 
       const targetPaymentDateStr = seed.payment_date
         ? computeTargetDate(startBaseYear, startBaseMonth, seedPayOrigDay, m)
