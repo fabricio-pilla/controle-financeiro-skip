@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
-import { runInPool, executeWithRetry, is429Error, isNetworkError } from './retry'
+import {
+  runInPool,
+  executeWithRetry,
+  is429Error,
+  isNetworkError,
+  AdaptiveRateLimiter,
+  onGlobal429,
+  notify429,
+} from './retry'
 
 describe('pocketbase/retry helpers', () => {
   describe('is429Error', () => {
@@ -140,6 +148,84 @@ describe('pocketbase/retry helpers', () => {
 
       warnSpy.mockRestore()
       errorSpy.mockRestore()
+    })
+
+    it('works with AdaptiveRateLimiter and respects rate limiting', async () => {
+      const limiter = new AdaptiveRateLimiter({
+        initialIntervalMs: 20,
+        minIntervalMs: 10,
+        maxIntervalMs: 200,
+        backoffFactor: 2.0,
+      })
+
+      const items = [1, 2, 3, 4]
+      const results = await runInPool(items, async (val) => val * 2, {
+        concurrency: 2,
+        rateLimiter: limiter,
+      })
+
+      expect(results).toEqual([2, 4, 6, 8])
+      limiter.destroy()
+    })
+  })
+
+  describe('AdaptiveRateLimiter', () => {
+    it('slows down when throttle is recorded and recovers on consecutive successes', () => {
+      const limiter = new AdaptiveRateLimiter({
+        initialIntervalMs: 150,
+        minIntervalMs: 100,
+        maxIntervalMs: 2000,
+        backoffFactor: 2.0,
+        recoveryFactor: 0.8,
+        successThresholdForRecovery: 3,
+      })
+
+      expect(limiter.getIntervalMs()).toBe(150)
+
+      // Throttle triggered
+      limiter.recordThrottle(50)
+      expect(limiter.getIntervalMs()).toBe(400) // max(150 * 2, 400)
+
+      // Another throttle
+      limiter.recordThrottle(50)
+      expect(limiter.getIntervalMs()).toBe(800) // 400 * 2
+
+      // Record 3 successes -> triggers recovery
+      limiter.recordSuccess()
+      limiter.recordSuccess()
+      expect(limiter.getIntervalMs()).toBe(800)
+      limiter.recordSuccess() // 3rd success
+      expect(limiter.getIntervalMs()).toBe(Math.round(800 * 0.8)) // 640
+
+      limiter.destroy()
+    })
+
+    it('receives global 429 notification from executeWithRetry', async () => {
+      const limiter = new AdaptiveRateLimiter({
+        initialIntervalMs: 100,
+        minIntervalMs: 50,
+        maxIntervalMs: 1000,
+        backoffFactor: 2.0,
+      })
+
+      let calls = 0
+      await executeWithRetry(
+        async () => {
+          calls++
+          if (calls === 1) {
+            throw { status: 429, message: 'Too Many Requests' }
+          }
+          return 'done'
+        },
+        2,
+        5,
+        'GlobalTest',
+        20,
+      )
+
+      // Limiter must have throttled because executeWithRetry broadcasted 429
+      expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(400)
+      limiter.destroy()
     })
   })
 })

@@ -54,6 +54,7 @@ import {
   executeWithRetry as executeSharedRetry,
   runInPool,
   is429Error,
+  AdaptiveRateLimiter,
 } from '@/lib/pocketbase/retry'
 import { extractFieldErrors } from '@/lib/pocketbase/errors'
 import {
@@ -1138,9 +1139,31 @@ export default function Importar() {
 
       const currentUserId = pb.authStore.model?.id || ''
 
+      // Rate limiter adaptativo compartilhado:
+      // Espaçamento inicial de 200ms entre disparos de requisições, desaceleração imediata em caso de 429
+      const importRateLimiter = new AdaptiveRateLimiter({
+        initialIntervalMs: 200,
+        minIntervalMs: 120,
+        maxIntervalMs: 4000,
+        backoffFactor: 2.0,
+        recoveryFactor: 0.9,
+        successThresholdForRecovery: 5,
+      })
+
       // Helpers for rate limiting and backoff retry on 429 (Too Many Requests)
-      const executeWithRetry = <T,>(fn: () => Promise<T>) =>
-        executeSharedRetry(fn, 5, 1000, 'Importar', 10000)
+      const executeWithRetry = async <T,>(fn: () => Promise<T>): Promise<T> => {
+        await importRateLimiter.waitTurn()
+        try {
+          const res = await executeSharedRetry(fn, 5, 1000, 'Importar', 10000)
+          importRateLimiter.recordSuccess()
+          return res
+        } catch (err: any) {
+          if (is429Error(err)) {
+            importRateLimiter.recordThrottle()
+          }
+          throw err
+        }
+      }
 
       // Ensure we have real category & subcategory IDs for this control BEFORE starting import
       let freshCategories: Category[] = []
@@ -1487,146 +1510,160 @@ export default function Importar() {
       // Mapa para acumular deltas agregados de saldo de contas ao longo da importação bem-sucedida
       const accountBalanceDeltas = new Map<string, number>()
 
-      // 3. Execução em pool com concorrência limitada (4) e executeWithRetry anti-429
-      await runInPool(
-        rowsToProcess,
-        async (work) => {
-          const { row, caseType, payloads, balanceDeltas } = work
-          try {
-            if (caseType === 'installment_explicit') {
-              // Cria pai
-              const parentRecord = await executeWithRetry(() =>
-                pb.collection('transactions').create(payloads[0]),
-              )
-              summary.createdTransactions++
-
-              // Cria parcela com vínculo ao pai
-              const childPayload = {
-                ...payloads[1],
-                parent_transaction_id: parentRecord.id,
-              }
-              await executeWithRetry(() => pb.collection('transactions').create(childPayload))
-              summary.createdTransactions++
-
-              summary.importedCount++
-              summary.details.push({
-                row: row.rowIndex,
-                description: row.description,
-                status: 'imported',
-                message: `Parcela ${row.installmentNumber}/${row.totalInstallments} criada com vínculo pai.`,
-              })
-            } else if (caseType === 'installment_plan') {
-              let parentId = ''
-              for (let inst = 0; inst < payloads.length; inst++) {
-                const payload = { ...payloads[inst] }
-                if (inst > 0 && parentId) {
-                  payload.parent_transaction_id = parentId
-                }
-                const rec = await executeWithRetry(() =>
-                  pb.collection('transactions').create(payload),
+      try {
+        // 3. Execução em pool com concorrência reduzida (2), ritmo adaptativo e executeWithRetry anti-429
+        await runInPool(
+          rowsToProcess,
+          async (work) => {
+            const { row, caseType, payloads, balanceDeltas } = work
+            try {
+              if (caseType === 'installment_explicit') {
+                // Cria pai
+                const parentRecord = await executeWithRetry(() =>
+                  pb.collection('transactions').create(payloads[0]),
                 )
                 summary.createdTransactions++
 
-                if (inst === 0) {
-                  parentId = rec.id
-                  try {
-                    await executeWithRetry(() =>
-                      pb.collection('transactions').update(rec.id, {
-                        parent_transaction_id: parentId,
-                      }),
-                    )
-                  } catch (updateErr) {
-                    console.warn(
-                      'Erro ao auto-vincular parent_transaction_id na parcela 1:',
-                      updateErr,
-                    )
+                // Cria parcela com vínculo ao pai
+                const childPayload = {
+                  ...payloads[1],
+                  parent_transaction_id: parentRecord.id,
+                }
+                await executeWithRetry(() => pb.collection('transactions').create(childPayload))
+                summary.createdTransactions++
+
+                summary.importedCount++
+                summary.details.push({
+                  row: row.rowIndex,
+                  description: row.description,
+                  status: 'imported',
+                  message: `Parcela ${row.installmentNumber}/${row.totalInstallments} criada com vínculo pai.`,
+                })
+              } else if (caseType === 'installment_plan') {
+                let parentId = ''
+                for (let inst = 0; inst < payloads.length; inst++) {
+                  const payload = { ...payloads[inst] }
+                  if (inst > 0 && parentId) {
+                    payload.parent_transaction_id = parentId
+                  }
+                  const rec = await executeWithRetry(() =>
+                    pb.collection('transactions').create(payload),
+                  )
+                  summary.createdTransactions++
+
+                  if (inst === 0) {
+                    parentId = rec.id
+                    try {
+                      await executeWithRetry(() =>
+                        pb.collection('transactions').update(rec.id, {
+                          parent_transaction_id: parentId,
+                        }),
+                      )
+                    } catch (updateErr) {
+                      console.warn(
+                        'Erro ao auto-vincular parent_transaction_id na parcela 1:',
+                        updateErr,
+                      )
+                    }
                   }
                 }
+
+                summary.importedCount++
+                summary.details.push({
+                  row: row.rowIndex,
+                  description: row.description,
+                  status: 'imported',
+                  message: `Plano de ${row.totalInstallments} parcelas gerado com sucesso.`,
+                })
+              } else {
+                // Single
+                await executeWithRetry(() => pb.collection('transactions').create(payloads[0]))
+                summary.createdTransactions++
+                summary.importedCount++
+                summary.details.push({
+                  row: row.rowIndex,
+                  description: row.description,
+                  status: 'imported',
+                  message: 'Importado com sucesso.',
+                })
               }
 
-              summary.importedCount++
+              // Acumular deltas das contas afetadas apenas se a linha foi gravada com êxito
+              for (const b of balanceDeltas) {
+                const current = accountBalanceDeltas.get(b.accountId) || 0
+                accountBalanceDeltas.set(b.accountId, current + b.delta)
+              }
+            } catch (err: any) {
+              if (!is429Error(err)) {
+                console.warn(`Erro ao importar linha ${row.rowIndex}:`, err)
+              }
+              summary.errorsCount++
+              const formattedReason = is429Error(err)
+                ? 'Limite de requisições do servidor atingido — tente novamente em instantes'
+                : formatPocketBaseError(err)
+
               summary.details.push({
                 row: row.rowIndex,
                 description: row.description,
-                status: 'imported',
-                message: `Plano de ${row.totalInstallments} parcelas gerado com sucesso.`,
+                status: 'error',
+                message: formattedReason,
               })
-            } else {
-              // Single
-              await executeWithRetry(() => pb.collection('transactions').create(payloads[0]))
-              summary.createdTransactions++
-              summary.importedCount++
-              summary.details.push({
-                row: row.rowIndex,
-                description: row.description,
-                status: 'imported',
-                message: 'Importado com sucesso.',
+              summary.unimportedRows.push({
+                rowIndex: row.rowIndex,
+                dateFormatted: row.dateFormatted,
+                description: row.description || 'Sem descrição',
+                amount: row.amount,
+                accountRaw: row.accountRaw,
+                categoryRaw: row.categoryRaw,
+                reason: formattedReason,
+                type: 'error',
+                rawDetails: row.raw,
               })
+            } finally {
+              completedRows++
+              setImportProgress({ current: completedRows, total: parsedRows.length })
             }
+          },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 50,
+            rateLimiter: importRateLimiter,
+            tag: 'Importar-Pool',
+          },
+        )
 
-            // Acumular deltas das contas afetadas apenas se a linha foi gravada com êxito
-            for (const b of balanceDeltas) {
-              const current = accountBalanceDeltas.get(b.accountId) || 0
-              accountBalanceDeltas.set(b.accountId, current + b.delta)
-            }
-          } catch (err: any) {
-            if (!is429Error(err)) {
-              console.warn(`Erro ao importar linha ${row.rowIndex}:`, err)
-            }
-            summary.errorsCount++
-            const formattedReason = is429Error(err)
-              ? 'Limite de requisições do servidor atingido — tente novamente em instantes'
-              : formatPocketBaseError(err)
-
-            summary.details.push({
-              row: row.rowIndex,
-              description: row.description,
-              status: 'error',
-              message: formattedReason,
-            })
-            summary.unimportedRows.push({
-              rowIndex: row.rowIndex,
-              dateFormatted: row.dateFormatted,
-              description: row.description || 'Sem descrição',
-              amount: row.amount,
-              accountRaw: row.accountRaw,
-              categoryRaw: row.categoryRaw,
-              reason: formattedReason,
-              type: 'error',
-              rawDetails: row.raw,
-            })
-          } finally {
-            completedRows++
-            setImportProgress({ current: completedRows, total: parsedRows.length })
+        // 4. Recálculo agregado final de saldos das contas em uma única passada concorrente
+        if (accountBalanceDeltas.size > 0) {
+          const deltaEntries = Array.from(accountBalanceDeltas.entries())
+          try {
+            await runInPool(
+              deltaEntries,
+              async ([accountId, delta]) => {
+                try {
+                  const acc = await executeWithRetry(() =>
+                    pb.collection('accounts').getOne<{ id: string; balance: number }>(accountId),
+                  )
+                  const newBalance = Math.round(((Number(acc.balance) || 0) + delta) * 100) / 100
+                  await executeWithRetry(() =>
+                    pb.collection('accounts').update(accountId, { balance: newBalance }),
+                  )
+                } catch (accErr) {
+                  console.warn(`Erro ao atualizar saldo consolidado da conta ${accountId}:`, accErr)
+                }
+              },
+              {
+                concurrency: 2,
+                delayBetweenBatchesMs: 50,
+                rateLimiter: importRateLimiter,
+                tag: 'Importar-SaldoConsolidado',
+              },
+            )
+          } catch (poolBalanceErr) {
+            console.warn('Erro não bloqueante no pool de atualização de saldos:', poolBalanceErr)
           }
-        },
-        { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'Importar-Pool' },
-      )
-
-      // 4. Recálculo agregado final de saldos das contas em uma única passada concorrente
-      if (accountBalanceDeltas.size > 0) {
-        const deltaEntries = Array.from(accountBalanceDeltas.entries())
-        try {
-          await runInPool(
-            deltaEntries,
-            async ([accountId, delta]) => {
-              try {
-                const acc = await executeWithRetry(() =>
-                  pb.collection('accounts').getOne<{ id: string; balance: number }>(accountId),
-                )
-                const newBalance = Math.round(((Number(acc.balance) || 0) + delta) * 100) / 100
-                await executeWithRetry(() =>
-                  pb.collection('accounts').update(accountId, { balance: newBalance }),
-                )
-              } catch (accErr) {
-                console.warn(`Erro ao atualizar saldo consolidado da conta ${accountId}:`, accErr)
-              }
-            },
-            { concurrency: 4, delayBetweenBatchesMs: 15, tag: 'Importar-SaldoConsolidado' },
-          )
-        } catch (poolBalanceErr) {
-          console.warn('Erro não bloqueante no pool de atualização de saldos:', poolBalanceErr)
         }
+      } finally {
+        importRateLimiter.destroy()
       }
 
       setImportSummary(summary)
