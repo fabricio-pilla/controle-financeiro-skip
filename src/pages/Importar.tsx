@@ -49,7 +49,12 @@ import {
 } from '@/components/ui/dialog'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
-import { sleep, executeWithRetry as executeSharedRetry, runInPool } from '@/lib/pocketbase/retry'
+import {
+  sleep,
+  executeWithRetry as executeSharedRetry,
+  runInPool,
+  is429Error,
+} from '@/lib/pocketbase/retry'
 import { extractFieldErrors } from '@/lib/pocketbase/errors'
 import {
   downloadTemplateXlsx,
@@ -481,8 +486,8 @@ function formatPocketBaseError(err: any): string {
     err?.response?.status === 429 ||
     err?.message?.includes('429')
 
-  if (isRateLimit) {
-    return 'Limite de requisições do servidor — tente novamente'
+  if (isRateLimit || is429Error(err)) {
+    return 'Limite de requisições do servidor atingido — reimporte esta linha ou tente novamente em instantes'
   }
 
   const fieldErrors = extractFieldErrors(err)
@@ -1563,7 +1568,9 @@ export default function Importar() {
           } catch (err: any) {
             console.error(`Erro ao importar linha ${row.rowIndex}:`, err)
             summary.errorsCount++
-            const formattedReason = formatPocketBaseError(err)
+            const formattedReason = is429Error(err)
+              ? 'Limite de requisições do servidor atingido — reimporte esta linha ou tente novamente em instantes'
+              : formatPocketBaseError(err)
 
             summary.details.push({
               row: row.rowIndex,
