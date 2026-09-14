@@ -2253,6 +2253,258 @@ describe('transaction-propagation', () => {
         const updatedIds = result.updated.map((t) => t.id)
         expect(updatedIds).not.toContain('indep_1')
       })
+
+      it('editar valor da raiz de recorrente com 12 ocorrências futuras existentes atualiza todas com novo valor e cria 0 registros (mesmo com "Sem descrição")', async () => {
+        // Registro raiz sem parent_transaction_id
+        const rootTx: Transaction = {
+          id: 'rec_root_1',
+          control_id: 'ctrl_test',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 100.0,
+          description: 'Sem descrição',
+          category_id: 'cat_test',
+          account_id: 'acc_test',
+          date: '2026-01-10',
+          paid: true,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-01-10T00:00:00.000Z',
+        }
+
+        // 11 ocorrências futuras vinculadas à raiz via parent_transaction_id
+        const futureTxs: Transaction[] = []
+        for (let m = 2; m <= 12; m++) {
+          const mm = String(m).padStart(2, '0')
+          futureTxs.push({
+            id: `rec_future_${mm}`,
+            control_id: 'ctrl_test',
+            user_id: 'user_1',
+            type: 'despesa',
+            amount: 100.0,
+            description: 'Sem descrição',
+            category_id: 'cat_test',
+            account_id: 'acc_test',
+            date: `2026-${mm}-10`,
+            paid: false,
+            is_recurring: true,
+            recurrence_type: 'mensal',
+            parent_transaction_id: 'rec_root_1',
+            created_at: '2026-01-10T00:00:00.000Z',
+          })
+        }
+
+        const allTransactions = [rootTx, ...futureTxs]
+
+        // Usuário edita o lançamento raiz alterando o valor de 100 para 150 e escolhe 'future'
+        const result = await updateTransactionWithPropagation({
+          transaction: rootTx,
+          allTransactions,
+          formData: {
+            description: 'Sem descrição',
+            amount: 150.0,
+            type: 'despesa',
+            account_id: 'acc_test',
+            category_id: 'cat_test',
+            date: '2026-01-10',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+
+        // Nenhuma criação nova
+        expect(result.created.length).toBe(0)
+        // Todas as 12 ocorrências (raiz + 11 futuras) atualizadas
+        expect(result.updated.length).toBe(12)
+        // Todas com o novo valor de 150
+        expect(result.updated.every((u) => u.amount === 150.0)).toBe(true)
+        expect(result.updated.map((u) => u.id)).toContain('rec_root_1')
+        for (let m = 2; m <= 12; m++) {
+          const mm = String(m).padStart(2, '0')
+          expect(result.updated.map((u) => u.id)).toContain(`rec_future_${mm}`)
+        }
+      })
+
+      it('editar valor com apenas 3 de 12 existentes atualiza as 3 e cria as 9 faltantes, nada no mês atual ou passados', async () => {
+        // Simular hoje ou data base em 2026-03-10
+        const rootTx: Transaction = {
+          id: 'rec_part_root',
+          control_id: 'ctrl_test_2',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 80.0,
+          description: 'Sem descrição',
+          category_id: 'cat_test_2',
+          account_id: 'acc_test_2',
+          date: '2026-03-10',
+          paid: true,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-03-10T00:00:00.000Z',
+        }
+
+        const occ2: Transaction = {
+          id: 'rec_part_2',
+          control_id: 'ctrl_test_2',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 80.0,
+          description: 'Sem descrição',
+          category_id: 'cat_test_2',
+          account_id: 'acc_test_2',
+          date: '2026-04-10',
+          paid: false,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          parent_transaction_id: 'rec_part_root',
+          created_at: '2026-03-10T00:00:00.000Z',
+        }
+
+        const occ3: Transaction = {
+          id: 'rec_part_3',
+          control_id: 'ctrl_test_2',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 80.0,
+          description: 'Sem descrição',
+          category_id: 'cat_test_2',
+          account_id: 'acc_test_2',
+          date: '2026-05-10',
+          paid: false,
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          parent_transaction_id: 'rec_part_root',
+          created_at: '2026-03-10T00:00:00.000Z',
+        }
+
+        const allTransactions = [rootTx, occ2, occ3]
+
+        // Edita a raiz alterando valor para 95.0 com 'future'
+        const result = await updateTransactionWithPropagation({
+          transaction: rootTx,
+          allTransactions,
+          formData: {
+            description: 'Sem descrição',
+            amount: 95.0,
+            type: 'despesa',
+            account_id: 'acc_test_2',
+            category_id: 'cat_test_2',
+            date: '2026-03-10',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+
+        // As 3 existentes foram atualizadas com 95.0
+        expect(result.updated.length).toBe(3)
+        expect(result.updated.every((u) => u.amount === 95.0)).toBe(true)
+
+        // 9 foram criadas para completar os 12 meses (junho/2026 até março/2027)
+        expect(result.created.length).toBe(9)
+        expect(result.created.every((c) => c.amount === 95.0)).toBe(true)
+
+        // Nada criado no mês do lançamento (março/2026) nem em abril nem em maio (que já existiam)
+        const createdDates = result.created.map((c) => c.date.substring(0, 7))
+        expect(createdDates).not.toContain('2026-03')
+        expect(createdDates).not.toContain('2026-04')
+        expect(createdDates).not.toContain('2026-05')
+
+        // Cada mês criado é único
+        const uniqueCreated = new Set(createdDates)
+        expect(uniqueCreated.size).toBe(9)
+      })
+
+      it('lançamentos independentes de mesmo valor permanecem completamente intactos', async () => {
+        const rootTx: Transaction = {
+          id: 'rec_indep_root',
+          control_id: 'ctrl_indep',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 120.0,
+          description: 'Assinatura Software',
+          category_id: 'cat_soft',
+          account_id: 'acc_pj',
+          date: '2026-06-01',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          created_at: '2026-06-01T00:00:00.000Z',
+        }
+
+        const futureRec: Transaction = {
+          id: 'rec_indep_fut',
+          control_id: 'ctrl_indep',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 120.0,
+          description: 'Assinatura Software',
+          category_id: 'cat_soft',
+          account_id: 'acc_pj',
+          date: '2026-07-01',
+          is_recurring: true,
+          recurrence_type: 'mensal',
+          parent_transaction_id: 'rec_indep_root',
+          created_at: '2026-06-01T00:00:00.000Z',
+        }
+
+        // Lançamento avulso independente com EXATAMENTE o mesmo valor (120.0)
+        const independentTx: Transaction = {
+          id: 'tx_avulsa_120',
+          control_id: 'ctrl_indep',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 120.0, // mesmo valor original!
+          description: 'Compra Mercado',
+          category_id: 'cat_alim',
+          account_id: 'acc_pj',
+          date: '2026-07-05',
+          is_recurring: false,
+          created_at: '2026-07-05T00:00:00.000Z',
+        }
+
+        // Outro lançamento independente com o NOVO valor (150.0)
+        const independentTxNewVal: Transaction = {
+          id: 'tx_avulsa_150',
+          control_id: 'ctrl_indep',
+          user_id: 'user_1',
+          type: 'despesa',
+          amount: 150.0,
+          description: 'Farmácia',
+          category_id: 'cat_saude',
+          account_id: 'acc_pj',
+          date: '2026-08-10',
+          is_recurring: false,
+          created_at: '2026-08-10T00:00:00.000Z',
+        }
+
+        const allTransactions = [rootTx, futureRec, independentTx, independentTxNewVal]
+
+        const result = await updateTransactionWithPropagation({
+          transaction: rootTx,
+          allTransactions,
+          formData: {
+            description: 'Assinatura Software Pro',
+            amount: 150.0,
+            type: 'despesa',
+            account_id: 'acc_pj',
+            category_id: 'cat_soft',
+            date: '2026-06-01',
+            is_recurring: true,
+            recurrence_type: 'mensal',
+          },
+          choice: 'future',
+        })
+
+        const updatedIds = result.updated.map((u) => u.id)
+        expect(updatedIds).toContain('rec_indep_root')
+        expect(updatedIds).toContain('rec_indep_fut')
+        expect(updatedIds).not.toContain('tx_avulsa_120')
+        expect(updatedIds).not.toContain('tx_avulsa_150')
+
+        const createdDescriptions = result.created.map((c) => c.description)
+        expect(createdDescriptions.every((d) => d === 'Assinatura Software Pro')).toBe(true)
+      })
     })
   })
 })

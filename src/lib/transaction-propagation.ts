@@ -285,9 +285,11 @@ export function findRecurringSeries(
   const currentCategoryId = transaction.category_id || ''
   const currentSubcategoryId = transaction.subcategory_id || ''
 
-  // 1. Se houver vínculo explícito de recorrência (parent_transaction_id), usar prioridade máxima
+  // 1. Se houver vínculo explícito de recorrência (parent_transaction_id), usar prioridade máxima bidirecional
+  // Se transaction.parent_transaction_id existe e != transaction.id, ele é o parent; senão transaction.id é o parent raiz
   const rawParentId = transaction.parent_transaction_id || ''
-  const effectiveParentId = rawParentId && rawParentId !== transaction.id ? rawParentId : ''
+  const effectiveParentId =
+    rawParentId && rawParentId !== transaction.id ? rawParentId : transaction.id
 
   if (effectiveParentId) {
     const linked = allTransactions.filter((t) => {
@@ -296,15 +298,19 @@ export function findRecurringSeries(
       }
       if (t.id === transaction.id) return true
       if (t.type !== currentType) return false
-      return t.id === effectiveParentId || t.parent_transaction_id === effectiveParentId
+      return (
+        t.id === effectiveParentId ||
+        t.parent_transaction_id === effectiveParentId ||
+        t.parent_transaction_id === transaction.id
+      )
     })
-    if (linked.length > 0) {
+    if (linked.length > 1) {
       linked.sort((a, b) => normalizeDateStr(a.date).localeCompare(normalizeDateStr(b.date)))
       return linked
     }
   }
 
-  // 2. Se a descrição for genérica ("Sem descrição" ou vazia) e não houver vínculo explícito,
+  // 2. Se a descrição for genérica ("Sem descrição" ou vazia) e não houver série vinculada por parent_transaction_id,
   // lançamentos de mesmo valor ou de mesma conta NÃO formam uma série compartilhada de recorrência,
   // pois são despesas/receitas independentes. Retorna somente a transação atual.
   if (isGenericDesc) {
@@ -951,10 +957,9 @@ async function handleRecurringPropagation({
     cleanDesc.toLowerCase() === 'sem descrição' ||
     cleanDesc.toLowerCase() === 'sem descricao'
 
+  const rawParentId = transaction.parent_transaction_id || ''
   const effectiveParentId =
-    transaction.parent_transaction_id && transaction.parent_transaction_id !== transaction.id
-      ? transaction.parent_transaction_id
-      : ''
+    rawParentId && rawParentId !== transaction.id ? rawParentId : transaction.id
 
   const shouldProjectFuture =
     choice === 'future' && isEffectiveRecurring && (!isGenericFormDesc || isEffectiveRecurring)
@@ -965,13 +970,49 @@ async function handleRecurringPropagation({
     isGenericFormDesc,
     shouldProjectFuture,
     txId: transaction.id,
+    effectiveParentId,
     description: effectiveDescription,
   })
 
   if (shouldProjectFuture) {
     // Identificar meses existentes nesta série
-    // Montamos conjunto com todas as transações da série (incluindo as já atualizadas)
+    // C. existingSeriesMonths: povoar com qualquer transação de allTransactions que pertença à série
+    // (mesmo parent_transaction_id, ou mesmo tipo + conta + categoria + cleanDesc).
     const existingSeriesMonths = new Set<string>()
+    const normalizedFormDesc = cleanDesc.toLowerCase()
+
+    for (const t of allTransactions) {
+      if (transaction.control_id && t.control_id && t.control_id !== transaction.control_id) {
+        continue
+      }
+      if (t.type !== formData.type) continue
+
+      let belongsToSeries = false
+      if (
+        t.id === transaction.id ||
+        (effectiveParentId &&
+          (t.id === effectiveParentId ||
+            t.parent_transaction_id === effectiveParentId ||
+            t.parent_transaction_id === transaction.id))
+      ) {
+        belongsToSeries = true
+      } else if (!isGenericFormDesc) {
+        const matchesAccount = (t.account_id || '') === (formData.account_id || '')
+        const matchesCategory =
+          !formData.category_id || !t.category_id || t.category_id === formData.category_id
+        const tClean = cleanDescription(t.description || '')
+          .trim()
+          .toLowerCase()
+        if (matchesAccount && matchesCategory && tClean === normalizedFormDesc) {
+          belongsToSeries = true
+        }
+      }
+
+      if (belongsToSeries && t.date) {
+        existingSeriesMonths.add(normalizeDateStr(t.date).substring(0, 7))
+      }
+    }
+
     for (const t of series) {
       if (t.date) existingSeriesMonths.add(normalizeDateStr(t.date).substring(0, 7))
     }
@@ -1061,8 +1102,13 @@ async function handleRecurringPropagation({
           const tYM = normalizeDateStr(t.date).substring(0, 7)
           if (tYM !== candidateYM) return false
 
-          // Vínculo explícito tem precedência total
-          if (effectiveParentId && t.parent_transaction_id === effectiveParentId) {
+          // Vínculo explícito bidirecional tem precedência total
+          if (
+            effectiveParentId &&
+            (t.id === effectiveParentId ||
+              t.parent_transaction_id === effectiveParentId ||
+              t.parent_transaction_id === transaction.id)
+          ) {
             return true
           }
 
@@ -1083,25 +1129,28 @@ async function handleRecurringPropagation({
         })
 
         if (existingTxInControl) {
-          // Atualizar o registro existente em vez de criar duplicata
-          const updatedExisting = await skipCloud.updateTransaction(
-            existingTxInControl.id,
-            {
-              description: candidate.description,
-              amount: candidate.amount,
-              type: candidate.type,
-              account_id: candidate.account_id,
-              category_id: candidate.category_id,
-              subcategory_id: candidate.subcategory_id || '',
-              date: candidate.date,
-              payment_date: candidate.payment_date,
-              notes: candidate.notes,
-              is_recurring: true,
-              recurrence_type: candidate.recurrence_type,
-            },
-            true,
-          )
-          updatedItems.push(updatedExisting)
+          // D. Atualizar o registro existente com o novo valor em vez de criar duplicata
+          const alreadyUpdated = updatedItems.some((u) => u.id === existingTxInControl.id)
+          if (!alreadyUpdated) {
+            const updatedExisting = await skipCloud.updateTransaction(
+              existingTxInControl.id,
+              {
+                description: candidate.description,
+                amount: candidate.amount,
+                type: candidate.type,
+                account_id: candidate.account_id,
+                category_id: candidate.category_id,
+                subcategory_id: candidate.subcategory_id || '',
+                date: candidate.date,
+                payment_date: candidate.payment_date,
+                notes: candidate.notes,
+                is_recurring: true,
+                recurrence_type: candidate.recurrence_type,
+              },
+              true,
+            )
+            updatedItems.push(updatedExisting)
+          }
         } else {
           candidatesToCreate.push(candidate)
         }
