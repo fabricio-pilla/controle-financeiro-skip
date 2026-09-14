@@ -180,15 +180,15 @@ export default function SettingsPage() {
     setDeleteAllProgress(null)
 
     // Rate limiter adaptativo compartilhado para exclusão em massa:
-    // Concorrência reduzida para 2, espaçamento preventivo de 200ms entre disparos,
+    // Concorrência 2, espaçamento preventivo de 350ms entre disparos,
     // desaceleração imediata ao primeiro 429 e aceleração progressiva após sucessos
     const deleteRateLimiter = new AdaptiveRateLimiter({
-      initialIntervalMs: 200,
-      minIntervalMs: 120,
-      maxIntervalMs: 4000,
+      initialIntervalMs: 350,
+      minIntervalMs: 200,
+      maxIntervalMs: 10000,
       backoffFactor: 2.0,
       recoveryFactor: 0.9,
-      successThresholdForRecovery: 5,
+      successThresholdForRecovery: 6,
     })
 
     try {
@@ -381,15 +381,15 @@ export default function SettingsPage() {
     setDeleteMonthProgress(null)
 
     // Rate limiter adaptativo compartilhado para exclusão mensal:
-    // Concorrência 2, espaçamento preventivo de 200ms entre disparos,
+    // Concorrência 2, espaçamento preventivo de 350ms entre disparos,
     // desaceleração imediata ao primeiro 429 e aceleração progressiva após sucessos
     const deleteMonthRateLimiter = new AdaptiveRateLimiter({
-      initialIntervalMs: 200,
-      minIntervalMs: 120,
-      maxIntervalMs: 4000,
+      initialIntervalMs: 350,
+      minIntervalMs: 200,
+      maxIntervalMs: 10000,
       backoffFactor: 2.0,
       recoveryFactor: 0.9,
-      successThresholdForRecovery: 5,
+      successThresholdForRecovery: 6,
     })
 
     try {

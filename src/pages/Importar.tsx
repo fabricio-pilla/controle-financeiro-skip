@@ -1140,29 +1140,21 @@ export default function Importar() {
       const currentUserId = pb.authStore.model?.id || ''
 
       // Rate limiter adaptativo compartilhado:
-      // Espaçamento inicial de 200ms entre disparos de requisições, desaceleração imediata em caso de 429
+      // Espaçamento preventivo e ritmo conservador para eliminar 429
       const importRateLimiter = new AdaptiveRateLimiter({
-        initialIntervalMs: 200,
-        minIntervalMs: 120,
-        maxIntervalMs: 4000,
+        initialIntervalMs: 350,
+        minIntervalMs: 200,
+        maxIntervalMs: 10000,
         backoffFactor: 2.0,
         recoveryFactor: 0.9,
-        successThresholdForRecovery: 5,
+        successThresholdForRecovery: 6,
       })
 
-      // Helpers for rate limiting and backoff retry on 429 (Too Many Requests)
+      // Wrapper de retry que injeta o importRateLimiter para serializar tentativas e retries
       const executeWithRetry = async <T,>(fn: () => Promise<T>): Promise<T> => {
-        await importRateLimiter.waitTurn()
-        try {
-          const res = await executeSharedRetry(fn, 5, 1000, 'Importar', 10000)
-          importRateLimiter.recordSuccess()
-          return res
-        } catch (err: any) {
-          if (is429Error(err)) {
-            importRateLimiter.recordThrottle()
-          }
-          throw err
-        }
+        return executeSharedRetry(fn, 6, 1200, 'Importar', 25000, {
+          rateLimiter: importRateLimiter,
+        })
       }
 
       // Ensure we have real category & subcategory IDs for this control BEFORE starting import
@@ -1176,7 +1168,9 @@ export default function Importar() {
               filter: `control_id="${currentCompany.id}"`,
             }),
           ).catch((err) => {
-            console.warn('Não foi possível pré-carregar categorias:', err)
+            if (!is429Error(err)) {
+              console.warn('Não foi possível pré-carregar categorias:', err)
+            }
             return dbCategories
           }),
           executeWithRetry(() =>
@@ -1184,17 +1178,21 @@ export default function Importar() {
               filter: `control_id="${currentCompany.id}"`,
             }),
           ).catch((err) => {
-            console.warn('Não foi possível pré-carregar subcategorias:', err)
+            if (!is429Error(err)) {
+              console.warn('Não foi possível pré-carregar subcategorias:', err)
+            }
             return dbSubcategories
           }),
         ])
         freshCategories = results[0]
         freshSubcategories = results[1]
       } catch (preloadErr) {
-        console.warn(
-          'Erro ao pré-carregar dados para importação, usando dados locais em cache:',
-          preloadErr,
-        )
+        if (!is429Error(preloadErr)) {
+          console.warn(
+            'Erro ao pré-carregar dados para importação, usando dados locais em cache:',
+            preloadErr,
+          )
+        }
         freshCategories = dbCategories
         freshSubcategories = dbSubcategories
       }
@@ -1257,7 +1255,9 @@ export default function Importar() {
           subcatsCache.push(created)
           return created.id
         } catch (err) {
-          console.warn('Erro ao auto-criar subcategoria:', formatPocketBaseError(err))
+          if (!is429Error(err)) {
+            console.warn('Erro ao auto-criar subcategoria:', formatPocketBaseError(err))
+          }
           return ''
         }
       }
@@ -1281,7 +1281,9 @@ export default function Importar() {
         try {
           await getOrCreateSubcategoryId(categoryId, subName)
         } catch (subErr) {
-          console.warn(`Erro não bloqueante ao pré-criar subcategoria ${subName}:`, subErr)
+          if (!is429Error(subErr)) {
+            console.warn(`Erro não bloqueante ao pré-criar subcategoria ${subName}:`, subErr)
+          }
         }
       }
 
@@ -1560,10 +1562,12 @@ export default function Importar() {
                         }),
                       )
                     } catch (updateErr) {
-                      console.warn(
-                        'Erro ao auto-vincular parent_transaction_id na parcela 1:',
-                        updateErr,
-                      )
+                      if (!is429Error(updateErr)) {
+                        console.warn(
+                          'Erro ao auto-vincular parent_transaction_id na parcela 1:',
+                          updateErr,
+                        )
+                      }
                     }
                   }
                 }
@@ -1625,7 +1629,7 @@ export default function Importar() {
             }
           },
           {
-            concurrency: 2,
+            concurrency: 1,
             delayBetweenBatchesMs: 50,
             rateLimiter: importRateLimiter,
             tag: 'Importar-Pool',
@@ -1648,18 +1652,25 @@ export default function Importar() {
                     pb.collection('accounts').update(accountId, { balance: newBalance }),
                   )
                 } catch (accErr) {
-                  console.warn(`Erro ao atualizar saldo consolidado da conta ${accountId}:`, accErr)
+                  if (!is429Error(accErr)) {
+                    console.warn(
+                      `Erro ao atualizar saldo consolidado da conta ${accountId}:`,
+                      accErr,
+                    )
+                  }
                 }
               },
               {
-                concurrency: 2,
+                concurrency: 1,
                 delayBetweenBatchesMs: 50,
                 rateLimiter: importRateLimiter,
                 tag: 'Importar-SaldoConsolidado',
               },
             )
           } catch (poolBalanceErr) {
-            console.warn('Erro não bloqueante no pool de atualização de saldos:', poolBalanceErr)
+            if (!is429Error(poolBalanceErr)) {
+              console.warn('Erro não bloqueante no pool de atualização de saldos:', poolBalanceErr)
+            }
           }
         }
       } finally {
@@ -1672,7 +1683,12 @@ export default function Importar() {
       try {
         await reloadCompanyData()
       } catch (reloadErr) {
-        console.warn('Erro não bloqueante ao atualizar dados da empresa pós-importação:', reloadErr)
+        if (!is429Error(reloadErr)) {
+          console.warn(
+            'Erro não bloqueante ao atualizar dados da empresa pós-importação:',
+            reloadErr,
+          )
+        }
       }
     } catch (unexpectedErr: any) {
       if (!is429Error(unexpectedErr)) {

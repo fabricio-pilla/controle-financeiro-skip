@@ -77,6 +77,7 @@ export interface RetryOptions {
   tag?: string
   maxDelayMs?: number
   on429?: (error: any, attempt: number, delayMs: number) => void
+  rateLimiter?: AdaptiveRateLimiter
 }
 
 type Global429Listener = (error: any, attempt: number, delayMs: number) => void
@@ -112,21 +113,23 @@ export const notify429 = (error: any, attempt: number, delayMs: number) => {
  * entre todos os workers de um pool.
  */
 export interface AdaptiveRateLimiterOptions {
-  /** Intervalo base entre disparos de requisições (padrão: 180ms) */
+  /** Intervalo base entre disparos de requisições (padrão: 350ms) */
   initialIntervalMs?: number
-  /** Intervalo mínimo permitido sob condições perfeitas (padrão: 100ms) */
+  /** Intervalo mínimo permitido sob condições perfeitas (padrão: 200ms) */
   minIntervalMs?: number
-  /** Intervalo máximo permitido ao acumular desacelerações (padrão: 4000ms) */
+  /** Intervalo máximo permitido ao acumular desacelerações (padrão: 10000ms) */
   maxIntervalMs?: number
   /** Fator multiplicador de desaceleração ao receber 429 (padrão: 2.0) */
   backoffFactor?: number
   /** Fator de redução de espaçamento a cada sequência de sucessos (padrão: 0.9) */
   recoveryFactor?: number
-  /** Número de sucessos consecutivos necessários para iniciar a reaceleração (padrão: 5) */
+  /** Número de sucessos consecutivos necessários para iniciar a reaceleração (padrão: 6) */
   successThresholdForRecovery?: number
 }
 
 export class AdaptiveRateLimiter {
+  private static activeLimiter: AdaptiveRateLimiter | null = null
+
   private currentIntervalMs: number
   private readonly minIntervalMs: number
   private readonly maxIntervalMs: number
@@ -135,22 +138,36 @@ export class AdaptiveRateLimiter {
   private readonly successThresholdForRecovery: number
 
   private consecutiveSuccesses = 0
-  private lastRequestTime = 0
+  private lastScheduledTime = 0
   private pauseUntil = 0
   private unsubscribeGlobal429: (() => void) | null = null
 
   constructor(options: AdaptiveRateLimiterOptions = {}) {
-    this.currentIntervalMs = options.initialIntervalMs ?? 180
-    this.minIntervalMs = options.minIntervalMs ?? 100
-    this.maxIntervalMs = options.maxIntervalMs ?? 4000
+    this.currentIntervalMs = options.initialIntervalMs ?? 350
+    this.minIntervalMs = options.minIntervalMs ?? 200
+    this.maxIntervalMs = options.maxIntervalMs ?? 10000
     this.backoffFactor = options.backoffFactor ?? 2.0
     this.recoveryFactor = options.recoveryFactor ?? 0.9
-    this.successThresholdForRecovery = options.successThresholdForRecovery ?? 5
+    this.successThresholdForRecovery = options.successThresholdForRecovery ?? 6
+
+    // Registrar como limitador ativo global
+    AdaptiveRateLimiter.setActive(this)
 
     // Conectar automaticamente ao ouvinte global de 429
     this.unsubscribeGlobal429 = onGlobal429((_err, _attempt, delayMs) => {
       this.recordThrottle(delayMs)
     })
+  }
+
+  public static setActive(limiter: AdaptiveRateLimiter | null): void {
+    AdaptiveRateLimiter.activeLimiter = limiter
+  }
+
+  /**
+   * Obtém o limitador ativo atualmente, se houver
+   */
+  public static getActive(): AdaptiveRateLimiter | null {
+    return AdaptiveRateLimiter.activeLimiter
   }
 
   /**
@@ -162,29 +179,22 @@ export class AdaptiveRateLimiter {
 
   /**
    * Aguarda a sua vez de disparar uma requisição, garantindo espaçamento entre chamadas
+   * serializado para prevenir disparos concorrentes no mesmo instante,
    * e respeitando eventuais pausas globais causadas por 429.
    */
   public async waitTurn(): Promise<void> {
     const now = Date.now()
-    let waitMs = 0
+    // Base de agendamento: nunca antes do momento atual nem antes de pauseUntil
+    const earliestAllowed = Math.max(now, this.pauseUntil)
 
-    // Se houver uma pausa explícita ativa decorrente de 429
-    if (this.pauseUntil > now) {
-      waitMs = Math.max(waitMs, this.pauseUntil - now)
-    }
+    // Agendar o próximo slot serializado com o espaçamento mínimo
+    const scheduledTime = Math.max(earliestAllowed, this.lastScheduledTime + this.currentIntervalMs)
+    this.lastScheduledTime = scheduledTime
 
-    // Intervalo de espaçamento desde a última requisição disparada
-    const timeSinceLast = now - this.lastRequestTime
-    if (timeSinceLast < this.currentIntervalMs) {
-      waitMs = Math.max(waitMs, this.currentIntervalMs - timeSinceLast)
-    }
-
+    const waitMs = scheduledTime - now
     if (waitMs > 0) {
       await sleep(waitMs)
     }
-
-    // Atualiza a marca da última requisição disparada
-    this.lastRequestTime = Date.now()
   }
 
   /**
@@ -194,12 +204,16 @@ export class AdaptiveRateLimiter {
     this.consecutiveSuccesses = 0
     this.currentIntervalMs = Math.min(
       this.maxIntervalMs,
-      Math.max(this.currentIntervalMs * this.backoffFactor, 400),
+      Math.max(this.currentIntervalMs * this.backoffFactor, 600),
     )
 
-    // Pausa temporária para todos os workers
-    const pauseDuration = suggestedDelayMs > 0 ? Math.min(suggestedDelayMs, 10000) : 1000
-    this.pauseUntil = Math.max(this.pauseUntil, Date.now() + pauseDuration)
+    // Pausa temporária para todos os workers (mínimo de 1800ms em 429)
+    const pauseDuration =
+      suggestedDelayMs > 0 ? Math.min(Math.max(suggestedDelayMs, 1800), 15000) : 1800
+    const now = Date.now()
+    this.pauseUntil = Math.max(this.pauseUntil, now + pauseDuration)
+    // Empurra o próximo agendamento para depois da pausa
+    this.lastScheduledTime = Math.max(this.lastScheduledTime, this.pauseUntil)
   }
 
   /**
@@ -227,6 +241,9 @@ export class AdaptiveRateLimiter {
       this.unsubscribeGlobal429()
       this.unsubscribeGlobal429 = null
     }
+    if (AdaptiveRateLimiter.getActive() === this) {
+      AdaptiveRateLimiter.setActive(null)
+    }
   }
 }
 
@@ -239,9 +256,21 @@ export const executeWithRetry = async <T>(
   options?: RetryOptions,
 ): Promise<T> => {
   let attempt = 0
+  const limiter = options?.rateLimiter ?? AdaptiveRateLimiter.getActive()
+
   while (true) {
+    // Garantir que CADA tentativa (inicial E retries) passe pelo limitador de taxa se disponível
+    if (limiter) {
+      await limiter.waitTurn()
+    }
+
     try {
-      return await fn()
+      const result = await fn()
+      // Se tiver limitador e foi concluído com sucesso, registra progresso
+      if (limiter && attempt === 0) {
+        limiter.recordSuccess()
+      }
+      return result
     } catch (error: any) {
       const is429 = is429Error(error)
       const isNet = isNetworkError(error)
@@ -250,16 +279,22 @@ export const executeWithRetry = async <T>(
         attempt++
         const serverRetryAfter = extractRetryAfterMs(error)
         // Jitter to prevent stampedes when multiple requests get throttled
-        const jitter = Math.random() * 300
-        // Backoff exponencial: 1s, 2s, 4s, 8s, 16s... até maxDelayMs (~30s)
-        const exponentialDelay = baseDelayMs * Math.pow(2, attempt - 1) + jitter
-        const delay = Math.min(
-          serverRetryAfter && serverRetryAfter > 0 ? serverRetryAfter : exponentialDelay,
-          maxDelayMs,
-        )
+        const jitter = Math.random() * 400
 
-        // Se for erro 429, notifica ouvintes globais e o callback de opções
+        let delay: number
         if (is429) {
+          // Pausa maior após 429: mínimo de 1800ms na 1ª tentativa, crescendo exponencialmente
+          const currentInterval = limiter ? limiter.getIntervalMs() : 350
+          const minBackoff429 = Math.max(1800, currentInterval * 2)
+          const exponentialDelay = minBackoff429 * Math.pow(1.8, attempt - 1) + jitter
+          delay = Math.min(
+            serverRetryAfter && serverRetryAfter > 0
+              ? Math.max(serverRetryAfter, 1800)
+              : exponentialDelay,
+            maxDelayMs,
+          )
+
+          // Notifica ouvintes globais (desacelera e pausa limitadores)
           notify429(error, attempt, delay)
           if (options?.on429) {
             try {
@@ -268,6 +303,13 @@ export const executeWithRetry = async <T>(
               // ignore callback error
             }
           }
+        } else {
+          // Erro de rede (502, 503, etc.)
+          const exponentialDelay = baseDelayMs * Math.pow(2, attempt - 1) + jitter
+          delay = Math.min(
+            serverRetryAfter && serverRetryAfter > 0 ? serverRetryAfter : exponentialDelay,
+            maxDelayMs,
+          )
         }
 
         await sleep(delay)
@@ -319,11 +361,6 @@ export async function runInPool<TItem, TResult>(
       const idx = currentIndex++
       const item = items[idx]
 
-      // Throttle adaptativo compartilhado antes do disparo da requisição
-      if (rateLimiter) {
-        await rateLimiter.waitTurn()
-      }
-
       try {
         const res = await executeWithRetry(
           () => task(item, idx),
@@ -331,11 +368,9 @@ export async function runInPool<TItem, TResult>(
           baseDelayMs,
           tag,
           maxDelayMs,
+          { rateLimiter },
         )
         results[idx] = res
-        if (rateLimiter) {
-          rateLimiter.recordSuccess()
-        }
       } catch (workerErr: any) {
         if (rateLimiter && is429Error(workerErr)) {
           rateLimiter.recordThrottle()

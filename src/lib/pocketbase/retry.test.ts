@@ -184,23 +184,23 @@ describe('pocketbase/retry helpers', () => {
 
       // Throttle triggered
       limiter.recordThrottle(50)
-      expect(limiter.getIntervalMs()).toBe(400) // max(150 * 2, 400)
+      expect(limiter.getIntervalMs()).toBe(600) // max(150 * 2, 600)
 
       // Another throttle
       limiter.recordThrottle(50)
-      expect(limiter.getIntervalMs()).toBe(800) // 400 * 2
+      expect(limiter.getIntervalMs()).toBe(1200) // 600 * 2
 
       // Record 3 successes -> triggers recovery
       limiter.recordSuccess()
       limiter.recordSuccess()
-      expect(limiter.getIntervalMs()).toBe(800)
+      expect(limiter.getIntervalMs()).toBe(1200)
       limiter.recordSuccess() // 3rd success
-      expect(limiter.getIntervalMs()).toBe(Math.round(800 * 0.8)) // 640
+      expect(limiter.getIntervalMs()).toBe(Math.round(1200 * 0.8)) // 960
 
       limiter.destroy()
     })
 
-    it('receives global 429 notification from executeWithRetry', async () => {
+    it('receives global 429 notification from executeWithRetry and throttles', async () => {
       const limiter = new AdaptiveRateLimiter({
         initialIntervalMs: 100,
         minIntervalMs: 50,
@@ -224,8 +224,74 @@ describe('pocketbase/retry helpers', () => {
       )
 
       // Limiter must have throttled because executeWithRetry broadcasted 429
-      expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(400)
+      expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(600)
       limiter.destroy()
+    })
+
+    it('passes every retry attempt through limiter.waitTurn()', async () => {
+      const limiter = new AdaptiveRateLimiter({
+        initialIntervalMs: 5,
+        minIntervalMs: 2,
+        maxIntervalMs: 50,
+      })
+      const waitTurnSpy = vi.spyOn(limiter, 'waitTurn')
+
+      let calls = 0
+      await executeWithRetry(
+        async () => {
+          calls++
+          if (calls < 3) {
+            throw { status: 429, message: 'Too Many Requests' }
+          }
+          return 'ok'
+        },
+        3,
+        5,
+        'RetryPassTurnTest',
+        30,
+        { rateLimiter: limiter },
+      )
+
+      // Original attempt (1) + 2 retries (2, 3) = 3 total calls and at least 3 waitTurn calls
+      expect(calls).toBe(3)
+      expect(waitTurnSpy).toHaveBeenCalledTimes(3)
+
+      waitTurnSpy.mockRestore()
+      limiter.destroy()
+    })
+
+    it('enforces a conservative delay (>1.5s) on 429 retry before retrying', async () => {
+      let sleepDelays: number[] = []
+      const originalSleep = vi.spyOn(globalThis, 'setTimeout')
+
+      let calls = 0
+      const startTime = Date.now()
+      // Test without mock timers using real executeWithRetry parameters
+      // When maxDelayMs is capped, delay is Math.min(exponentialDelay, maxDelayMs)
+      // We verify that exponentialDelay computed internally has minimum 1800ms
+      let delaySeenByOn429 = 0
+      await executeWithRetry(
+        async () => {
+          calls++
+          if (calls === 1) {
+            throw { status: 429, message: 'Too Many Requests' }
+          }
+          return 'success'
+        },
+        2,
+        100,
+        'Backoff429Test',
+        5000,
+        {
+          on429: (_err, _attempt, delayMs) => {
+            delaySeenByOn429 = delayMs
+          },
+        },
+      )
+
+      // Delay suggested to notify429 and on429 must be >= 1800ms
+      expect(delaySeenByOn429).toBeGreaterThanOrEqual(1800)
+      originalSleep.mockRestore()
     })
 
     it('orchestrates deletion pool with initial 200ms spacing, throttles upon 429 and recovers after consecutive successes', async () => {
@@ -274,8 +340,6 @@ describe('pocketbase/retry helpers', () => {
       expect(deletedItems).toContain('tx-7')
 
       // O rate limiter deve ter desacelerado em função do 429 no tx-2 e depois acelerado gradualmente com os sucessos subsequentes
-      // Após o 429, o intervalo sobe para pelo menos 400ms (max(200 * 2, 400))
-      // Com sucessos consecutivos subsequentes, ele começa a reduzir
       expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(120)
       limiter.destroy()
     })
