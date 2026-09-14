@@ -163,9 +163,8 @@ export async function runInPool<TItem, TResult>(
         )
         results[idx] = res
       } catch (workerErr) {
-        // Se a tarefa do item falhou mesmo após esgotar o retry,
-        // não quebramos os demais workers do pool: registramos o erro no índice
-        // e permitimos que o pool conclua o processamento dos demais itens.
+        // Se a tarefa do item falhou mesmo após esgotar o retry (429 ou falha persistente),
+        // registramos no índice e NÃO deixamos a exceção subir, mantendo os demais workers operantes.
         console.warn(`[${tag}] Falha no processamento do item ${idx} no pool:`, workerErr)
         results[idx] = undefined as unknown as TResult
       } finally {
@@ -178,14 +177,23 @@ export async function runInPool<TItem, TResult>(
           }
         }
         if (delayBetweenBatchesMs > 0) {
-          await sleep(delayBetweenBatchesMs)
+          try {
+            await sleep(delayBetweenBatchesMs)
+          } catch {
+            // ignore sleep interruption
+          }
         }
       }
     }
   }
 
   const workerCount = Math.min(concurrency, items.length)
-  const workers = Array.from({ length: workerCount }, () => worker())
+  const workers = Array.from({ length: workerCount }, () =>
+    worker().catch((err) => {
+      // Barreira de proteção defensiva: nenhum worker deve rejeitar o Promise.all
+      console.warn(`[${tag}] Exceção não esperada capturada no worker do pool:`, err)
+    }),
+  )
   await Promise.all(workers)
 
   return results

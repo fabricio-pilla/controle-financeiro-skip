@@ -192,19 +192,27 @@ export default function SettingsPage() {
           records,
           async (rec) => {
             try {
-              await pb.collection('transactions').delete(rec.id)
-            } catch (itemErr: any) {
-              const status =
-                itemErr?.status ??
-                itemErr?.statusCode ??
-                itemErr?.response?.status ??
-                itemErr?.originalError?.status
-              // Se já retornar 404, o item já foi removido (não conta como erro)
-              if (status === 404) {
-                return
+              try {
+                await pb.collection('transactions').delete(rec.id)
+              } catch (itemErr: any) {
+                const status =
+                  itemErr?.status ??
+                  itemErr?.statusCode ??
+                  itemErr?.response?.status ??
+                  itemErr?.originalError?.status
+                // Se já retornar 404, o item já foi removido (não conta como erro)
+                if (status === 404) {
+                  return
+                }
+                console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                sweepErrors.push(rec.id)
               }
-              console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
-              sweepErrors.push(rec.id)
+            } catch (unexpectedErr: any) {
+              // Garante que mesmo qualquer exceção imprevista não escape do worker
+              console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              if (!sweepErrors.includes(rec.id)) {
+                sweepErrors.push(rec.id)
+              }
             } finally {
               completedInSweep++
               setDeleteAllProgress({ current: completedInSweep, total: records.length })
@@ -265,9 +273,14 @@ export default function SettingsPage() {
           accountsList,
           async (acc) => {
             try {
-              await pb.collection('accounts').update(acc.id, { balance: 0 })
-            } catch (accErr) {
-              console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+              try {
+                await pb.collection('accounts').update(acc.id, { balance: 0 })
+              } catch (accErr) {
+                console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+                failedAccounts++
+              }
+            } catch (unexpectedAccErr) {
+              console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
               failedAccounts++
             }
           },
@@ -350,16 +363,23 @@ export default function SettingsPage() {
           records,
           async (rec) => {
             try {
-              await pb.collection('transactions').delete(rec.id)
-            } catch (itemErr: any) {
-              const status =
-                itemErr?.status ??
-                itemErr?.statusCode ??
-                itemErr?.response?.status ??
-                itemErr?.originalError?.status
-              if (status === 404) return
-              console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
-              sweepErrors.push(rec.id)
+              try {
+                await pb.collection('transactions').delete(rec.id)
+              } catch (itemErr: any) {
+                const status =
+                  itemErr?.status ??
+                  itemErr?.statusCode ??
+                  itemErr?.response?.status ??
+                  itemErr?.originalError?.status
+                if (status === 404) return
+                console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                sweepErrors.push(rec.id)
+              }
+            } catch (unexpectedErr: any) {
+              console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              if (!sweepErrors.includes(rec.id)) {
+                sweepErrors.push(rec.id)
+              }
             } finally {
               completedInSweep++
               setDeleteMonthProgress({ current: completedInSweep, total: records.length })
@@ -419,9 +439,14 @@ export default function SettingsPage() {
           accountsList,
           async (acc) => {
             try {
-              await pb.collection('accounts').update(acc.id, { balance: 0 })
-            } catch (accErr) {
-              console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+              try {
+                await pb.collection('accounts').update(acc.id, { balance: 0 })
+              } catch (accErr) {
+                console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+                failedAccounts++
+              }
+            } catch (unexpectedAccErr) {
+              console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
               failedAccounts++
             }
           },

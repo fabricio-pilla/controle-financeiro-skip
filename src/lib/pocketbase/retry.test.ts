@@ -92,5 +92,20 @@ describe('pocketbase/retry helpers', () => {
       expect(results[1]).toBeUndefined()
       expect(results[2]).toBe('done-ok2')
     })
+
+    it('does not throw when task fails completely with 429 ClientResponseError', async () => {
+      const items = ['item1', 'item2']
+      const results = await runInPool(
+        items,
+        async () => {
+          const err = new Error('Too Many Requests.')
+          ;(err as any).status = 429
+          throw err
+        },
+        { concurrency: 2, maxRetries: 0, baseDelayMs: 5 },
+      )
+
+      expect(results).toEqual([undefined, undefined])
+    })
   })
 })
