@@ -107,5 +107,39 @@ describe('pocketbase/retry helpers', () => {
 
       expect(results).toEqual([undefined, undefined])
     })
+
+    it('does not log to console.warn or console.error during retries and exhausted failures', async () => {
+      const warnSpy = vi.spyOn(console, 'warn')
+      const errorSpy = vi.spyOn(console, 'error')
+
+      let attempts = 0
+      await executeWithRetry(
+        async () => {
+          attempts++
+          if (attempts < 2) {
+            throw { status: 429, message: 'Too Many Requests.' }
+          }
+          return 'ok'
+        },
+        2,
+        5,
+        'SilentTest',
+        20,
+      )
+
+      await runInPool(
+        ['task1'],
+        async () => {
+          throw { status: 429, message: 'Too Many Requests.' }
+        },
+        { concurrency: 1, maxRetries: 1, baseDelayMs: 5, maxDelayMs: 20 },
+      )
+
+      expect(warnSpy).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+
+      warnSpy.mockRestore()
+      errorSpy.mockRestore()
+    })
   })
 })

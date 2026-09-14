@@ -104,9 +104,6 @@ export const executeWithRetry = async <T>(
           serverRetryAfter && serverRetryAfter > 0 ? serverRetryAfter : exponentialDelay,
           maxDelayMs,
         )
-        console.warn(
-          `[${tag}] ${is429 ? '429 (Rate Limit)' : 'Erro de rede/servidor'} detectado. Retentando em ${Math.round(delay)}ms (tentativa ${attempt}/${maxRetries})...`,
-        )
         await sleep(delay)
         continue
       }
@@ -162,10 +159,10 @@ export async function runInPool<TItem, TResult>(
           maxDelayMs,
         )
         results[idx] = res
-      } catch (workerErr) {
+      } catch (_workerErr) {
         // Se a tarefa do item falhou mesmo após esgotar o retry (429 ou falha persistente),
         // registramos no índice e NÃO deixamos a exceção subir, mantendo os demais workers operantes.
-        console.warn(`[${tag}] Falha no processamento do item ${idx} no pool:`, workerErr)
+        // O erro é tratado silenciosamente sem poluir o console do navegador.
         results[idx] = undefined as unknown as TResult
       } finally {
         completedCount++
@@ -189,9 +186,8 @@ export async function runInPool<TItem, TResult>(
 
   const workerCount = Math.min(concurrency, items.length)
   const workers = Array.from({ length: workerCount }, () =>
-    worker().catch((err) => {
+    worker().catch(() => {
       // Barreira de proteção defensiva: nenhum worker deve rejeitar o Promise.all
-      console.warn(`[${tag}] Exceção não esperada capturada no worker do pool:`, err)
     }),
   )
   await Promise.all(workers)

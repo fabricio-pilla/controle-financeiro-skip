@@ -601,10 +601,12 @@ export default function TransactionsPage() {
                 }
               }
             } catch (err: any) {
-              console.warn(
-                `[handleGenerateNext12Months:Etapa1] Falha ao criar recorrência "${item.description}":`,
-                err?.message || err,
-              )
+              if (!is429Error(err)) {
+                console.warn(
+                  `[handleGenerateNext12Months:Etapa1] Falha ao criar recorrência "${item.description}":`,
+                  err?.message || err,
+                )
+              }
               recurringRateLimitedCount++
             }
           },
@@ -664,10 +666,12 @@ export default function TransactionsPage() {
                 createdInstallmentCount++
               }
             } catch (err: any) {
-              console.warn(
-                `[handleGenerateNext12Months:Etapa2] Falha ao criar parcela "${item.description}":`,
-                err?.message || err,
-              )
+              if (!is429Error(err)) {
+                console.warn(
+                  `[handleGenerateNext12Months:Etapa2] Falha ao criar parcela "${item.description}":`,
+                  err?.message || err,
+                )
+              }
               installmentRateLimitedCount++
             }
           },

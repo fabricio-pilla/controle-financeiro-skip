@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
-import { sleep, executeWithRetry, runInPool } from '@/lib/pocketbase/retry'
+import { sleep, executeWithRetry, runInPool, is429Error } from '@/lib/pocketbase/retry'
 import {
   Dialog,
   DialogContent,
@@ -204,12 +204,17 @@ export default function SettingsPage() {
                 if (status === 404) {
                   return
                 }
-                console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                // Não loga no console se for erro 429 para evitar falsos positivos no monitor de runtime
+                if (!is429Error(itemErr)) {
+                  console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                }
                 sweepErrors.push(rec.id)
               }
             } catch (unexpectedErr: any) {
               // Garante que mesmo qualquer exceção imprevista não escape do worker
-              console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              if (!is429Error(unexpectedErr)) {
+                console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              }
               if (!sweepErrors.includes(rec.id)) {
                 sweepErrors.push(rec.id)
               }
@@ -276,11 +281,15 @@ export default function SettingsPage() {
               try {
                 await pb.collection('accounts').update(acc.id, { balance: 0 })
               } catch (accErr) {
-                console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+                if (!is429Error(accErr)) {
+                  console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+                }
                 failedAccounts++
               }
             } catch (unexpectedAccErr) {
-              console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
+              if (!is429Error(unexpectedAccErr)) {
+                console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
+              }
               failedAccounts++
             }
           },
@@ -372,11 +381,15 @@ export default function SettingsPage() {
                   itemErr?.response?.status ??
                   itemErr?.originalError?.status
                 if (status === 404) return
-                console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                if (!is429Error(itemErr)) {
+                  console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                }
                 sweepErrors.push(rec.id)
               }
             } catch (unexpectedErr: any) {
-              console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              if (!is429Error(unexpectedErr)) {
+                console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              }
               if (!sweepErrors.includes(rec.id)) {
                 sweepErrors.push(rec.id)
               }
@@ -442,11 +455,15 @@ export default function SettingsPage() {
               try {
                 await pb.collection('accounts').update(acc.id, { balance: 0 })
               } catch (accErr) {
-                console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+                if (!is429Error(accErr)) {
+                  console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+                }
                 failedAccounts++
               }
             } catch (unexpectedAccErr) {
-              console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
+              if (!is429Error(unexpectedAccErr)) {
+                console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
+              }
               failedAccounts++
             }
           },

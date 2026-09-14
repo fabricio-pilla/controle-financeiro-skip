@@ -1570,7 +1570,9 @@ export default function Importar() {
               accountBalanceDeltas.set(b.accountId, current + b.delta)
             }
           } catch (err: any) {
-            console.warn(`Erro ao importar linha ${row.rowIndex}:`, err)
+            if (!is429Error(err)) {
+              console.warn(`Erro ao importar linha ${row.rowIndex}:`, err)
+            }
             summary.errorsCount++
             const formattedReason = is429Error(err)
               ? 'Limite de requisições do servidor atingido — tente novamente em instantes'
@@ -1636,7 +1638,9 @@ export default function Importar() {
         console.warn('Erro não bloqueante ao atualizar dados da empresa pós-importação:', reloadErr)
       }
     } catch (unexpectedErr: any) {
-      console.warn('Erro inesperado no processo de importação:', unexpectedErr)
+      if (!is429Error(unexpectedErr)) {
+        console.warn('Erro inesperado no processo de importação:', unexpectedErr)
+      }
       const userMessage = is429Error(unexpectedErr)
         ? 'Limite de requisições do servidor atingido — tente novamente em instantes'
         : formatPocketBaseError(unexpectedErr)
