@@ -223,6 +223,35 @@ export function createTemplateWorkbook(
 /**
  * Dispara o download da planilha modelo (.xlsx).
  */
+function triggerBrowserDownload(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', fileName)
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url)
+  }, 1000)
+}
+
+function saveWorkbook(wb: XLSX.WorkBook, fileName: string) {
+  try {
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+    const blob = new Blob([wbout], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    triggerBrowserDownload(blob, fileName)
+  } catch (err) {
+    // Fallback para XLSX.writeFile caso XLSX.write falhe
+    XLSX.writeFile(wb, fileName)
+  }
+}
+
+/**
+ * Dispara o download da planilha modelo (.xlsx).
+ */
 export function downloadTemplateXlsx(
   accounts: Account[] = [],
   categories: Category[] = [],
@@ -230,7 +259,7 @@ export function downloadTemplateXlsx(
   fileName: string = 'modelo-importacao-financeira.xlsx',
 ) {
   const wb = createTemplateWorkbook(accounts, categories, subcategories)
-  XLSX.writeFile(wb, fileName)
+  saveWorkbook(wb, fileName)
 }
 
 /**
@@ -336,12 +365,20 @@ export function exportTransactionsToXlsx(
       return !(num === 0 && total > 0)
     })
     .map((tx) => {
-      // Formatar data em dd/mm/aaaa
+      // Formatar data em dd/mm/aaaa garantindo limpeza de timezone / hora ISO
       let dataBr = ''
       if (tx.date) {
-        const match = tx.date.match(/^(\d{4})-(\d{2})-(\d{2})/)
-        if (match) {
-          dataBr = `${match[3]}/${match[2]}/${match[1]}`
+        const rawDate = String(tx.date).trim().split(/[T\s]/)[0]
+        const matchYMD = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})/)
+        const matchDMY = rawDate.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/)
+        if (matchYMD) {
+          dataBr = `${matchYMD[3]}/${matchYMD[2]}/${matchYMD[1]}`
+        } else if (matchDMY) {
+          const dd = matchDMY[1].padStart(2, '0')
+          const mm = matchDMY[2].padStart(2, '0')
+          let yyyy = matchDMY[3]
+          if (yyyy.length === 2) yyyy = '20' + yyyy
+          dataBr = `${dd}/${mm}/${yyyy}`
         } else {
           const d = new Date(tx.date)
           if (!isNaN(d.getTime())) {
@@ -424,5 +461,5 @@ export function exportTransactionsToXlsx(
   ]
 
   XLSX.utils.book_append_sheet(wb, ws, 'Lançamentos')
-  XLSX.writeFile(wb, fileName)
+  saveWorkbook(wb, fileName)
 }

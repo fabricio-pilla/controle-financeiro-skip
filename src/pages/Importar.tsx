@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, ChangeEvent, DragEvent } from 'react'
+import { useState, useRef, useMemo, useEffect, ChangeEvent, DragEvent } from 'react'
 import { Link } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import {
@@ -33,10 +33,20 @@ import {
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
 import { useCompany } from '@/contexts/CompanyContext'
+import { skipCloud } from '@/lib/skip-cloud'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import { Account, Category, Subcategory } from '@/types/database'
 import { sleep, executeWithRetry as executeSharedRetry, runInPool } from '@/lib/pocketbase/retry'
@@ -577,38 +587,108 @@ export default function Importar() {
   }
 
   // Load metadata whenever currentCompany changes
-  useMemo(() => {
+  useEffect(() => {
     if (currentCompany?.id) {
       fetchControlMetadata(currentCompany.id)
     }
   }, [currentCompany?.id])
 
-  // Handler para exportar todas as transações do controle ativo para .xlsx
-  const handleExportTransactions = async () => {
-    if (!currentCompany?.id) {
-      toast.error('Nenhum controle selecionado.')
-      return
-    }
+  // Estado para o diálogo de exportação com filtro de período
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false)
+  const [exportPeriodType, setExportPeriodType] = useState<'all' | 'custom'>('all')
+  const [exportStartMonth, setExportStartMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [exportEndMonth, setExportEndMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
 
+  // Handler para exportar transações com base no período selecionado
+  const handleExportTransactions = async () => {
     setIsExporting(true)
     const toastId = toast.loading('Buscando transações do controle para exportação...')
 
     try {
-      // Carregar todas as transações com expansões completas
+      // Garantir resolução do controle único
+      let targetCompany = currentCompany
+      if (!targetCompany?.id) {
+        try {
+          const single = await skipCloud.getSingleCompany()
+          if (single) {
+            targetCompany = single
+          }
+        } catch (e) {
+          console.warn('Erro ao obter controle único para exportação:', e)
+        }
+      }
+
+      if (!targetCompany?.id) {
+        toast.dismiss(toastId)
+        toast.error('Nenhum controle selecionado ou encontrado.')
+        return
+      }
+
+      // Montar filtros
+      const filterConditions: string[] = [`control_id = "${targetCompany.id}"`]
+      let periodLabel = 'Todos os períodos'
+
+      if (exportPeriodType === 'custom') {
+        let startM = exportStartMonth
+        let endM = exportEndMonth
+        if (startM > endM) {
+          // Se o usuário inverter início e fim, ajustamos automaticamente
+          const tmp = startM
+          startM = endM
+          endM = tmp
+        }
+
+        const [startY, startMonthNum] = startM.split('-').map(Number)
+        const [endY, endMonthNum] = endM.split('-').map(Number)
+
+        const startDateStr = `${startY}-${String(startMonthNum).padStart(2, '0')}-01`
+        // Último dia do mês final em formato YYYY-MM-DD
+        const lastDayOfEndMonth = new Date(endY, endMonthNum, 0).getDate()
+        const endDateStr = `${endY}-${String(endMonthNum).padStart(2, '0')}-${String(lastDayOfEndMonth).padStart(2, '0')}`
+
+        filterConditions.push(`date >= "${startDateStr}"`)
+        filterConditions.push(`date <= "${endDateStr}"`)
+
+        if (startM === endM) {
+          periodLabel = `${String(startMonthNum).padStart(2, '0')}/${startY}`
+        } else {
+          periodLabel = `${String(startMonthNum).padStart(2, '0')}/${startY} a ${String(endMonthNum).padStart(2, '0')}/${endY}`
+        }
+      }
+
+      // Carregar transações correspondentes com expansões completas
       const records = await pb.collection('transactions').getFullList<any>({
-        filter: `control_id = "${currentCompany.id}"`,
+        filter: filterConditions.join(' && '),
         sort: 'date',
         expand: 'account_id,category_id,subcategory_id',
       })
 
       if (records.length === 0) {
         toast.dismiss(toastId)
-        toast.info('Nenhuma transação encontrada no controle para exportação.')
+        toast.info(
+          exportPeriodType === 'all'
+            ? 'Nenhuma transação encontrada no controle para exportação.'
+            : `Nenhuma transação encontrada no período selecionado (${periodLabel}).`,
+        )
+        setIsExportDialogOpen(false)
         return
       }
 
       // Filtrar registros pai consolidados da exportação
       const nonParentRecords = records.filter((r) => !isParentTransaction(r))
+
+      if (nonParentRecords.length === 0) {
+        toast.dismiss(toastId)
+        toast.info(`Nenhuma transação elegível encontrada para o período (${periodLabel}).`)
+        setIsExportDialogOpen(false)
+        return
+      }
 
       // Mapear registros com as expansões
       const formatted = nonParentRecords.map((r) => ({
@@ -633,18 +713,25 @@ export default function Importar() {
       const yyyy = now.getFullYear()
       const mm = String(now.getMonth() + 1).padStart(2, '0')
       const dd = String(now.getDate()).padStart(2, '0')
-      const safeName = (currentCompany.name || 'controle')
+      const safeName = (targetCompany.name || 'controle')
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '-')
         .replace(/-+/g, '-')
 
-      const fileName = `lancamentos-${safeName}-${yyyy}${mm}${dd}.xlsx`
+      const safePeriodPart =
+        exportPeriodType === 'custom'
+          ? `-${exportStartMonth === exportEndMonth ? exportStartMonth : `${exportStartMonth}-a-${exportEndMonth}`}`
+          : '-todos-periodos'
+
+      const fileName = `lancamentos-${safeName}${safePeriodPart}-${yyyy}${mm}${dd}.xlsx`
 
       exportTransactionsToXlsx(formatted, fileName)
       toast.dismiss(toastId)
       toast.success(
-        `Planilha exportada com sucesso! ${formatted.length} transações salvas em ${fileName}.`,
+        `Planilha exportada com sucesso! ${formatted.length} lançamento${formatted.length > 1 ? 's' : ''} (${periodLabel}) salvo${formatted.length > 1 ? 's' : ''} em ${fileName}.`,
+        { duration: 6000 },
       )
+      setIsExportDialogOpen(false)
     } catch (err: any) {
       toast.dismiss(toastId)
       console.error('Erro ao exportar transações:', err)
@@ -1659,7 +1746,7 @@ export default function Importar() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
-            onClick={handleExportTransactions}
+            onClick={() => setIsExportDialogOpen(true)}
             disabled={isExporting}
             className="rounded-xl h-10 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold"
           >
@@ -2547,6 +2634,153 @@ export default function Importar() {
           </div>
         </div>
       </div>
+
+      {/* Modal / Dialog de Exportação com Seleção de Período */}
+      <Dialog open={isExportDialogOpen} onOpenChange={setIsExportDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <Download className="w-5 h-5 text-emerald-600" />
+              <span>Exportar para Planilha (.xlsx)</span>
+            </DialogTitle>
+            <DialogDescription className="text-slate-500 text-xs pt-1">
+              Escolha se deseja exportar todas as transações cadastradas no controle ou apenas as de
+              um período específico.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            {/* Opções de período */}
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-slate-700">Período de Exportação</Label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setExportPeriodType('all')}
+                  className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                    exportPeriodType === 'all'
+                      ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs">Todos os períodos</span>
+                    {exportPeriodType === 'all' && (
+                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    )}
+                  </div>
+                  <span className="text-[11px] text-slate-500">Histórico completo do controle</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setExportPeriodType('custom')}
+                  className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                    exportPeriodType === 'custom'
+                      ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs">Período Específico</span>
+                    {exportPeriodType === 'custom' && (
+                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    )}
+                  </div>
+                  <span className="text-[11px] text-slate-500">Filtrar por mês ou intervalo</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Campos de mês quando customizado */}
+            {exportPeriodType === 'custom' && (
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3 animate-fade-in">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label
+                      htmlFor="exportStartMonth"
+                      className="text-[11px] font-semibold text-slate-700 mb-1 block"
+                    >
+                      Mês Início
+                    </Label>
+                    <Input
+                      id="exportStartMonth"
+                      type="month"
+                      value={exportStartMonth}
+                      onChange={(e) => setExportStartMonth(e.target.value)}
+                      className="h-9 text-xs bg-white border-slate-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <Label
+                      htmlFor="exportEndMonth"
+                      className="text-[11px] font-semibold text-slate-700 mb-1 block"
+                    >
+                      Mês Fim
+                    </Label>
+                    <Input
+                      id="exportEndMonth"
+                      type="month"
+                      value={exportEndMonth}
+                      onChange={(e) => setExportEndMonth(e.target.value)}
+                      className="h-9 text-xs bg-white border-slate-300 rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-500 flex items-center gap-1.5 pt-0.5">
+                  <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span>
+                    Para exportar apenas um único mês, selecione o mesmo mês no início e no fim.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Formato de compatibilidade */}
+            <div className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 flex items-start gap-2">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <span>
+                O arquivo gerado inclui todas as colunas necessárias para reimportação: Data,
+                Descrição, Valor, Meio de Pagamento, Categoria, Subcategoria, Tipo, Parcelas,
+                Recorrência e Pago.
+              </span>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsExportDialogOpen(false)}
+              disabled={isExporting}
+              className="rounded-xl h-10 text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleExportTransactions}
+              disabled={isExporting}
+              className="rounded-xl h-10 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold text-xs"
+            >
+              {isExporting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Gerando Planilha...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  <span>Baixar Planilha (.xlsx)</span>
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
