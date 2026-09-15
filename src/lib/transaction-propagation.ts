@@ -729,12 +729,12 @@ async function handleInstallmentPropagation({
       const baseDate = formData.date
 
       const installmentLimiter = new AdaptiveRateLimiter({
-        initialIntervalMs: 200,
-        minIntervalMs: 120,
-        maxIntervalMs: 4000,
+        initialIntervalMs: 450,
+        minIntervalMs: 300,
+        maxIntervalMs: 20000,
         backoffFactor: 2.0,
         recoveryFactor: 0.9,
-        successThresholdForRecovery: 5,
+        successThresholdForRecovery: 6,
       })
       try {
         const newlyCreated = await runInPool(
@@ -782,7 +782,7 @@ async function handleInstallmentPropagation({
               7,
               1000,
               'CREATE_INSTALLMENT',
-              30000,
+              20000,
               { rateLimiter: installmentLimiter },
             )
             return {
@@ -810,7 +810,7 @@ async function handleInstallmentPropagation({
             } as Transaction
           },
           {
-            concurrency: 2,
+            concurrency: 1,
             delayBetweenBatchesMs: 50,
             rateLimiter: installmentLimiter,
             tag: 'CREATE_INSTALLMENT',
@@ -1181,12 +1181,12 @@ async function handleRecurringPropagation({
         // - payment_date nunca vazio (cai para date)
         // - Execução com retry anti-429 resiliente
         const missingRecurringLimiter = new AdaptiveRateLimiter({
-          initialIntervalMs: 200,
-          minIntervalMs: 120,
-          maxIntervalMs: 4000,
+          initialIntervalMs: 450,
+          minIntervalMs: 300,
+          maxIntervalMs: 20000,
           backoffFactor: 2.0,
           recoveryFactor: 0.9,
-          successThresholdForRecovery: 5,
+          successThresholdForRecovery: 6,
         })
         try {
           const newlyCreated = await runInPool(
@@ -1231,7 +1231,7 @@ async function handleRecurringPropagation({
                 7,
                 1000,
                 'CREATE_MISSING_RECURRING',
-                30000,
+                20000,
                 { rateLimiter: missingRecurringLimiter },
               )
 
@@ -1260,11 +1260,11 @@ async function handleRecurringPropagation({
               return mapped
             },
             {
-              concurrency: 2,
+              concurrency: 1,
               delayBetweenBatchesMs: 50,
               maxRetries: 7,
               baseDelayMs: 1000,
-              maxDelayMs: 30000,
+              maxDelayMs: 20000,
               rateLimiter: missingRecurringLimiter,
               tag: 'CREATE_MISSING_RECURRING',
             },

@@ -48,12 +48,12 @@ export async function createPlannedTransactionsInPool({
     await import('@/lib/pocketbase/retry')
 
   const rateLimiter = new AdaptiveRateLimiter({
-    initialIntervalMs: 200,
-    minIntervalMs: 120,
-    maxIntervalMs: 4000,
+    initialIntervalMs: 450,
+    minIntervalMs: 300,
+    maxIntervalMs: 20000,
     backoffFactor: 2.0,
     recoveryFactor: 0.9,
-    successThresholdForRecovery: 5,
+    successThresholdForRecovery: 6,
   })
 
   const created: Transaction[] = []
@@ -124,7 +124,7 @@ export async function createPlannedTransactionsInPool({
             7,
             1000,
             'CREATE_PLANNED_TX',
-            30000,
+            20000,
             { rateLimiter },
           )
 
@@ -172,11 +172,11 @@ export async function createPlannedTransactionsInPool({
         }
       },
       {
-        concurrency: 2,
+        concurrency: 1,
         delayBetweenBatchesMs: 50,
         maxRetries: 7,
         baseDelayMs: 1000,
-        maxDelayMs: 30000,
+        maxDelayMs: 20000,
         rateLimiter,
         tag: 'CREATE_PLANNED_POOL',
         onProgress,

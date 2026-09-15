@@ -460,15 +460,15 @@ export default function TransactionsPage() {
     const toastId = toast.loading('Analisando lançamentos recorrentes...')
 
     // Rate limiter adaptativo dedicado ao fluxo de geração de recorrências:
-    // Concorrência 2, espaçamento preventivo inicial 200ms, min 120ms, max 4000ms,
-    // desaceleração ao 429 e aceleração progressiva após 5 sucessos
+    // Concorrência 1 (estritamente serializado), espaçamento preventivo conservador de 450ms inicial,
+    // minIntervalMs de 300ms, maxIntervalMs até 20000ms, pausa mínima de 3s até 20s ao 429 e aceleração progressiva
     const generationRateLimiter = new AdaptiveRateLimiter({
-      initialIntervalMs: 200,
-      minIntervalMs: 120,
-      maxIntervalMs: 4000,
+      initialIntervalMs: 450,
+      minIntervalMs: 300,
+      maxIntervalMs: 20000,
       backoffFactor: 2.0,
       recoveryFactor: 0.9,
-      successThresholdForRecovery: 5,
+      successThresholdForRecovery: 6,
     })
 
     try {
@@ -606,11 +606,11 @@ export default function TransactionsPage() {
           }
         },
         {
-          concurrency: 2,
+          concurrency: 1,
           delayBetweenBatchesMs: 50,
           maxRetries: 7,
           baseDelayMs: 1000,
-          maxDelayMs: 30000,
+          maxDelayMs: 20000,
           rateLimiter: generationRateLimiter,
           tag: 'GERAR_RECORRENTES_POOL',
           onProgress: (done, total) => {
