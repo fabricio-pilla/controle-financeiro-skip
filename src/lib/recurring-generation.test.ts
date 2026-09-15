@@ -1182,5 +1182,79 @@ describe('recurring-generation engine', () => {
       // Nenhuma ocorrência futura deve ser gerada para seeds sem descrição
       expect(planned).toHaveLength(0)
     })
+
+    it('fluxo de geração em massa para próximos 12 meses planeja apenas recorrências e ignora lançamentos parcelados', () => {
+      // 1 lançamento recorrente mensal
+      const recurringTx: Transaction = {
+        id: 'tx_rec_mensal',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 120,
+        description: 'Assinatura Software',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-10 00:00:00.000Z',
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-09-10',
+      }
+
+      // 1 lançamento parcelado (filha do mês atual, ex: parcela 2/10)
+      const installmentTx: Transaction = {
+        id: 'tx_inst_2',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 250,
+        description: 'Notebook Dell (2/10)',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-09-15 00:00:00.000Z',
+        installment_number: 2,
+        installments_total: 10,
+        created_at: '2026-09-15',
+      }
+
+      // 1 lançamento parcelado pai consolidado
+      const installmentParentTx: Transaction = {
+        id: 'tx_inst_parent',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 2500,
+        description: 'Notebook Dell',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-08-15 00:00:00.000Z',
+        installment_number: 0,
+        installments_total: 10,
+        created_at: '2026-08-15',
+      }
+
+      // Ao rodar a geração do botão (planNextRecurringTransactions)
+      const allCompanyTxs = [recurringTx, installmentTx, installmentParentTx]
+      const currentMonthTxs = [recurringTx, installmentTx]
+
+      const planned = planNextRecurringTransactions({
+        allTransactions: allCompanyTxs,
+        currentMonthTransactions: currentMonthTxs,
+        existingTransactions: allCompanyTxs,
+        currentCompanyId: 'comp_1',
+        currentUserId: 'u_1',
+        currentYear: 2026,
+        currentMonth: 9,
+      })
+
+      // Deve planejar apenas as 12 ocorrências da recorrência
+      expect(planned).toHaveLength(12)
+      expect(planned.every((item) => item.description === 'Assinatura Software')).toBe(true)
+      expect(planned.every((item) => item.is_recurring === true)).toBe(true)
+
+      // Nenhuma parcela deve ser planejada
+      expect(planned.some((item) => item.description.includes('Notebook Dell'))).toBe(false)
+      expect(planned.some((item) => Number(item.installment_total || 0) > 1)).toBe(false)
+    })
   })
 })
