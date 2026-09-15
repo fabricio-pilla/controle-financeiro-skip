@@ -854,6 +854,7 @@ export function planNextRecurringTransactions({
   currentUserId,
   currentYear,
   currentMonth,
+  allowGenericDescription = true,
 }: {
   allTransactions?: Transaction[]
   currentMonthTransactions?: Transaction[]
@@ -862,21 +863,41 @@ export function planNextRecurringTransactions({
   currentUserId: string
   currentYear: number
   currentMonth: number
+  allowGenericDescription?: boolean
 }): RecurringGenerationCandidate[] {
-  // Coletar a base de candidatos: pode vir de allTransactions (preferencial) ou currentMonthTransactions (fallback de compatibilidade)
-  const candidatePool =
-    allTransactions && allTransactions.length > 0
-      ? allTransactions
-      : currentMonthTransactions || existingTransactions
+  // A semente da geração deve vir exclusivamente dos lançamentos do mês atual (mês corrente).
+  // Se currentMonthTransactions for fornecido, usamos ele.
+  // Caso contrário, se allTransactions for fornecido, filtramos apenas as transações do mês corrente (currentYM).
+  const currentYM = getYearMonth(currentYear, currentMonth)
+  const candidatePool = currentMonthTransactions
+    ? currentMonthTransactions
+    : (allTransactions || existingTransactions).filter((t) => {
+        if (!t.date) return false
+        const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
+        return cleanDateOnly.startsWith(currentYM)
+      })
 
-  // 1. Filtrar seeds recorrentes
-  // Transações sem descrição ("Sem descrição" ou vazia) NÃO devem autogerar séries no background
+  // 1. Filtrar seeds recorrentes do mês corrente
+  // - Apenas do controle atual
+  // - Data dentro do mês corrente (garantido pelo candidatePool filtrado pelo mês corrente)
+  // - Recorrência efetiva: is_recurring || recurring || recurrence_type preenchido || recurrence_period preenchido
+  // - Não é pai consolidado de parcelamento
+  // - Se allowGenericDescription for false (ex: chamadas de background automáticas), ignora "Sem descrição"
+  //   Para o clique explícito do usuário no botão, allowGenericDescription é true por padrão.
   const recurringSeeds = candidatePool.filter((t) => {
     if (t.control_id !== currentCompanyId) return false
+    if (!t.date) return false
+    const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
+    if (!cleanDateOnly.startsWith(currentYM)) return false
+
     const isRec = Boolean(
-      t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
+      t.is_recurring ||
+      t.recurring ||
+      (t.recurrence_type && String(t.recurrence_type).trim() !== '') ||
+      Boolean((t as any).recurrence_period && String((t as any).recurrence_period).trim() !== ''),
     )
     if (!isRec) return false
+
     // Não é pai consolidado de parcelamento
     if (
       (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
@@ -884,10 +905,14 @@ export function planNextRecurringTransactions({
     ) {
       return false
     }
-    const cleanD = cleanDescription(t.description || '')
-      .trim()
-      .toLowerCase()
-    if (!cleanD || cleanD === 'sem descrição' || cleanD === 'sem descricao') return false
+
+    if (!allowGenericDescription) {
+      const cleanD = cleanDescription(t.description || '')
+        .trim()
+        .toLowerCase()
+      if (!cleanD || cleanD === 'sem descrição' || cleanD === 'sem descricao') return false
+    }
+
     return true
   })
 
@@ -923,7 +948,6 @@ export function planNextRecurringTransactions({
   }
 
   const planned: RecurringGenerationCandidate[] = []
-  const currentYM = getYearMonth(currentYear, currentMonth)
 
   // 4. Para cada série única, gerar 12 meses futuros
   for (const seed of canonicalMap.values()) {

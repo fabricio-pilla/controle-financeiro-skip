@@ -110,8 +110,17 @@ describe('recurring-generation engine', () => {
       expect(candidates[0].date).toBe('2026-11-10 00:00:00.000Z')
     })
 
-    it('picks recurring transactions from past and future months when allTransactions is provided', () => {
-      // Transação em OUTUBRO/2026 (mês futuro em relação a setembro/2026)
+    it('picks seeds EXCLUSIVELY from the current month (ignores past and future recurring seeds)', () => {
+      // Transação em SETEMBRO/2026 (MÊS ATUAL)
+      const currentMonthSeed: Transaction = {
+        ...mockSeed,
+        id: 'tx_rec_current',
+        description: 'Assinatura Spotify',
+        amount: 34.9,
+        date: '2026-09-05 00:00:00.000Z',
+      }
+
+      // Transação em OUTUBRO/2026 (mês futuro em relação a setembro/2026 - não deve ser semente)
       const futureSeed: Transaction = {
         ...mockSeed,
         id: 'tx_rec_oct_seed',
@@ -121,7 +130,7 @@ describe('recurring-generation engine', () => {
         date: '2026-10-01 00:00:00.000Z',
       }
 
-      // Transação em AGOSTO/2026 (mês passado em relação a setembro/2026)
+      // Transação em AGOSTO/2026 (mês passado em relação a setembro/2026 - não deve ser semente)
       const pastSeed: Transaction = {
         ...mockSeed,
         id: 'tx_rec_past',
@@ -131,25 +140,23 @@ describe('recurring-generation engine', () => {
       }
 
       const candidates = planNextRecurringTransactions({
-        allTransactions: [futureSeed, pastSeed],
-        existingTransactions: [futureSeed, pastSeed],
+        allTransactions: [currentMonthSeed, futureSeed, pastSeed],
+        existingTransactions: [currentMonthSeed, futureSeed, pastSeed],
         currentCompanyId: 'ctrl_1',
         currentUserId: 'usr_1',
         currentYear: 2026,
         currentMonth: 9, // Mês atual = setembro/2026
       })
 
-      // Deve gerar 12 ocorrências para Vale Alimentação (começando em novembro/2026)
-      const vaCandidates = candidates.filter((c) => c.description === 'Vale Alimentação')
-      expect(vaCandidates.length).toBe(12)
-      expect(vaCandidates[0].date).toBe('2026-11-01 00:00:00.000Z')
-      expect(vaCandidates[11].date).toBe('2027-10-01 00:00:00.000Z')
+      // Apenas a semente do mês atual (Assinatura Spotify) deve ter ocorrências geradas
+      expect(candidates.length).toBe(12)
+      expect(candidates.every((c) => c.description === 'Assinatura Spotify')).toBe(true)
+      expect(candidates[0].date).toBe('2026-10-05 00:00:00.000Z')
+      expect(candidates[11].date).toBe('2027-09-05 00:00:00.000Z')
 
-      // Deve gerar 12 ocorrências para Internet Fibra (começando no mês seguinte ao atual: outubro/2026)
-      const internetCandidates = candidates.filter((c) => c.description === 'Internet Fibra')
-      expect(internetCandidates.length).toBe(12)
-      expect(internetCandidates[0].date).toBe('2026-10-05 00:00:00.000Z')
-      expect(internetCandidates[11].date).toBe('2027-09-05 00:00:00.000Z')
+      // Nenhuma ocorrência para Vale Alimentação ou Internet Fibra pois não estão no mês atual
+      expect(candidates.some((c) => c.description === 'Vale Alimentação')).toBe(false)
+      expect(candidates.some((c) => c.description === 'Internet Fibra')).toBe(false)
     })
   })
 
@@ -1139,7 +1146,7 @@ describe('recurring-generation engine', () => {
       }
     })
 
-    it('planNextRecurringTransactions ignora seeds com descrição genérica/vazia ("Sem descrição")', () => {
+    it('planNextRecurringTransactions ignora seeds com descrição genérica quando allowGenericDescription for false, mas aceita quando true', () => {
       const genericSeed: Transaction = {
         id: 'seed_generic',
         control_id: 'comp_1',
@@ -1170,17 +1177,29 @@ describe('recurring-generation engine', () => {
         created_at: '2026-09-08',
       }
 
-      const planned = planNextRecurringTransactions({
+      // Quando allowGenericDescription: false (ex: geração estrita em segundo plano)
+      const plannedStrict = planNextRecurringTransactions({
         currentMonthTransactions: [genericSeed, emptySeed],
         existingTransactions: [genericSeed, emptySeed],
         currentCompanyId: 'comp_1',
         currentUserId: 'u_1',
         currentYear: 2026,
         currentMonth: 9,
+        allowGenericDescription: false,
       })
+      expect(plannedStrict).toHaveLength(0)
 
-      // Nenhuma ocorrência futura deve ser gerada para seeds sem descrição
-      expect(planned).toHaveLength(0)
+      // Quando acionado pelo usuário (allowGenericDescription: true, padrão), gera normalmente
+      const plannedExplicit = planNextRecurringTransactions({
+        currentMonthTransactions: [genericSeed],
+        existingTransactions: [genericSeed],
+        currentCompanyId: 'comp_1',
+        currentUserId: 'u_1',
+        currentYear: 2026,
+        currentMonth: 9,
+        allowGenericDescription: true,
+      })
+      expect(plannedExplicit).toHaveLength(12)
     })
 
     it('fluxo de geração em massa para próximos 12 meses planeja apenas recorrências e ignora lançamentos parcelados', () => {
@@ -1255,6 +1274,58 @@ describe('recurring-generation engine', () => {
       // Nenhuma parcela deve ser planejada
       expect(planned.some((item) => item.description.includes('Notebook Dell'))).toBe(false)
       expect(planned.some((item) => Number(item.installment_total || 0) > 1)).toBe(false)
+    })
+
+    it('ignora lançamentos recorrentes fora do mês atual mesmo que existam no controle', () => {
+      // Recorrência criada em mês passado
+      const pastRec: Transaction = {
+        id: 'tx_rec_past_only',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 80,
+        description: 'Streaming de Vídeo',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-08-10 00:00:00.000Z',
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-08-10',
+      }
+
+      // Recorrência criada em mês futuro
+      const futureRec: Transaction = {
+        id: 'tx_rec_future_only',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 150,
+        description: 'Plano Celular Novo',
+        category_id: 'cat_1',
+        account_id: 'acc_1',
+        date: '2026-10-10 00:00:00.000Z',
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-10-10',
+      }
+
+      const allCompanyTxs = [pastRec, futureRec]
+
+      // Mês atual é 2026-09 e não tem nenhuma transação recorrente nele
+      const planned = planNextRecurringTransactions({
+        allTransactions: allCompanyTxs,
+        currentMonthTransactions: [],
+        existingTransactions: allCompanyTxs,
+        currentCompanyId: 'comp_1',
+        currentUserId: 'u_1',
+        currentYear: 2026,
+        currentMonth: 9,
+      })
+
+      // Nenhuma ocorrência deve ser gerada pois não há sementes no mês atual
+      expect(planned).toHaveLength(0)
     })
   })
 })

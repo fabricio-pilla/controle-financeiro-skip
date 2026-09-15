@@ -480,22 +480,37 @@ export default function TransactionsPage() {
       // Filtrar todas as transações do controle atual
       const companyTxs = transactions.filter((t) => t.control_id === currentCompany.id)
 
-      // Transações do mês atual
-      const currentMonthTxs = companyTxs.filter((t) => t.date && t.date.startsWith(currentYM))
+      // Transações do mês atual (mês corrente do calendário real, com normalização de data)
+      const currentMonthTxs = companyTxs.filter((t) => {
+        if (!t.date) return false
+        const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
+        return cleanDateOnly.startsWith(currentYM)
+      })
 
-      // Identificar se há alguma recorrência no controle
-      const hasAnyRecurring = companyTxs.some((t) =>
-        Boolean(
-          t.is_recurring || t.recurring || (t.recurrence_type && t.recurrence_type.trim() !== ''),
-        ),
-      )
-
-      if (!hasAnyRecurring) {
-        toast.dismiss(toastId)
-        toast.info(
-          `Nenhum lançamento recorrente encontrado para ser projetado. Adicione lançamentos recorrentes antes de gerar os futuros.`,
-          { duration: 6000 },
+      // Identificar se há algum lançamento recorrente efetivo especificamente no MÊS ATUAL
+      // Exclui pais consolidados de parcelamento (installment_number=0 com installment_total > 1)
+      const currentMonthRecurringSeeds = currentMonthTxs.filter((t) => {
+        const isRec = Boolean(
+          t.is_recurring ||
+          t.recurring ||
+          (t.recurrence_type && String(t.recurrence_type).trim() !== '') ||
+          Boolean(
+            (t as any).recurrence_period && String((t as any).recurrence_period).trim() !== '',
+          ),
         )
+        if (!isRec) return false
+        if (
+          (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
+          Number(t.installments_total || (t as any).installment_total || 0) > 1
+        ) {
+          return false
+        }
+        return true
+      })
+
+      if (currentMonthRecurringSeeds.length === 0) {
+        toast.dismiss(toastId)
+        toast.info('Nenhum lançamento recorrente no mês atual para gerar', { duration: 6000 })
         return
       }
 
@@ -503,16 +518,18 @@ export default function TransactionsPage() {
 
       // ----------------------------------------------------
       // PLANEJAMENTO PURO EM MEMÓRIA (Sem chamadas adicionais de rede)
-      // APENAS RECORRÊNCIAS (varre todas as recorrências do controle, incluindo futuras e passadas)
+      // Semente EXCLUSIVAMENTE dos lançamentos recorrentes do MÊS ATUAL
+      // Gera as próximas 12 ocorrências mensais a partir do mês seguinte
       // ----------------------------------------------------
       const plannedRecurring = planNextRecurringTransactions({
         allTransactions: companyTxs,
-        currentMonthTransactions: currentMonthTxs,
+        currentMonthTransactions: currentMonthRecurringSeeds,
         existingTransactions: transactions,
         currentCompanyId: currentCompany.id,
         currentUserId,
         currentYear,
         currentMonth,
+        allowGenericDescription: true,
       })
 
       const totalPlanned = plannedRecurring.length
