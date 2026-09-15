@@ -1,7 +1,7 @@
 import { Transaction, TransactionType, RecurrenceType } from '@/types/database'
 import pb from '@/lib/pocketbase/client'
 import { skipCloud } from '@/lib/skip-cloud'
-import { executeWithRetry, runInPool } from '@/lib/pocketbase/retry'
+import { AdaptiveRateLimiter, executeWithRetry, runInPool } from '@/lib/pocketbase/retry'
 import { PropagationChoice } from '@/components/transactions/RecurrencePropagationModal'
 import { computeTargetDate, parseDateParts } from '@/lib/recurring-generation'
 
@@ -728,80 +728,98 @@ async function handleInstallmentPropagation({
       const userId = transaction.user_id || (pb.authStore.model as any)?.id || ''
       const baseDate = formData.date
 
-      const newlyCreated = await runInPool(
-        missingIndexes,
-        async (i) => {
-          const diffMonths = i - currentNum
-          const parcelDate = addMonths(baseDate, diffMonths)
-          const parcelDesc = `${newBaseDesc} (${i}/${newTotal})`
+      const installmentLimiter = new AdaptiveRateLimiter({
+        initialIntervalMs: 200,
+        minIntervalMs: 120,
+        maxIntervalMs: 4000,
+        backoffFactor: 2.0,
+        recoveryFactor: 0.9,
+        successThresholdForRecovery: 5,
+      })
+      try {
+        const newlyCreated = await runInPool(
+          missingIndexes,
+          async (i) => {
+            const diffMonths = i - currentNum
+            const parcelDate = addMonths(baseDate, diffMonths)
+            const parcelDesc = `${newBaseDesc} (${i}/${newTotal})`
 
-          const payload: Record<string, any> = {
-            control_id: transaction.control_id,
-            type: formData.type,
-            amount: formData.amount,
-            description: parcelDesc,
-            date: parcelDate,
-            payment_date: addMonths(formData.payment_date || formData.date, diffMonths),
-            paid: false, // Future created parcels default to pending
-            is_recurring: false,
-            installments_total: newTotal,
-            installment_total: newTotal,
-            installment_number: i,
-          }
+            const payload: Record<string, any> = {
+              control_id: transaction.control_id,
+              type: formData.type,
+              amount: formData.amount,
+              description: parcelDesc,
+              date: parcelDate,
+              payment_date: addMonths(formData.payment_date || formData.date, diffMonths),
+              paid: false, // Future created parcels default to pending
+              is_recurring: false,
+              installments_total: newTotal,
+              installment_total: newTotal,
+              installment_number: i,
+            }
 
-          if (userId && userId.trim() !== '') {
-            payload.user_id = userId.trim()
-          }
-          if (formData.category_id && formData.category_id.trim() !== '') {
-            payload.category_id = formData.category_id.trim()
-          }
-          if (formData.subcategory_id && formData.subcategory_id.trim() !== '') {
-            payload.subcategory_id = formData.subcategory_id.trim()
-          }
-          if (formData.account_id && formData.account_id.trim() !== '') {
-            payload.account_id = formData.account_id.trim()
-          }
-          if (parentId && parentId.trim() !== '') {
-            payload.parent_transaction_id = parentId.trim()
-          }
-          if (formData.notes && formData.notes.trim() !== '') {
-            payload.notes = formData.notes.trim()
-          }
+            if (userId && userId.trim() !== '') {
+              payload.user_id = userId.trim()
+            }
+            if (formData.category_id && formData.category_id.trim() !== '') {
+              payload.category_id = formData.category_id.trim()
+            }
+            if (formData.subcategory_id && formData.subcategory_id.trim() !== '') {
+              payload.subcategory_id = formData.subcategory_id.trim()
+            }
+            if (formData.account_id && formData.account_id.trim() !== '') {
+              payload.account_id = formData.account_id.trim()
+            }
+            if (parentId && parentId.trim() !== '') {
+              payload.parent_transaction_id = parentId.trim()
+            }
+            if (formData.notes && formData.notes.trim() !== '') {
+              payload.notes = formData.notes.trim()
+            }
 
-          const rec = await executeWithRetry(
-            () => pb.collection('transactions').create(payload),
-            7,
-            1000,
-            'CREATE_INSTALLMENT',
-            30000,
-          )
-          return {
-            id: rec.id,
-            control_id: rec.control_id,
-            user_id: rec.user_id,
-            type: rec.type,
-            amount: Number(rec.amount),
-            description: rec.description,
-            category_id: rec.category_id,
-            subcategory_id: rec.subcategory_id,
-            account_id: rec.account_id,
-            date: rec.date ? String(rec.date).split(/[T\s]/)[0] : parcelDate,
-            payment_date: rec.payment_date
-              ? String(rec.payment_date).split(/[T\s]/)[0]
-              : addMonths(formData.payment_date || formData.date, diffMonths),
-            paid: false,
-            is_recurring: false,
-            recurrence_type: undefined,
-            installment_number: rec.installment_number || i,
-            installments_total: rec.installment_total || rec.installments_total || newTotal,
-            parent_transaction_id: rec.parent_transaction_id || parentId,
-            notes: rec.notes,
-            created_at: rec.created,
-          } as Transaction
-        },
-        { concurrency: 4, delayBetweenBatchesMs: 20, tag: 'CREATE_INSTALLMENT' },
-      )
-      createdItems.push(...newlyCreated)
+            const rec = await executeWithRetry(
+              () => pb.collection('transactions').create(payload),
+              7,
+              1000,
+              'CREATE_INSTALLMENT',
+              30000,
+              { rateLimiter: installmentLimiter },
+            )
+            return {
+              id: rec.id,
+              control_id: rec.control_id,
+              user_id: rec.user_id,
+              type: rec.type,
+              amount: Number(rec.amount),
+              description: rec.description,
+              category_id: rec.category_id,
+              subcategory_id: rec.subcategory_id,
+              account_id: rec.account_id,
+              date: rec.date ? String(rec.date).split(/[T\s]/)[0] : parcelDate,
+              payment_date: rec.payment_date
+                ? String(rec.payment_date).split(/[T\s]/)[0]
+                : addMonths(formData.payment_date || formData.date, diffMonths),
+              paid: false,
+              is_recurring: false,
+              recurrence_type: undefined,
+              installment_number: rec.installment_number || i,
+              installments_total: rec.installment_total || rec.installments_total || newTotal,
+              parent_transaction_id: rec.parent_transaction_id || parentId,
+              notes: rec.notes,
+              created_at: rec.created,
+            } as Transaction
+          },
+          {
+            concurrency: 2,
+            delayBetweenBatchesMs: 50,
+            rateLimiter: installmentLimiter,
+            tag: 'CREATE_INSTALLMENT',
+          },
+        )
+        createdItems.push(...newlyCreated)
+      } finally {
+        installmentLimiter.destroy()
+      }
     }
   }
 
@@ -1162,82 +1180,99 @@ async function handleRecurringPropagation({
         // - user_id só enviado se não for vazio
         // - payment_date nunca vazio (cai para date)
         // - Execução com retry anti-429 resiliente
-        const newlyCreated = await runInPool(
-          candidatesToCreate,
-          async (candidate) => {
-            const payload: Record<string, any> = {
-              control_id: candidate.control_id,
-              type: candidate.type,
-              amount: candidate.amount,
-              description: candidate.description,
-              date: candidate.date,
-              payment_date: candidate.payment_date || candidate.date,
-              paid: false,
-              is_recurring: true,
-              recurrence_type: candidate.recurrence_type || effectiveRecurrenceType || 'mensal',
-            }
+        const missingRecurringLimiter = new AdaptiveRateLimiter({
+          initialIntervalMs: 200,
+          minIntervalMs: 120,
+          maxIntervalMs: 4000,
+          backoffFactor: 2.0,
+          recoveryFactor: 0.9,
+          successThresholdForRecovery: 5,
+        })
+        try {
+          const newlyCreated = await runInPool(
+            candidatesToCreate,
+            async (candidate) => {
+              const payload: Record<string, any> = {
+                control_id: candidate.control_id,
+                type: candidate.type,
+                amount: candidate.amount,
+                description: candidate.description,
+                date: candidate.date,
+                payment_date: candidate.payment_date || candidate.date,
+                paid: false,
+                is_recurring: true,
+                recurrence_type: candidate.recurrence_type || effectiveRecurrenceType || 'mensal',
+              }
 
-            if (candidate.user_id && candidate.user_id.trim() !== '') {
-              payload.user_id = candidate.user_id.trim()
-            }
-            if (candidate.category_id && candidate.category_id.trim() !== '') {
-              payload.category_id = candidate.category_id.trim()
-            }
-            if (candidate.subcategory_id && candidate.subcategory_id.trim() !== '') {
-              payload.subcategory_id = candidate.subcategory_id.trim()
-            }
-            if (candidate.account_id && candidate.account_id.trim() !== '') {
-              payload.account_id = candidate.account_id.trim()
-            }
-            if (candidate.parent_transaction_id && candidate.parent_transaction_id.trim() !== '') {
-              payload.parent_transaction_id = candidate.parent_transaction_id.trim()
-            }
-            if (candidate.notes && candidate.notes.trim() !== '') {
-              payload.notes = candidate.notes.trim()
-            }
+              if (candidate.user_id && candidate.user_id.trim() !== '') {
+                payload.user_id = candidate.user_id.trim()
+              }
+              if (candidate.category_id && candidate.category_id.trim() !== '') {
+                payload.category_id = candidate.category_id.trim()
+              }
+              if (candidate.subcategory_id && candidate.subcategory_id.trim() !== '') {
+                payload.subcategory_id = candidate.subcategory_id.trim()
+              }
+              if (candidate.account_id && candidate.account_id.trim() !== '') {
+                payload.account_id = candidate.account_id.trim()
+              }
+              if (
+                candidate.parent_transaction_id &&
+                candidate.parent_transaction_id.trim() !== ''
+              ) {
+                payload.parent_transaction_id = candidate.parent_transaction_id.trim()
+              }
+              if (candidate.notes && candidate.notes.trim() !== '') {
+                payload.notes = candidate.notes.trim()
+              }
 
-            const rec = await executeWithRetry(
-              () => pb.collection('transactions').create(payload),
-              7,
-              1000,
-              'CREATE_MISSING_RECURRING',
-              30000,
-            )
+              const rec = await executeWithRetry(
+                () => pb.collection('transactions').create(payload),
+                7,
+                1000,
+                'CREATE_MISSING_RECURRING',
+                30000,
+                { rateLimiter: missingRecurringLimiter },
+              )
 
-            const mapped: Transaction = {
-              id: rec.id,
-              control_id: rec.control_id || candidate.control_id,
-              user_id: rec.user_id || candidate.user_id,
-              type: rec.type,
-              amount: Number(rec.amount),
-              description: rec.description,
-              category_id: rec.category_id || '',
-              subcategory_id: rec.subcategory_id || undefined,
-              account_id: rec.account_id || '',
-              date: rec.date
-                ? String(rec.date).split(/[T\s]/)[0]
-                : candidate.date.split(/[T\s]/)[0],
-              payment_date: rec.payment_date
-                ? String(rec.payment_date).split(/[T\s]/)[0]
-                : candidate.payment_date,
-              paid: false,
-              is_recurring: true,
-              recurrence_type: rec.recurrence_type,
-              notes: rec.notes || undefined,
-              created_at: rec.created || new Date().toISOString(),
-            }
-            return mapped
-          },
-          {
-            concurrency: 2,
-            delayBetweenBatchesMs: 200,
-            maxRetries: 7,
-            baseDelayMs: 1000,
-            maxDelayMs: 30000,
-            tag: 'CREATE_MISSING_RECURRING',
-          },
-        )
-        createdItems.push(...newlyCreated)
+              const mapped: Transaction = {
+                id: rec.id,
+                control_id: rec.control_id || candidate.control_id,
+                user_id: rec.user_id || candidate.user_id,
+                type: rec.type,
+                amount: Number(rec.amount),
+                description: rec.description,
+                category_id: rec.category_id || '',
+                subcategory_id: rec.subcategory_id || undefined,
+                account_id: rec.account_id || '',
+                date: rec.date
+                  ? String(rec.date).split(/[T\s]/)[0]
+                  : candidate.date.split(/[T\s]/)[0],
+                payment_date: rec.payment_date
+                  ? String(rec.payment_date).split(/[T\s]/)[0]
+                  : candidate.payment_date,
+                paid: false,
+                is_recurring: true,
+                recurrence_type: rec.recurrence_type,
+                notes: rec.notes || undefined,
+                created_at: rec.created || new Date().toISOString(),
+              }
+              return mapped
+            },
+            {
+              concurrency: 2,
+              delayBetweenBatchesMs: 50,
+              maxRetries: 7,
+              baseDelayMs: 1000,
+              maxDelayMs: 30000,
+              rateLimiter: missingRecurringLimiter,
+              tag: 'CREATE_MISSING_RECURRING',
+            },
+          )
+          createdItems.push(...newlyCreated)
+        } finally {
+          missingRecurringLimiter.destroy()
+        }
       }
     }
   }

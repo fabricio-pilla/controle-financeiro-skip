@@ -15,7 +15,13 @@ import {
   deleteTransactionWithPropagation,
   isParentTransaction,
 } from '@/lib/transaction-propagation'
-import { executeWithRetry, is429Error, runInPool, sleep } from '@/lib/pocketbase/retry'
+import {
+  AdaptiveRateLimiter,
+  executeWithRetry,
+  is429Error,
+  runInPool,
+  sleep,
+} from '@/lib/pocketbase/retry'
 import pb from '@/lib/pocketbase/client'
 import { cleanDescription, planNextRecurringTransactions } from '@/lib/recurring-generation'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
@@ -453,6 +459,18 @@ export default function TransactionsPage() {
     setGenerationStepLabel('Analisando...')
     const toastId = toast.loading('Analisando lançamentos recorrentes...')
 
+    // Rate limiter adaptativo dedicado ao fluxo de geração de recorrências:
+    // Concorrência 2, espaçamento preventivo inicial 200ms, min 120ms, max 4000ms,
+    // desaceleração ao 429 e aceleração progressiva após 5 sucessos
+    const generationRateLimiter = new AdaptiveRateLimiter({
+      initialIntervalMs: 200,
+      minIntervalMs: 120,
+      maxIntervalMs: 4000,
+      backoffFactor: 2.0,
+      recoveryFactor: 0.9,
+      successThresholdForRecovery: 5,
+    })
+
     try {
       const now = new Date()
       const currentYear = now.getFullYear()
@@ -565,6 +583,7 @@ export default function TransactionsPage() {
               1000,
               'GerarRecorrentes',
               30000,
+              { rateLimiter: generationRateLimiter },
             )
 
             if (rec) {
@@ -588,10 +607,11 @@ export default function TransactionsPage() {
         },
         {
           concurrency: 2,
-          delayBetweenBatchesMs: 250,
+          delayBetweenBatchesMs: 50,
           maxRetries: 7,
           baseDelayMs: 1000,
           maxDelayMs: 30000,
+          rateLimiter: generationRateLimiter,
           tag: 'GERAR_RECORRENTES_POOL',
           onProgress: (done, total) => {
             setGenerationStepLabel(`Gerando recorrências (${done}/${total})`)
@@ -649,12 +669,15 @@ export default function TransactionsPage() {
       }
     } catch (err: any) {
       toast.dismiss(toastId)
-      console.warn(
-        '[handleGenerateNext12Months] Erro capturado no fluxo geral:',
-        err?.message || err,
-      )
+      if (!is429Error(err)) {
+        console.warn(
+          '[handleGenerateNext12Months] Erro capturado no fluxo geral:',
+          err?.message || err,
+        )
+      }
       toast.error(err?.message || 'Erro ao gerar lançamentos recorrentes.')
     } finally {
+      generationRateLimiter.destroy()
       setIsGeneratingRecurring(false)
       setGenerationStepLabel(null)
     }

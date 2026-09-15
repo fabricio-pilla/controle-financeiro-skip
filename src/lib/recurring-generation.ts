@@ -1,5 +1,6 @@
 import { Transaction, TransactionType, Account } from '@/types/database'
 import { calculatePaymentDate } from '@/lib/invoice-helper'
+import { is429Error } from '@/lib/pocketbase/retry'
 
 export interface RecurringGenerationCandidate {
   control_id: string
@@ -43,129 +44,147 @@ export async function createPlannedTransactionsInPool({
   }
 
   const pb = (await import('@/lib/pocketbase/client')).default
-  const { runInPool, executeWithRetry } = await import('@/lib/pocketbase/retry')
+  const { runInPool, executeWithRetry, AdaptiveRateLimiter } =
+    await import('@/lib/pocketbase/retry')
+
+  const rateLimiter = new AdaptiveRateLimiter({
+    initialIntervalMs: 200,
+    minIntervalMs: 120,
+    maxIntervalMs: 4000,
+    backoffFactor: 2.0,
+    recoveryFactor: 0.9,
+    successThresholdForRecovery: 5,
+  })
 
   const created: Transaction[] = []
   let failedCount = 0
 
-  await runInPool(
-    plannedItems,
-    async (item) => {
-      try {
-        // Sanitizar payload para o PocketBase:
-        // 1. Campos de relação (category_id, subcategory_id, account_id, credit_card_id, control_id)
-        //    NUNCA podem ser string vazia `""` — devem ser omitidos ou undefined.
-        // 2. payment_date e date devem ser datas válidas (YYYY-MM-DD ou ISO), nunca `""`.
-        // 3. user_id só deve ser enviado se não for vazio.
-        const payload: Record<string, any> = {
-          control_id: item.control_id,
-          type: item.type,
-          amount: item.amount,
-          description: item.description,
-          date: item.date,
-          paid: Boolean(item.paid),
-          is_recurring: Boolean(item.is_recurring),
-          recurring: Boolean(item.recurring || item.is_recurring),
-        }
+  try {
+    await runInPool(
+      plannedItems,
+      async (item) => {
+        try {
+          // Sanitizar payload para o PocketBase:
+          // 1. Campos de relação (category_id, subcategory_id, account_id, credit_card_id, control_id)
+          //    NUNCA podem ser string vazia `""` — devem ser omitidos ou undefined.
+          // 2. payment_date e date devem ser datas válidas (YYYY-MM-DD ou ISO), nunca `""`.
+          // 3. user_id só deve ser enviado se não for vazio.
+          const payload: Record<string, any> = {
+            control_id: item.control_id,
+            type: item.type,
+            amount: item.amount,
+            description: item.description,
+            date: item.date,
+            paid: Boolean(item.paid),
+            is_recurring: Boolean(item.is_recurring),
+            recurring: Boolean(item.recurring || item.is_recurring),
+          }
 
-        if (item.user_id && item.user_id.trim() !== '') {
-          payload.user_id = item.user_id.trim()
-        }
-        if (item.category_id && item.category_id.trim() !== '') {
-          payload.category_id = item.category_id.trim()
-        }
-        if (item.subcategory_id && item.subcategory_id.trim() !== '') {
-          payload.subcategory_id = item.subcategory_id.trim()
-        }
-        if (item.account_id && item.account_id.trim() !== '') {
-          payload.account_id = item.account_id.trim()
-        }
-        if (item.credit_card_id && item.credit_card_id.trim() !== '') {
-          payload.credit_card_id = item.credit_card_id.trim()
-        }
-        if (item.parent_transaction_id && item.parent_transaction_id.trim() !== '') {
-          payload.parent_transaction_id = item.parent_transaction_id.trim()
-        }
-        if (item.payment_date && item.payment_date.trim() !== '') {
-          payload.payment_date = item.payment_date.trim()
-        } else if (item.date) {
-          payload.payment_date = item.date
-        }
-        if (item.recurrence_type && item.recurrence_type.trim() !== '') {
-          payload.recurrence_type = item.recurrence_type.trim()
-        }
-        if (item.recurrence_period && item.recurrence_period.trim() !== '') {
-          payload.recurrence_period = item.recurrence_period.trim()
-        }
-        if (item.installment_number !== undefined && item.installment_number !== null) {
-          payload.installment_number = item.installment_number
-        }
-        if (item.installment_total !== undefined && item.installment_total !== null) {
-          payload.installment_total = item.installment_total
-        }
-        if (item.notes && item.notes.trim() !== '') {
-          payload.notes = item.notes.trim()
-        }
+          if (item.user_id && item.user_id.trim() !== '') {
+            payload.user_id = item.user_id.trim()
+          }
+          if (item.category_id && item.category_id.trim() !== '') {
+            payload.category_id = item.category_id.trim()
+          }
+          if (item.subcategory_id && item.subcategory_id.trim() !== '') {
+            payload.subcategory_id = item.subcategory_id.trim()
+          }
+          if (item.account_id && item.account_id.trim() !== '') {
+            payload.account_id = item.account_id.trim()
+          }
+          if (item.credit_card_id && item.credit_card_id.trim() !== '') {
+            payload.credit_card_id = item.credit_card_id.trim()
+          }
+          if (item.parent_transaction_id && item.parent_transaction_id.trim() !== '') {
+            payload.parent_transaction_id = item.parent_transaction_id.trim()
+          }
+          if (item.payment_date && item.payment_date.trim() !== '') {
+            payload.payment_date = item.payment_date.trim()
+          } else if (item.date) {
+            payload.payment_date = item.date
+          }
+          if (item.recurrence_type && item.recurrence_type.trim() !== '') {
+            payload.recurrence_type = item.recurrence_type.trim()
+          }
+          if (item.recurrence_period && item.recurrence_period.trim() !== '') {
+            payload.recurrence_period = item.recurrence_period.trim()
+          }
+          if (item.installment_number !== undefined && item.installment_number !== null) {
+            payload.installment_number = item.installment_number
+          }
+          if (item.installment_total !== undefined && item.installment_total !== null) {
+            payload.installment_total = item.installment_total
+          }
+          if (item.notes && item.notes.trim() !== '') {
+            payload.notes = item.notes.trim()
+          }
 
-        const rec = await executeWithRetry(
-          () => pb.collection('transactions').create(payload),
-          7,
-          1000,
-          'CREATE_PLANNED_TX',
-          30000,
-        )
+          const rec = await executeWithRetry(
+            () => pb.collection('transactions').create(payload),
+            7,
+            1000,
+            'CREATE_PLANNED_TX',
+            30000,
+            { rateLimiter },
+          )
 
-        if (rec) {
-          const r = rec as any
-          created.push({
-            id: r.id,
-            control_id: r.control_id || item.control_id,
-            user_id: r.user_id || item.user_id,
-            type: r.type,
-            amount: Number(r.amount),
-            description: r.description,
-            category_id: r.category_id || '',
-            subcategory_id: r.subcategory_id || undefined,
-            account_id: r.account_id || '',
-            date: r.date ? String(r.date).split(/[T\s]/)[0] : item.date.split(/[T\s]/)[0],
-            payment_date: r.payment_date
-              ? String(r.payment_date).split(/[T\s]/)[0]
-              : r.date
-                ? String(r.date).split(/[T\s]/)[0]
-                : item.date.split(/[T\s]/)[0],
-            paid: Boolean(r.paid),
-            is_recurring: Boolean(r.is_recurring),
-            recurring: Boolean(r.recurring || r.is_recurring),
-            recurrence_type: r.recurrence_type || undefined,
-            installment_number: r.installment_number ? Number(r.installment_number) : undefined,
-            installments_total: r.installment_total
-              ? Number(r.installment_total)
-              : r.installments_total
-                ? Number(r.installments_total)
-                : undefined,
-            parent_transaction_id: r.parent_transaction_id || undefined,
-            notes: r.notes || undefined,
-            created_at: r.created || new Date().toISOString(),
-          } as Transaction)
+          if (rec) {
+            const r = rec as any
+            created.push({
+              id: r.id,
+              control_id: r.control_id || item.control_id,
+              user_id: r.user_id || item.user_id,
+              type: r.type,
+              amount: Number(r.amount),
+              description: r.description,
+              category_id: r.category_id || '',
+              subcategory_id: r.subcategory_id || undefined,
+              account_id: r.account_id || '',
+              date: r.date ? String(r.date).split(/[T\s]/)[0] : item.date.split(/[T\s]/)[0],
+              payment_date: r.payment_date
+                ? String(r.payment_date).split(/[T\s]/)[0]
+                : r.date
+                  ? String(r.date).split(/[T\s]/)[0]
+                  : item.date.split(/[T\s]/)[0],
+              paid: Boolean(r.paid),
+              is_recurring: Boolean(r.is_recurring),
+              recurring: Boolean(r.recurring || r.is_recurring),
+              recurrence_type: r.recurrence_type || undefined,
+              installment_number: r.installment_number ? Number(r.installment_number) : undefined,
+              installments_total: r.installment_total
+                ? Number(r.installment_total)
+                : r.installments_total
+                  ? Number(r.installments_total)
+                  : undefined,
+              parent_transaction_id: r.parent_transaction_id || undefined,
+              notes: r.notes || undefined,
+              created_at: r.created || new Date().toISOString(),
+            } as Transaction)
+          }
+        } catch (err: any) {
+          if (!is429Error(err)) {
+            console.warn(
+              `[createPlannedTransactionsInPool] Falha ao criar lançamento "${item.description}":`,
+              err?.message || err,
+            )
+          }
+          failedCount++
         }
-      } catch (err: any) {
-        console.warn(
-          `[createPlannedTransactionsInPool] Falha ao criar lançamento "${item.description}":`,
-          err?.message || err,
-        )
-        failedCount++
-      }
-    },
-    {
-      concurrency: 2,
-      delayBetweenBatchesMs: 250,
-      maxRetries: 7,
-      baseDelayMs: 1000,
-      maxDelayMs: 30000,
-      tag: 'CREATE_PLANNED_POOL',
-      onProgress,
-    },
-  )
+      },
+      {
+        concurrency: 2,
+        delayBetweenBatchesMs: 50,
+        maxRetries: 7,
+        baseDelayMs: 1000,
+        maxDelayMs: 30000,
+        rateLimiter,
+        tag: 'CREATE_PLANNED_POOL',
+        onProgress,
+      },
+    )
+  } finally {
+    rateLimiter.destroy()
+  }
 
   return { created, failedCount }
 }
@@ -241,7 +260,9 @@ export async function triggerAutoRecurringGeneration({
       )
     }
   } catch (err: any) {
-    console.warn('[triggerAutoRecurringGeneration] Falha geral na geração automática:', err)
+    if (!is429Error(err)) {
+      console.warn('[triggerAutoRecurringGeneration] Falha geral na geração automática:', err)
+    }
     toast.warning(
       'O lançamento principal foi salvo, mas a geração automática das parcelas futuras falhou. Você pode gerá-las a qualquer momento pelo botão "Gerar recorrentes".',
       { duration: 8000 },
@@ -802,10 +823,12 @@ export async function triggerAutoInstallmentGeneration({
       )
     }
   } catch (err: any) {
-    console.warn(
-      '[triggerAutoInstallmentGeneration] Falha geral na geração automática de parcelas:',
-      err,
-    )
+    if (!is429Error(err)) {
+      console.warn(
+        '[triggerAutoInstallmentGeneration] Falha geral na geração automática de parcelas:',
+        err,
+      )
+    }
     toast.warning(
       'O lançamento principal foi salvo, mas a geração automática das parcelas seguintes falhou. Você pode gerá-las a qualquer momento pelo botão "Gerar parcelas".',
       { duration: 8000 },
