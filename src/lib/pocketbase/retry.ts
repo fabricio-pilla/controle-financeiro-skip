@@ -117,7 +117,7 @@ export interface AdaptiveRateLimiterOptions {
   initialIntervalMs?: number
   /** Intervalo mínimo permitido sob condições perfeitas (padrão: 200ms) */
   minIntervalMs?: number
-  /** Intervalo máximo permitido ao acumular desacelerações (padrão: 10000ms) */
+  /** Intervalo máximo permitido ao acumular desacelerações (padrão: 20000ms) */
   maxIntervalMs?: number
   /** Fator multiplicador de desaceleração ao receber 429 (padrão: 2.0) */
   backoffFactor?: number
@@ -140,12 +140,13 @@ export class AdaptiveRateLimiter {
   private consecutiveSuccesses = 0
   private lastScheduledTime = 0
   private pauseUntil = 0
+  private consecutive429Count = 0
   private unsubscribeGlobal429: (() => void) | null = null
 
   constructor(options: AdaptiveRateLimiterOptions = {}) {
     this.currentIntervalMs = options.initialIntervalMs ?? 350
     this.minIntervalMs = options.minIntervalMs ?? 200
-    this.maxIntervalMs = options.maxIntervalMs ?? 10000
+    this.maxIntervalMs = options.maxIntervalMs ?? 20000
     this.backoffFactor = options.backoffFactor ?? 2.0
     this.recoveryFactor = options.recoveryFactor ?? 0.9
     this.successThresholdForRecovery = options.successThresholdForRecovery ?? 6
@@ -202,14 +203,23 @@ export class AdaptiveRateLimiter {
    */
   public recordThrottle(suggestedDelayMs = 0): void {
     this.consecutiveSuccesses = 0
+    this.consecutive429Count++
+
     this.currentIntervalMs = Math.min(
       this.maxIntervalMs,
-      Math.max(this.currentIntervalMs * this.backoffFactor, 600),
+      Math.max(this.currentIntervalMs * this.backoffFactor, 800),
     )
 
-    // Pausa temporária para todos os workers (mínimo de 1800ms em 429)
+    // Pausa global mínima de 3000ms no primeiro 429, crescendo até 20000ms a cada 429 subsequente
+    const basePause = Math.min(
+      3000 * Math.pow(1.5, Math.max(0, this.consecutive429Count - 1)),
+      20000,
+    )
     const pauseDuration =
-      suggestedDelayMs > 0 ? Math.min(Math.max(suggestedDelayMs, 1800), 15000) : 1800
+      suggestedDelayMs > 0
+        ? Math.min(Math.max(suggestedDelayMs, 3000), 20000)
+        : Math.round(basePause)
+
     const now = Date.now()
     this.pauseUntil = Math.max(this.pauseUntil, now + pauseDuration)
     // Empurra o próximo agendamento para depois da pausa
@@ -221,6 +231,9 @@ export class AdaptiveRateLimiter {
    */
   public recordSuccess(): void {
     this.consecutiveSuccesses++
+    if (this.consecutive429Count > 0 && this.consecutiveSuccesses >= 3) {
+      this.consecutive429Count = Math.max(0, this.consecutive429Count - 1)
+    }
     if (
       this.consecutiveSuccesses >= this.successThresholdForRecovery &&
       this.currentIntervalMs > this.minIntervalMs
@@ -283,16 +296,17 @@ export const executeWithRetry = async <T>(
 
         let delay: number
         if (is429) {
-          // Pausa maior após 429: mínimo de 1800ms na 1ª tentativa, crescendo exponencialmente
-          const currentInterval = limiter ? limiter.getIntervalMs() : 350
-          const minBackoff429 = Math.max(1800, currentInterval * 2)
+          // Pausa maior após 429: mínimo de 3000ms na 1ª tentativa, crescendo até 20000ms
+          const currentInterval = limiter ? limiter.getIntervalMs() : 450
+          const minBackoff429 = Math.max(3000, currentInterval * 2)
           const exponentialDelay = minBackoff429 * Math.pow(1.8, attempt - 1) + jitter
-          delay = Math.min(
+          const boundedDelay = Math.min(
             serverRetryAfter && serverRetryAfter > 0
-              ? Math.max(serverRetryAfter, 1800)
+              ? Math.max(serverRetryAfter, 3000)
               : exponentialDelay,
-            maxDelayMs,
+            Math.min(maxDelayMs, 20000),
           )
+          delay = Math.max(3000, boundedDelay)
 
           // Notifica ouvintes globais (desacelera e pausa limitadores)
           notify429(error, attempt, delay)

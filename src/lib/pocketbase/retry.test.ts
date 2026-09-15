@@ -174,7 +174,7 @@ describe('pocketbase/retry helpers', () => {
       const limiter = new AdaptiveRateLimiter({
         initialIntervalMs: 150,
         minIntervalMs: 100,
-        maxIntervalMs: 2000,
+        maxIntervalMs: 4000,
         backoffFactor: 2.0,
         recoveryFactor: 0.8,
         successThresholdForRecovery: 3,
@@ -184,18 +184,18 @@ describe('pocketbase/retry helpers', () => {
 
       // Throttle triggered
       limiter.recordThrottle(50)
-      expect(limiter.getIntervalMs()).toBe(600) // max(150 * 2, 600)
+      expect(limiter.getIntervalMs()).toBe(800) // max(150 * 2, 800)
 
       // Another throttle
       limiter.recordThrottle(50)
-      expect(limiter.getIntervalMs()).toBe(1200) // 600 * 2
+      expect(limiter.getIntervalMs()).toBe(1600) // 800 * 2
 
       // Record 3 successes -> triggers recovery
       limiter.recordSuccess()
       limiter.recordSuccess()
-      expect(limiter.getIntervalMs()).toBe(1200)
+      expect(limiter.getIntervalMs()).toBe(1600)
       limiter.recordSuccess() // 3rd success
-      expect(limiter.getIntervalMs()).toBe(Math.round(1200 * 0.8)) // 960
+      expect(limiter.getIntervalMs()).toBe(Math.round(1600 * 0.8)) // 1280
 
       limiter.destroy()
     })
@@ -204,7 +204,7 @@ describe('pocketbase/retry helpers', () => {
       const limiter = new AdaptiveRateLimiter({
         initialIntervalMs: 100,
         minIntervalMs: 50,
-        maxIntervalMs: 1000,
+        maxIntervalMs: 4000,
         backoffFactor: 2.0,
       })
 
@@ -224,7 +224,7 @@ describe('pocketbase/retry helpers', () => {
       )
 
       // Limiter must have throttled because executeWithRetry broadcasted 429
-      expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(600)
+      expect(limiter.getIntervalMs()).toBeGreaterThanOrEqual(800)
       limiter.destroy()
     })
 
@@ -260,15 +260,13 @@ describe('pocketbase/retry helpers', () => {
       limiter.destroy()
     })
 
-    it('enforces a conservative delay (>1.5s) on 429 retry before retrying', async () => {
+    it('enforces a conservative delay (>= 3s up to 20s) on 429 retry before retrying', async () => {
       let sleepDelays: number[] = []
       const originalSleep = vi.spyOn(globalThis, 'setTimeout')
 
       let calls = 0
-      const startTime = Date.now()
       // Test without mock timers using real executeWithRetry parameters
-      // When maxDelayMs is capped, delay is Math.min(exponentialDelay, maxDelayMs)
-      // We verify that exponentialDelay computed internally has minimum 1800ms
+      // When maxDelayMs is capped, delay has minimum 3000ms
       let delaySeenByOn429 = 0
       await executeWithRetry(
         async () => {
@@ -289,8 +287,8 @@ describe('pocketbase/retry helpers', () => {
         },
       )
 
-      // Delay suggested to notify429 and on429 must be >= 1800ms
-      expect(delaySeenByOn429).toBeGreaterThanOrEqual(1800)
+      // Delay suggested to notify429 and on429 must be >= 3000ms
+      expect(delaySeenByOn429).toBeGreaterThanOrEqual(3000)
       originalSleep.mockRestore()
     })
 

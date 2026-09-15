@@ -180,12 +180,12 @@ export default function SettingsPage() {
     setDeleteAllProgress(null)
 
     // Rate limiter adaptativo compartilhado para exclusão em massa:
-    // Concorrência 2, espaçamento preventivo de 350ms entre disparos,
-    // desaceleração imediata ao primeiro 429 e aceleração progressiva após sucessos
+    // Concorrência 1 (estritamente serializado), espaçamento preventivo conservador de 450ms inicial,
+    // pausa mínima de 3s até 20s ao primeiro 429 e aceleração progressiva após sucessos
     const deleteRateLimiter = new AdaptiveRateLimiter({
-      initialIntervalMs: 350,
-      minIntervalMs: 200,
-      maxIntervalMs: 10000,
+      initialIntervalMs: 450,
+      minIntervalMs: 300,
+      maxIntervalMs: 20000,
       backoffFactor: 2.0,
       recoveryFactor: 0.9,
       successThresholdForRecovery: 6,
@@ -225,7 +225,7 @@ export default function SettingsPage() {
         let completedInSweep = 0
         const sweepErrors: string[] = []
 
-        // 2. Excluir lançamentos com taxa adaptativa controlada (concorrência 2, espaçamento preventivo de 200ms)
+        // 2. Excluir lançamentos estritamente serializado (concorrência 1, espaçamento preventivo conservador)
         // e retry robusto para 429/rede
         await runInPool(
           records,
@@ -243,17 +243,19 @@ export default function SettingsPage() {
                 if (status === 404) {
                   return
                 }
-                // Não loga no console se for erro 429 para evitar falsos positivos no monitor de runtime
-                if (!is429Error(itemErr)) {
-                  console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                // NUNCA loga no console se for erro 429 para evitar alarmes de runtime na plataforma
+                if (is429Error(itemErr)) {
+                  throw itemErr
                 }
+                console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
                 sweepErrors.push(rec.id)
               }
             } catch (unexpectedErr: any) {
-              // Garante que mesmo qualquer exceção imprevista não escape do worker
-              if (!is429Error(unexpectedErr)) {
-                console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              // Re-lança 429 para que o executeWithRetry e rateLimiter apliquem o backoff apropriado
+              if (is429Error(unexpectedErr)) {
+                throw unexpectedErr
               }
+              console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
               if (!sweepErrors.includes(rec.id)) {
                 sweepErrors.push(rec.id)
               }
@@ -263,7 +265,7 @@ export default function SettingsPage() {
             }
           },
           {
-            concurrency: 2,
+            concurrency: 1,
             delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
@@ -285,7 +287,6 @@ export default function SettingsPage() {
       }
 
       // Verificação final do banco: checar se sobrou algum registro
-      await deleteRateLimiter.waitTurn()
       const remainingCheck = await executeWithRetry(
         () =>
           pb.collection('transactions').getList(1, 1, {
@@ -295,14 +296,13 @@ export default function SettingsPage() {
         5,
         1000,
         'Limpeza-Total-ChecagemFinal',
-        15000,
+        20000,
+        { rateLimiter: deleteRateLimiter },
       )
-      deleteRateLimiter.recordSuccess()
 
       const remainingTotal = remainingCheck.totalItems || 0
 
-      // 3. Zerar o saldo de todas as contas do controle ativo de forma concorrente em lote único
-      await deleteRateLimiter.waitTurn()
+      // 3. Zerar o saldo de todas as contas do controle ativo de forma serializada respeitando o rate limiter
       const accountsList = await executeWithRetry(
         () =>
           pb.collection('accounts').getFullList<{ id: string }>({
@@ -312,9 +312,9 @@ export default function SettingsPage() {
         5,
         1000,
         'Limpeza-Total-Contas',
-        10000,
+        20000,
+        { rateLimiter: deleteRateLimiter },
       )
-      deleteRateLimiter.recordSuccess()
 
       let failedAccounts = 0
       if (accountsList.length > 0) {
@@ -324,21 +324,23 @@ export default function SettingsPage() {
             try {
               try {
                 await pb.collection('accounts').update(acc.id, { balance: 0 })
-              } catch (accErr) {
-                if (!is429Error(accErr)) {
-                  console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+              } catch (accErr: any) {
+                if (is429Error(accErr)) {
+                  throw accErr
                 }
+                console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
                 failedAccounts++
               }
-            } catch (unexpectedAccErr) {
-              if (!is429Error(unexpectedAccErr)) {
-                console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
+            } catch (unexpectedAccErr: any) {
+              if (is429Error(unexpectedAccErr)) {
+                throw unexpectedAccErr
               }
+              console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
               failedAccounts++
             }
           },
           {
-            concurrency: 2,
+            concurrency: 1,
             delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
@@ -381,12 +383,12 @@ export default function SettingsPage() {
     setDeleteMonthProgress(null)
 
     // Rate limiter adaptativo compartilhado para exclusão mensal:
-    // Concorrência 2, espaçamento preventivo de 350ms entre disparos,
-    // desaceleração imediata ao primeiro 429 e aceleração progressiva após sucessos
+    // Concorrência 1 (estritamente serializado), espaçamento preventivo conservador de 450ms inicial,
+    // pausa mínima de 3s até 20s ao primeiro 429 e aceleração progressiva após sucessos
     const deleteMonthRateLimiter = new AdaptiveRateLimiter({
-      initialIntervalMs: 350,
-      minIntervalMs: 200,
-      maxIntervalMs: 10000,
+      initialIntervalMs: 450,
+      minIntervalMs: 300,
+      maxIntervalMs: 20000,
       backoffFactor: 2.0,
       recoveryFactor: 0.9,
       successThresholdForRecovery: 6,
@@ -429,7 +431,7 @@ export default function SettingsPage() {
         let completedInSweep = 0
         const sweepErrors: string[] = []
 
-        // 2. Excluir lançamentos com concorrência 2, espaçamento preventivo de 200ms e retry anti-429/rede
+        // 2. Excluir lançamentos estritamente serializado (concorrência 1, espaçamento preventivo conservador)
         await runInPool(
           records,
           async (rec) => {
@@ -443,15 +445,17 @@ export default function SettingsPage() {
                   itemErr?.response?.status ??
                   itemErr?.originalError?.status
                 if (status === 404) return
-                if (!is429Error(itemErr)) {
-                  console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
+                if (is429Error(itemErr)) {
+                  throw itemErr
                 }
+                console.error(`Erro ao excluir transação ${rec.id}:`, itemErr)
                 sweepErrors.push(rec.id)
               }
             } catch (unexpectedErr: any) {
-              if (!is429Error(unexpectedErr)) {
-                console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
+              if (is429Error(unexpectedErr)) {
+                throw unexpectedErr
               }
+              console.warn(`Exceção não tratada ao excluir transação ${rec.id}:`, unexpectedErr)
               if (!sweepErrors.includes(rec.id)) {
                 sweepErrors.push(rec.id)
               }
@@ -461,7 +465,7 @@ export default function SettingsPage() {
             }
           },
           {
-            concurrency: 2,
+            concurrency: 1,
             delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
@@ -482,7 +486,6 @@ export default function SettingsPage() {
       }
 
       // Verificação final do mês
-      await deleteMonthRateLimiter.waitTurn()
       const remainingCheck = await executeWithRetry(
         () =>
           pb.collection('transactions').getList(1, 1, {
@@ -492,14 +495,13 @@ export default function SettingsPage() {
         5,
         1000,
         'Limpeza-Mes-ChecagemFinal',
-        15000,
+        20000,
+        { rateLimiter: deleteMonthRateLimiter },
       )
-      deleteMonthRateLimiter.recordSuccess()
 
       const remainingTotal = remainingCheck.totalItems || 0
 
       // 3. Zerar o saldo de todas as contas do controle ativo
-      await deleteMonthRateLimiter.waitTurn()
       const accountsList = await executeWithRetry(
         () =>
           pb.collection('accounts').getFullList<{ id: string }>({
@@ -509,9 +511,9 @@ export default function SettingsPage() {
         5,
         1000,
         'Limpeza-Mes-Contas',
-        10000,
+        20000,
+        { rateLimiter: deleteMonthRateLimiter },
       )
-      deleteMonthRateLimiter.recordSuccess()
 
       let failedAccounts = 0
       if (accountsList.length > 0) {
@@ -521,21 +523,23 @@ export default function SettingsPage() {
             try {
               try {
                 await pb.collection('accounts').update(acc.id, { balance: 0 })
-              } catch (accErr) {
-                if (!is429Error(accErr)) {
-                  console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
+              } catch (accErr: any) {
+                if (is429Error(accErr)) {
+                  throw accErr
                 }
+                console.error(`Erro ao zerar saldo da conta ${acc.id}:`, accErr)
                 failedAccounts++
               }
-            } catch (unexpectedAccErr) {
-              if (!is429Error(unexpectedAccErr)) {
-                console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
+            } catch (unexpectedAccErr: any) {
+              if (is429Error(unexpectedAccErr)) {
+                throw unexpectedAccErr
               }
+              console.warn(`Exceção não tratada ao zerar conta ${acc.id}:`, unexpectedAccErr)
               failedAccounts++
             }
           },
           {
-            concurrency: 2,
+            concurrency: 1,
             delayBetweenBatchesMs: 50,
             maxRetries: 7,
             baseDelayMs: 1000,
