@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useCompany } from '@/contexts/CompanyContext'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
 import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
@@ -91,9 +92,15 @@ export default function TransactionsPage() {
     'all' | 'a_vista' | 'parcelado' | 'recorrente'
   >('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'pending'>('all')
-  const [accountFilter, setAccountFilter] = useState<string>('all')
-  const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  // Default month filter to current month ("YYYY-MM")
+  const [searchParams] = useSearchParams()
+
+  const [accountFilter, setAccountFilter] = useState<string>(() => {
+    return searchParams.get('account') || 'all'
+  })
+  const [categoryFilter, setCategoryFilter] = useState<string>(() => {
+    return searchParams.get('category') || 'all'
+  })
+  // Default month filter to current month ("YYYY-MM") or from search param
   const currentMonthStr = useMemo(() => {
     const now = new Date()
     const yyyy = now.getFullYear()
@@ -102,11 +109,31 @@ export default function TransactionsPage() {
   }, [])
 
   const [monthFilter, setMonthFilter] = useState<string>(() => {
+    const paramMonth = searchParams.get('month')
+    if (paramMonth) return paramMonth
     const now = new Date()
     const yyyy = now.getFullYear()
     const mm = String(now.getMonth() + 1).padStart(2, '0')
     return `${yyyy}-${mm}`
   }) // 'all' or 'YYYY-MM' (default to current month)
+
+  // Atualizar filtros se os query params mudarem
+  useEffect(() => {
+    const cat = searchParams.get('category')
+    if (cat) setCategoryFilter(cat)
+    const m = searchParams.get('month')
+    if (m) setMonthFilter(m)
+    const acc = searchParams.get('account')
+    if (acc) setAccountFilter(acc)
+    const status = searchParams.get('status')
+    if (status === 'paid' || status === 'pending' || status === 'all') {
+      setStatusFilter(status)
+    }
+    const type = searchParams.get('type')
+    if (type === 'receita' || type === 'despesa' || type === 'all') {
+      setTypeFilter(type)
+    }
+  }, [searchParams])
   // Sorting state
   const [sortField, setSortField] = useState<
     'date' | 'description' | 'category' | 'account' | 'amount' | 'paid'
