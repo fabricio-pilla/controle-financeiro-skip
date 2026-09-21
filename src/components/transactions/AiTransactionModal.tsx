@@ -828,12 +828,12 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                       id="ai-installments"
                       type="number"
                       min={1}
-                      max={60}
+                      max={999}
                       step={1}
                       value={installmentsTotal}
                       onChange={(e) => {
                         const v = parseInt(e.target.value, 10)
-                        setInstallmentsTotal(isNaN(v) || v < 1 ? 1 : Math.min(v, 60))
+                        setInstallmentsTotal(isNaN(v) || v < 1 ? 1 : Math.min(v, 999))
                       }}
                       className="rounded-xl h-11 w-28 font-semibold tabular-nums"
                     />

@@ -36,8 +36,6 @@ import {
   Filter,
   Edit2,
   Trash2,
-  ChevronLeft,
-  ChevronRight,
   TrendingUp,
   TrendingDown,
   Repeat,
@@ -101,9 +99,6 @@ export default function TransactionsPage() {
     const mm = String(now.getMonth() + 1).padStart(2, '0')
     return `${yyyy}-${mm}`
   }) // 'all' or 'YYYY-MM' (default to current month)
-  const [currentPage, setCurrentPage] = useState(1)
-  const pageSize = 10
-
   // Sorting state
   const [sortField, setSortField] = useState<
     'date' | 'description' | 'category' | 'account' | 'amount' | 'paid'
@@ -233,7 +228,9 @@ export default function TransactionsPage() {
     list.sort((a, b) => {
       let comparison = 0
       if (sortField === 'date') {
-        comparison = new Date(a.date).getTime() - new Date(b.date).getTime()
+        const dateA = a.payment_date || a.date
+        const dateB = b.payment_date || b.date
+        comparison = new Date(dateA).getTime() - new Date(dateB).getTime()
       } else if (sortField === 'description') {
         comparison = a.description.localeCompare(b.description, 'pt-BR', { sensitivity: 'base' })
       } else if (sortField === 'category') {
@@ -266,7 +263,6 @@ export default function TransactionsPage() {
       setSortField(field)
       setSortDirection(field === 'date' ? 'desc' : 'asc')
     }
-    setCurrentPage(1)
   }
   const sortedCategories = useMemo(() => {
     return [...categories].sort((a, b) =>
@@ -308,13 +304,6 @@ export default function TransactionsPage() {
       netPending: incomePending - expensePending,
     }
   }, [filteredList])
-
-  // Pagination
-  const totalPages = Math.ceil(sortedTransactions.length / pageSize) || 1
-  const paginatedTransactions = useMemo(() => {
-    const start = (currentPage - 1) * pageSize
-    return sortedTransactions.slice(start, start + pageSize)
-  }, [sortedTransactions, currentPage])
 
   const handleEdit = (tx: Transaction) => {
     setSelectedTx(tx)
@@ -431,12 +420,12 @@ export default function TransactionsPage() {
 
   // Select all / deselect all
   const handleSelectAll = () => {
-    const currentPageIds = paginatedTransactions.map((t) => t.id)
-    const allSelected = currentPageIds.every((id) => selectedIds.includes(id))
+    const allCurrentIds = sortedTransactions.map((t) => t.id)
+    const allSelected = allCurrentIds.length > 0 && allCurrentIds.every((id) => selectedIds.includes(id))
     if (allSelected) {
-      setSelectedIds((prev) => prev.filter((id) => !currentPageIds.includes(id)))
+      setSelectedIds((prev) => prev.filter((id) => !allCurrentIds.includes(id)))
     } else {
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...currentPageIds])))
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...allCurrentIds])))
     }
   }
 
@@ -767,7 +756,6 @@ export default function TransactionsPage() {
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value)
-                setCurrentPage(1)
               }}
               className="pl-9 rounded-xl h-10 text-sm"
             />
@@ -778,7 +766,6 @@ export default function TransactionsPage() {
             value={typeFilter}
             onValueChange={(v: any) => {
               setTypeFilter(v)
-              setCurrentPage(1)
             }}
           >
             <SelectTrigger className="rounded-xl h-10 text-sm">
@@ -796,7 +783,6 @@ export default function TransactionsPage() {
             value={accountFilter}
             onValueChange={(v) => {
               setAccountFilter(v)
-              setCurrentPage(1)
             }}
           >
             <SelectTrigger className="rounded-xl h-10 text-sm">
@@ -817,7 +803,6 @@ export default function TransactionsPage() {
             value={categoryFilter}
             onValueChange={(v) => {
               setCategoryFilter(v)
-              setCurrentPage(1)
             }}
           >
             <SelectTrigger className="rounded-xl h-10 text-sm">
@@ -838,7 +823,6 @@ export default function TransactionsPage() {
             value={paymentTypeFilter}
             onValueChange={(v: any) => {
               setPaymentTypeFilter(v)
-              setCurrentPage(1)
             }}
           >
             <SelectTrigger className="rounded-xl h-10 text-sm">
@@ -862,7 +846,6 @@ export default function TransactionsPage() {
               value={monthFilter}
               onValueChange={(v) => {
                 setMonthFilter(v)
-                setCurrentPage(1)
               }}
             >
               <SelectTrigger className="rounded-xl h-10 text-sm">
@@ -886,7 +869,6 @@ export default function TransactionsPage() {
               value={statusFilter}
               onValueChange={(v: any) => {
                 setStatusFilter(v)
-                setCurrentPage(1)
               }}
             >
               <SelectTrigger className="rounded-xl h-10 text-sm">
@@ -1041,11 +1023,11 @@ export default function TransactionsPage() {
                 <input
                   type="checkbox"
                   checked={
-                    paginatedTransactions.length > 0 &&
-                    paginatedTransactions.every((t) => selectedIds.includes(t.id))
+                    sortedTransactions.length > 0 &&
+                    sortedTransactions.every((t) => selectedIds.includes(t.id))
                   }
                   onChange={handleSelectAll}
-                  aria-label="Selecionar todos os lançamentos da página"
+                  aria-label="Selecionar todos os lançamentos"
                   className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                 />
               </th>
@@ -1171,7 +1153,7 @@ export default function TransactionsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
-            {paginatedTransactions.map((tx) => {
+            {sortedTransactions.map((tx) => {
               const isExpense = tx.type === 'despesa'
               const isPaid = tx.paid !== false
               const isSelected = selectedIds.includes(tx.id)
@@ -1370,7 +1352,7 @@ export default function TransactionsPage() {
               )
             })}
 
-            {paginatedTransactions.length === 0 && (
+            {sortedTransactions.length === 0 && (
               <tr>
                 <td colSpan={9} className="py-12 text-center text-sm text-slate-400">
                   Nenhum lançamento encontrado para os filtros selecionados.
@@ -1382,7 +1364,7 @@ export default function TransactionsPage() {
       </div>
       {/* Mobile Card List View */}
       <div className="md:hidden space-y-3">
-        {paginatedTransactions.map((tx) => {
+        {sortedTransactions.map((tx) => {
           const isExpense = tx.type === 'despesa'
           const isPaid = tx.paid !== false
           const isSelected = selectedIds.includes(tx.id)
@@ -1530,45 +1512,12 @@ export default function TransactionsPage() {
           )
         })}
 
-        {paginatedTransactions.length === 0 && (
+        {sortedTransactions.length === 0 && (
           <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-400">
             Nenhum lançamento encontrado.
           </div>
         )}
       </div>
-      {/* Pagination Controls */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between bg-white p-3 rounded-2xl border border-slate-200 shadow-sm">
-          <p className="text-xs text-slate-500">
-            Página <strong className="text-slate-800">{currentPage}</strong> de{' '}
-            <strong className="text-slate-800">{totalPages}</strong> ({filteredList.length}{' '}
-            lançamentos)
-          </p>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              className="rounded-xl h-8 px-2.5 text-xs"
-            >
-              <ChevronLeft className="w-3.5 h-3.5 mr-1" />
-              Anterior
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={currentPage === totalPages}
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              className="rounded-xl h-8 px-2.5 text-xs"
-            >
-              Próxima
-              <ChevronRight className="w-3.5 h-3.5 ml-1" />
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* Transaction Modal (Create/Edit) */}
       <TransactionModal open={modalOpen} onOpenChange={setModalOpen} transaction={selectedTx} />
