@@ -432,6 +432,19 @@ function pbErr(e: any): Error {
     })
   }
   if (msgs.length) return new Error(msgs.join(' | '))
+
+  const rawMsg = String(e?.message || e?.originalError?.message || '').toLowerCase()
+  if (
+    rawMsg.includes('failed to fetch') ||
+    rawMsg.includes('network') ||
+    rawMsg.includes('fetch failed') ||
+    rawMsg.includes('networkerror')
+  ) {
+    return new Error(
+      'Não foi possível salvar o lançamento — verifique sua conexão e tente novamente.',
+    )
+  }
+
   return new Error(e?.message || 'Erro ao comunicar com o servidor.')
 }
 
@@ -1258,7 +1271,13 @@ class SkipCloudService {
             notes: data.notes?.trim() || '',
           }
           if (i !== 1) payload.parent_transaction_id = parentId
-          const r = await pb.collection('transactions').create(payload)
+          const { executeWithRetry } = await import('@/lib/pocketbase/retry')
+          const r = await executeWithRetry(
+            () => pb.collection('transactions').create(payload),
+            3,
+            400,
+            'CREATE_PARCEL',
+          )
           if (i === 1) {
             parentId = r.id
             // Root installment does not reference itself to avoid self-parenting cycles
@@ -1294,7 +1313,13 @@ class SkipCloudService {
         parent_transaction_id: '',
         notes: data.notes?.trim() || '',
       }
-      const r = await pb.collection('transactions').create(payload)
+      const { executeWithRetry } = await import('@/lib/pocketbase/retry')
+      const r = await executeWithRetry(
+        () => pb.collection('transactions').create(payload),
+        3,
+        400,
+        'CREATE_TX',
+      )
       const tx = mapTransaction(r)
       await this.adjustAccountBalance(data.account_id, Number(data.amount), data.type, 1)
       return tx

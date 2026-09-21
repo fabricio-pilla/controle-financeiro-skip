@@ -26,18 +26,35 @@ export const isNetworkError = (error: any): boolean => {
   if (!error) return false
   const status =
     error?.status ?? error?.statusCode ?? error?.response?.status ?? error?.originalError?.status
-  // PocketBase client returns status 0 on network disconnect/aborted request
+  // PocketBase client returns status 0 on network disconnect/aborted request, or status may be undefined/null on raw TypeError
   if (status === 0 || status === 502 || status === 503 || status === 504) return true
 
-  const msg = String(error?.message || '').toLowerCase()
+  const msg = String(
+    error?.message ||
+      error?.originalError?.message ||
+      error?.cause?.message ||
+      error?.response?.message ||
+      error?.data?.message ||
+      error?.name ||
+      '',
+  ).toLowerCase()
+
   if (
     msg.includes('network') ||
     msg.includes('fetch failed') ||
     msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
     msg.includes('timeout') ||
     msg.includes('econnreset') ||
-    msg.includes('etimedout')
+    msg.includes('etimedout') ||
+    msg.includes('econnrefused') ||
+    msg.includes('load failed')
   ) {
+    return true
+  }
+
+  // Falha de rede pura em browsers (TypeError: Failed to fetch / NetworkError) onde status é undefined/null ou 0
+  if ((status === undefined || status === null) && error instanceof TypeError) {
     return true
   }
 

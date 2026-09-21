@@ -429,7 +429,22 @@ export function TransactionModal({
         })
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao salvar lançamento.')
+      console.warn('[TransactionModal] Erro ao salvar lançamento:', err?.message || err)
+      const rawMsg = String(err?.message || err?.originalError?.message || '').toLowerCase()
+      const isNet =
+        rawMsg.includes('failed to fetch') ||
+        rawMsg.includes('network') ||
+        rawMsg.includes('fetch failed') ||
+        rawMsg.includes('conexão') ||
+        err?.status === 0 ||
+        err instanceof TypeError
+      if (isNet) {
+        toast.error(
+          'Não foi possível salvar o lançamento — verifique sua conexão e tente novamente.',
+        )
+      } else {
+        toast.error(err?.message || 'Não foi possível salvar o lançamento — tente novamente.')
+      }
     } finally {
       setIsSubmitting(false)
     }

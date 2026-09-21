@@ -31,6 +31,11 @@ describe('pocketbase/retry helpers', () => {
       expect(isNetworkError({ message: 'NetworkError when attempting to fetch resource.' })).toBe(
         true,
       )
+      expect(isNetworkError(new TypeError('Failed to fetch'))).toBe(true)
+      expect(isNetworkError(new TypeError('NetworkError when attempting to fetch resource.'))).toBe(
+        true,
+      )
+      expect(isNetworkError({ originalError: new TypeError('Failed to fetch') })).toBe(true)
       expect(isNetworkError({ status: 404 })).toBe(false)
       expect(isNetworkError(null)).toBe(false)
     })
@@ -81,6 +86,35 @@ describe('pocketbase/retry helpers', () => {
       const res = await executeWithRetry(fn, 3, 10, 'TestRetry', 50)
       expect(res).toBe('success')
       expect(callCount).toBe(2)
+    })
+
+    it('retries on network error (TypeError Failed to fetch) with backoff and succeeds when next attempt passes', async () => {
+      let callCount = 0
+      const fn = async () => {
+        callCount++
+        if (callCount < 3) {
+          throw new TypeError('Failed to fetch')
+        }
+        return 'network-recovered'
+      }
+
+      const res = await executeWithRetry(fn, 3, 10, 'TestNetworkRetry', 50)
+      expect(res).toBe('network-recovered')
+      expect(callCount).toBe(3)
+    })
+
+    it('propagates error when network retries are exhausted', async () => {
+      let callCount = 0
+      const fn = async () => {
+        callCount++
+        throw new TypeError('Failed to fetch')
+      }
+
+      await expect(executeWithRetry(fn, 2, 5, 'TestExhaustedNet', 20)).rejects.toThrow(
+        'Failed to fetch',
+      )
+      // Initial attempt (1) + 2 retries = 3 total attempts
+      expect(callCount).toBe(3)
     })
 
     it('does not reject entire pool when a single item throws after exhausting retries', async () => {
