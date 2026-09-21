@@ -62,6 +62,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 
 export default function TransactionsPage() {
   const {
@@ -119,6 +127,7 @@ export default function TransactionsPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isGeneratingRecurring, setIsGeneratingRecurring] = useState(false)
   const [generationStepLabel, setGenerationStepLabel] = useState<string | null>(null)
+  const [confirmGenerateOpen, setConfirmGenerateOpen] = useState(false)
 
   // Available unique month/year options from all transactions (including current month)
   const availableMonths = useMemo(() => {
@@ -437,9 +446,63 @@ export default function TransactionsPage() {
     )
   }
 
+  // Lançamentos recorrentes do mês atual para servir como sementes da geração
+  const currentMonthRecurringSeeds = useMemo(() => {
+    if (!currentCompany?.id) return []
+    const now = new Date()
+    const currentYear = now.getFullYear()
+    const currentMonth = now.getMonth() + 1
+    const currentYM = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
+
+    const companyTxs = transactions.filter((t) => t.control_id === currentCompany.id)
+    const currentMonthTxs = companyTxs.filter((t) => {
+      if (!t.date) return false
+      const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
+      return cleanDateOnly.startsWith(currentYM)
+    })
+
+    return currentMonthTxs.filter((t) => {
+      const isRec = Boolean(
+        t.is_recurring ||
+        t.recurring ||
+        (t.recurrence_type && String(t.recurrence_type).trim() !== '') ||
+        Boolean((t as any).recurrence_period && String((t as any).recurrence_period).trim() !== ''),
+      )
+      if (!isRec) return false
+      if (
+        (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
+        Number(t.installments_total || (t as any).installment_total || 0) > 1
+      ) {
+        return false
+      }
+      return true
+    })
+  }, [transactions, currentCompany?.id])
+
+  // Abertura do diálogo de confirmação ao clicar no botão
+  const handleOpenGenerateConfirm = () => {
+    if (!currentCompany?.id) {
+      toast.error('Nenhum controle selecionado.')
+      return
+    }
+
+    if (currentMonthRecurringSeeds.length === 0) {
+      toast.info('Nenhum lançamento recorrente no mês atual para gerar', { duration: 6000 })
+      return
+    }
+
+    setConfirmGenerateOpen(true)
+  }
+
+  // Executa a geração efetiva após confirmação no diálogo
+  const handleConfirmAndGenerate = async () => {
+    setConfirmGenerateOpen(false)
+    await executeGenerateNext12Months()
+  }
+
   // Gerar ocorrências dos próximos 12 meses EXCLUSIVAMENTE para transações recorrentes
   // Não gera parcelas de lançamentos parcelados
-  const handleGenerateNext12Months = async () => {
+  const executeGenerateNext12Months = async () => {
     if (!currentCompany?.id) {
       toast.error('Nenhum controle selecionado.')
       return
@@ -706,7 +769,7 @@ export default function TransactionsPage() {
         {canManageTransactions && (
           <div className="flex items-center gap-2 flex-wrap">
             <Button
-              onClick={handleGenerateNext12Months}
+              onClick={handleOpenGenerateConfirm}
               disabled={isGeneratingRecurring}
               variant="outline"
               title="Gera as ocorrências dos próximos 12 meses para os lançamentos recorrentes"
@@ -1518,6 +1581,75 @@ export default function TransactionsPage() {
           </div>
         )}
       </div>
+
+      {/* Diálogo de confirmação para gerar recorrentes próximos 12 meses */}
+      <Dialog open={confirmGenerateOpen} onOpenChange={setConfirmGenerateOpen}>
+        <DialogContent className="rounded-2xl sm:max-w-[480px]">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                <RefreshCw className="w-5 h-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-bold text-slate-900">
+                  Gerar Recorrentes dos Próximos 12 Meses
+                </DialogTitle>
+                <DialogDescription className="text-sm text-slate-500 mt-1">
+                  Confirmação de geração em lote de lançamentos futuros
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-sm text-slate-600">
+            {currentMonthRecurringSeeds.length > 0 ? (
+              <div className="p-3.5 rounded-xl bg-indigo-50/80 border border-indigo-100 text-indigo-950 space-y-1.5">
+                <p className="font-semibold text-indigo-900 flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold">
+                    {currentMonthRecurringSeeds.length}
+                  </span>
+                  {currentMonthRecurringSeeds.length === 1
+                    ? '1 lançamento recorrente encontrado no mês atual.'
+                    : `${currentMonthRecurringSeeds.length} lançamentos recorrentes encontrados no mês atual.`}
+                </p>
+                <p className="text-xs text-indigo-800 leading-relaxed">
+                  Serão geradas as próximas 12 recorrências de cada lançamento, a partir do mês
+                  seguinte, preservando categoria, conta e vencimentos originais.
+                </p>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+                Nenhum lançamento recorrente encontrado no mês atual para usar como base.
+              </div>
+            )}
+
+            <p className="text-xs text-slate-500">
+              O processo é <strong>idempotente</strong>: ocorrências que já existirem nos meses
+              futuros não serão duplicadas.
+            </p>
+          </div>
+
+          <DialogFooter className="mt-2 gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmGenerateOpen(false)}
+              className="rounded-xl h-11"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmAndGenerate}
+              disabled={currentMonthRecurringSeeds.length === 0}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-11 font-semibold"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Gerar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Transaction Modal (Create/Edit) */}
       <TransactionModal open={modalOpen} onOpenChange={setModalOpen} transaction={selectedTx} />
