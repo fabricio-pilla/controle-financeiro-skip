@@ -36,6 +36,7 @@ describe('pocketbase/retry helpers', () => {
         true,
       )
       expect(isNetworkError({ originalError: new TypeError('Failed to fetch') })).toBe(true)
+      expect(isNetworkError({ name: 'TypeError' })).toBe(true)
       expect(isNetworkError({ status: 404 })).toBe(false)
       expect(isNetworkError(null)).toBe(false)
     })

@@ -54,7 +54,15 @@ export const isNetworkError = (error: any): boolean => {
   }
 
   // Falha de rede pura em browsers (TypeError: Failed to fetch / NetworkError) onde status é undefined/null ou 0
-  if ((status === undefined || status === null) && error instanceof TypeError) {
+  if ((status === undefined || status === null || status === 0) && error instanceof TypeError) {
+    return true
+  }
+
+  // Erro sem status que contém indício de requisição abortada/desconectada
+  if (
+    (status === undefined || status === null || status === 0) &&
+    (error?.name === 'TypeError' || error?.name === 'FetchError')
+  ) {
     return true
   }
 
