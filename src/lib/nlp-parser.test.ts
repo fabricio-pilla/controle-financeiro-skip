@@ -473,5 +473,117 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     }
   }
 
+  // Test 11: Explicit date dd/mm/aaaa, e.g. "11/09/2026"
+  // Must result in 2026-09-11 (11 de setembro de 2026)
+  {
+    const res = parseNaturalLanguageTransaction(
+      'Almoço 50 11/09/2026',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      res.date === '2026-09-11',
+      `Test 11: date should be 2026-09-11 for 11/09/2026, got ${res.date}`,
+    )
+    assert(res.confidence.date === true, 'Test 11: date confidence should be true')
+    assert(res.amount === 50, `Test 11: amount should be 50, got ${res.amount}`)
+  }
+
+  // Test 12: Installments > 60 up to 999
+  {
+    const res = parseNaturalLanguageTransaction(
+      'Financiamento 120000 em 120x',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      res.installments_total === 120,
+      `Test 12: installments_total should be 120, got ${res.installments_total}`,
+    )
+  }
+
+  {
+    const res = parseNaturalLanguageTransaction(
+      'Compra imóvel 500000 parcelado em 360 vezes',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      res.installments_total === 360,
+      `Test 12b: installments_total should be 360, got ${res.installments_total}`,
+    )
+  }
+
+  // Test 13: Regras PIX
+  // "pix recebido" -> receita
+  // "recebimento pix" -> receita
+  // "recebi pix" -> receita
+  // "pix que recebi" -> receita
+  // qualquer outro caso com "pix" (ex: "pix 50", "paguei pix", "mandei um pix") -> despesa
+  {
+    const res1 = parseNaturalLanguageTransaction(
+      'pix recebido 150',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      res1.type === 'receita',
+      `Test 13a: "pix recebido 150" should be receita, got ${res1.type}`,
+    )
+
+    const res2 = parseNaturalLanguageTransaction(
+      'recebimento pix 200 de vendas',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      res2.type === 'receita',
+      `Test 13b: "recebimento pix" should be receita, got ${res2.type}`,
+    )
+
+    const res3 = parseNaturalLanguageTransaction(
+      'recebi pix de 350',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(res3.type === 'receita', `Test 13c: "recebi pix" should be receita, got ${res3.type}`)
+
+    const res4 = parseNaturalLanguageTransaction(
+      'pix que recebi 500',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      res4.type === 'receita',
+      `Test 13d: "pix que recebi" should be receita, got ${res4.type}`,
+    )
+
+    const res5 = parseNaturalLanguageTransaction(
+      'pix 50 almoço',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(res5.type === 'despesa', `Test 13e: "pix 50 almoço" should be despesa, got ${res5.type}`)
+
+    const res6 = parseNaturalLanguageTransaction(
+      'transferi via pix 100',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      res6.type === 'despesa',
+      `Test 13f: "transferi via pix 100" should be despesa, got ${res6.type}`,
+    )
+  }
+
   return { passed, failed, errors }
 }

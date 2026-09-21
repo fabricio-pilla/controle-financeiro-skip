@@ -643,17 +643,17 @@ function extractInstallments(text: string): number {
   const normalized = stripAccents(text)
   // "parcelado em 12", "em 12 vezes", "12x", "12 x"
   const patterns = [
-    /parcelado\s+em\s+(\d{1,2})/,
-    /em\s+(\d{1,2})\s+vezes/,
-    /(\d{1,2})\s*[xX]\s/,
-    /(\d{1,2})\s*[xX]$/,
-    /\b(\d{1,2})x\b/,
+    /parcelado\s+em\s+(\d{1,3})/,
+    /em\s+(\d{1,3})\s+vezes/,
+    /(\d{1,3})\s*[xX]\s/,
+    /(\d{1,3})\s*[xX]$/,
+    /\b(\d{1,3})x\b/,
   ]
   for (const pattern of patterns) {
     const match = normalized.match(pattern)
     if (match) {
       const v = parseInt(match[1], 10)
-      if (v >= 2 && v <= 60) return v
+      if (v >= 2 && v <= 999) return v
     }
   }
   return 1
@@ -681,6 +681,18 @@ function extractType(
   const hasCreditWord = /\b(cr[eé]dito|cart[aã]o de cr[eé]dito|cart[aã]o cr[eé]dito)\b/i.test(
     normalized,
   )
+
+  // Regra PIX: se o texto contiver "pix", classificar como "receita" APENAS se houver expressão de recebimento
+  // ("pix recebido", "recebimento pix", "recebi pix", "pix que recebi"); em qualquer outro caso com pix, classificar como "despesa".
+  const hasPix = /\bpix\b/i.test(normalized)
+  if (hasPix) {
+    const hasPixIncome =
+      /\b(pix\s+recebido|recebimento\s+pix|recebi\s+pix|pix\s+que\s+recebi)\b/i.test(normalized)
+    if (hasPixIncome) {
+      return { type: 'receita', matched: true }
+    }
+    return { type: 'despesa', matched: true }
+  }
 
   // Priority 1: Explicit words of income in text ("entrada", "recebi", "salário", "faturamento", etc.)
   // (e.g. "Fabricio Entrada Salario 8000,00 recorrente")
@@ -1244,6 +1256,25 @@ function extractDate(text: string): { date: string; matched: boolean } {
   const normalized = stripAccents(text)
   const today = new Date()
 
+  // 1. Datas explícitas no formato dd/mm/aaaa ou dd/mm (ex: 11/09/2026, 11-09-2026, 11.09.2026, 15/05)
+  // dia = primeiro número, mês = segundo número, usar mês - 1 ao instanciar Date
+  const explicitMatch = normalized.match(/\b(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b/)
+  if (explicitMatch) {
+    const day = parseInt(explicitMatch[1], 10)
+    const month = parseInt(explicitMatch[2], 10)
+    let year = explicitMatch[3] ? parseInt(explicitMatch[3], 10) : today.getFullYear()
+    if (year < 100) {
+      year += 2000
+    }
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const d = new Date(year, month - 1, day)
+      // Validar se o dia realmente existe no mês selecionado (evita 31 de fevereiro)
+      if (d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) {
+        return { date: toISODate(d), matched: true }
+      }
+    }
+  }
+
   if (/\bhoje\b/.test(normalized)) return { date: toISODate(today), matched: true }
   if (/\bontem\b/.test(normalized)) {
     const d = new Date(today)
@@ -1329,14 +1360,15 @@ function buildDescription(
   })
 
   // Remove installment phrases
-  desc = desc.replace(/parcelado\s+em\s+\d{1,2}\s*(vezes)?/gi, ' ')
-  desc = desc.replace(/em\s+\d{1,2}\s+vezes/gi, ' ')
-  desc = desc.replace(/em\s+\d{1,2}\s*[xX]/gi, ' ')
-  desc = desc.replace(/\d{1,2}\s*[xX]\s/gi, ' ')
-  desc = desc.replace(/\d{1,2}\s*[xX]$/gi, ' ')
-  desc = desc.replace(/\b\d{1,2}x\b/gi, ' ')
+  desc = desc.replace(/parcelado\s+em\s+\d{1,3}\s*(vezes)?/gi, ' ')
+  desc = desc.replace(/em\s+\d{1,3}\s+vezes/gi, ' ')
+  desc = desc.replace(/em\s+\d{1,3}\s*[xX]/gi, ' ')
+  desc = desc.replace(/\d{1,3}\s*[xX]\s/gi, ' ')
+  desc = desc.replace(/\d{1,3}\s*[xX]$/gi, ' ')
+  desc = desc.replace(/\b\d{1,3}x\b/gi, ' ')
 
   // Remove date phrases
+  desc = desc.replace(/\b\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?\b/gi, ' ')
   desc = desc.replace(/\bhoje\b/gi, ' ')
   desc = desc.replace(/\bontem\b/gi, ' ')
   desc = desc.replace(/\banteontem\b/gi, ' ')

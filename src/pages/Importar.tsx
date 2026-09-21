@@ -656,7 +656,7 @@ export default function Importar() {
         const startDateStr = `${startY}-${String(startMonthNum).padStart(2, '0')}-01`
         // Último dia do mês final em formato YYYY-MM-DD
         const lastDayOfEndMonth = new Date(endY, endMonthNum, 0).getDate()
-        const endDateStr = `${endY}-${String(endMonthNum).padStart(2, '0')}-${String(lastDayOfEndMonth).padStart(2, '0')}`
+        const endDateStr = `${endY}-${String(endMonthNum).padStart(2, '0')}-${String(lastDayOfEndMonth).padStart(2, '0')} 23:59:59.999Z`
 
         filterConditions.push(`date >= "${startDateStr}"`)
         filterConditions.push(`date <= "${endDateStr}"`)

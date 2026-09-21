@@ -22,7 +22,11 @@ import {
 } from '@/components/ui/select'
 import { useCompany } from '@/contexts/CompanyContext'
 import { TransactionType, RecurrenceType, Account } from '@/types/database'
-import { parseNaturalLanguageTransaction, isCategoryAllowedForType } from '@/lib/nlp-parser'
+import {
+  parseNaturalLanguageTransaction,
+  isCategoryAllowedForType,
+  stripAccents,
+} from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
 import { toast } from 'sonner'
 import { formatCurrency } from '@/lib/formatters'
@@ -221,10 +225,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
           : new Date().toISOString().split('T')[0]
         setDate(chosenPurchaseDate)
 
-        // Calcula a data de pagamento conforme fechamento/vencimento do cartão
-        const accObj = accounts.find((a) => a.id === resolvedAccId) || null
-        const calculatedPayDate = calculatePaymentDate(chosenPurchaseDate, accObj)
-        setPaymentDate(calculatedPayDate)
+        // Se a transação for PIX, payment_date = date (mesmo dia), ignorando fechamento/vencimento
+        const isPix = /\bpix\b/i.test(stripAccents(text))
+        if (isPix) {
+          setPaymentDate(chosenPurchaseDate)
+        } else {
+          // Calcula a data de pagamento conforme fechamento/vencimento do cartão
+          const accObj = accounts.find((a) => a.id === resolvedAccId) || null
+          const calculatedPayDate = calculatePaymentDate(chosenPurchaseDate, accObj)
+          setPaymentDate(calculatedPayDate)
+        }
 
         setInstallmentsTotal(result.installments_total)
         setIsRecurring(Boolean(result.is_recurring))

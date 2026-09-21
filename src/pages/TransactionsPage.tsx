@@ -418,14 +418,15 @@ export default function TransactionsPage() {
     }
   }
 
-  // Select all / deselect all
+  // Select all / deselect all across all filtered transactions
   const handleSelectAll = () => {
-    const allCurrentIds = sortedTransactions.map((t) => t.id)
-    const allSelected = allCurrentIds.length > 0 && allCurrentIds.every((id) => selectedIds.includes(id))
+    const allFilteredIds = filteredList.map((t) => t.id)
+    const allSelected =
+      allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedIds.includes(id))
     if (allSelected) {
-      setSelectedIds((prev) => prev.filter((id) => !allCurrentIds.includes(id)))
+      setSelectedIds((prev) => prev.filter((id) => !allFilteredIds.includes(id)))
     } else {
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...allCurrentIds])))
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...allFilteredIds])))
     }
   }
 
@@ -1023,8 +1024,7 @@ export default function TransactionsPage() {
                 <input
                   type="checkbox"
                   checked={
-                    sortedTransactions.length > 0 &&
-                    sortedTransactions.every((t) => selectedIds.includes(t.id))
+                    filteredList.length > 0 && filteredList.every((t) => selectedIds.includes(t.id))
                   }
                   onChange={handleSelectAll}
                   aria-label="Selecionar todos os lançamentos"
