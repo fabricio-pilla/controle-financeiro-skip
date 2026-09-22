@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T14:51:40.127Z",
+  "generatedAt": "2026-09-22T15:33:09.887Z",
   "collections": [
     {
       "name": "users",
@@ -29,14 +29,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -90,14 +95,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -146,28 +156,40 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["owner", "admin", "member"]
+          "selectValues": [
+            "owner",
+            "admin",
+            "member"
+          ]
         },
         {
           "name": "status",
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["active", "pending"]
+          "selectValues": [
+            "active",
+            "pending"
+          ]
         },
         {
           "name": "created",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -204,7 +226,11 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["owner", "admin", "member"]
+          "selectValues": [
+            "owner",
+            "admin",
+            "member"
+          ]
         },
         {
           "name": "token",
@@ -217,21 +243,30 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["pending", "accepted", "expired"]
+          "selectValues": [
+            "pending",
+            "accepted",
+            "expired"
+          ]
         },
         {
           "name": "created",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -269,7 +304,13 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["carteira", "banco", "pix", "credito", "investimento"]
+          "selectValues": [
+            "carteira",
+            "banco",
+            "pix",
+            "credito",
+            "investimento"
+          ]
         },
         {
           "name": "balance",
@@ -300,14 +341,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         },
         {
           "name": "due_day",
@@ -328,7 +374,9 @@
           "system": false
         }
       ],
-      "indexes": ["CREATE INDEX idx_accounts_control ON accounts (control_id)"]
+      "indexes": [
+        "CREATE INDEX idx_accounts_control ON accounts (control_id)"
+      ]
     },
     {
       "name": "credit_cards",
@@ -395,17 +443,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_credit_cards_control ON credit_cards (control_id)"]
+      "indexes": [
+        "CREATE INDEX idx_credit_cards_control ON credit_cards (control_id)"
+      ]
     },
     {
       "name": "categories",
@@ -436,7 +491,10 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["receita", "despesa"]
+          "selectValues": [
+            "receita",
+            "despesa"
+          ]
         },
         {
           "name": "color",
@@ -461,14 +519,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
@@ -524,17 +587,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_budgets_control ON budgets (control_id)"]
+      "indexes": [
+        "CREATE INDEX idx_budgets_control ON budgets (control_id)"
+      ]
     },
     {
       "name": "goals",
@@ -589,17 +659,24 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
-      "indexes": ["CREATE INDEX idx_goals_control ON goals (control_id)"]
+      "indexes": [
+        "CREATE INDEX idx_goals_control ON goals (control_id)"
+      ]
     },
     {
       "name": "transactions",
@@ -630,7 +707,10 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["receita", "despesa"]
+          "selectValues": [
+            "receita",
+            "despesa"
+          ]
         },
         {
           "name": "amount",
@@ -688,7 +768,11 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["mensal", "semanal", "anual"]
+          "selectValues": [
+            "mensal",
+            "semanal",
+            "anual"
+          ]
         },
         {
           "name": "installment_number",
@@ -725,21 +809,30 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["mensal", "semanal", "anual"]
+          "selectValues": [
+            "mensal",
+            "semanal",
+            "anual"
+          ]
         },
         {
           "name": "created",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         },
         {
           "name": "subcategory_id",
@@ -811,14 +904,19 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate"]
+          "autodateTriggers": [
+            "onCreate"
+          ]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": ["onCreate", "onUpdate"]
+          "autodateTriggers": [
+            "onCreate",
+            "onUpdate"
+          ]
         }
       ],
       "indexes": [
