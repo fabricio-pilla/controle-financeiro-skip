@@ -26,7 +26,7 @@ import {
 import pb from '@/lib/pocketbase/client'
 import { cleanDescription, planNextRecurringTransactions } from '@/lib/recurring-generation'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
-import { formatCurrency, formatDateBR } from '@/lib/formatters'
+import { formatCurrency, formatDateBR, getTxEffectiveDate } from '@/lib/formatters'
 import { Transaction, TransactionType } from '@/types/database'
 import { toast } from 'sonner'
 import {
@@ -134,11 +134,12 @@ export default function TransactionsPage() {
       setTypeFilter(type)
     }
   }, [searchParams])
-  // Sorting state
+
+  // Sorting state (padrão: crescente por Data da menor para a maior)
   const [sortField, setSortField] = useState<
     'date' | 'description' | 'category' | 'account' | 'amount' | 'paid'
   >('date')
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
 
   // Selection state for batch actions
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -157,6 +158,7 @@ export default function TransactionsPage() {
   const [confirmGenerateOpen, setConfirmGenerateOpen] = useState(false)
 
   // Available unique month/year options from all transactions (including current month)
+  // Baseado na data efetiva de pagamento (payment_date com fallback para date)
   const availableMonths = useMemo(() => {
     const monthSet = new Set<string>()
     // Ensure current month is always present in the options
@@ -164,8 +166,9 @@ export default function TransactionsPage() {
     transactions.forEach((tx) => {
       // Ignorar registros pai na lista de meses disponíveis
       if (isParentTransaction(tx)) return
-      if (tx.date) {
-        const ym = tx.date.substring(0, 7) // "YYYY-MM"
+      const effDate = getTxEffectiveDate(tx)
+      if (effDate) {
+        const ym = effDate.substring(0, 7) // "YYYY-MM"
         if (/^\d{4}-\d{2}$/.test(ym)) {
           monthSet.add(ym)
         }
@@ -190,9 +193,10 @@ export default function TransactionsPage() {
       // Ignore parent installment records (installment_number=0 && installment_total>0)
       if (isParentTransaction(tx)) return false
 
-      // Month filter
+      // Month filter (baseado na data de pagamento com fallback para data da compra)
       if (monthFilter !== 'all') {
-        if (!tx.date || !tx.date.startsWith(monthFilter)) {
+        const effDate = getTxEffectiveDate(tx)
+        if (!effDate || !effDate.startsWith(monthFilter)) {
           return false
         }
       }
@@ -264,8 +268,8 @@ export default function TransactionsPage() {
     list.sort((a, b) => {
       let comparison = 0
       if (sortField === 'date') {
-        const dateA = a.payment_date || a.date
-        const dateB = b.payment_date || b.date
+        const dateA = getTxEffectiveDate(a)
+        const dateB = getTxEffectiveDate(b)
         comparison = new Date(dateA).getTime() - new Date(dateB).getTime()
       } else if (sortField === 'description') {
         comparison = a.description.localeCompare(b.description, 'pt-BR', { sensitivity: 'base' })
@@ -297,7 +301,8 @@ export default function TransactionsPage() {
       setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortField(field)
-      setSortDirection(field === 'date' ? 'desc' : 'asc')
+      // Se clicar em Data, ordenação inicial é crescente ('asc')
+      setSortDirection('asc')
     }
   }
   const sortedCategories = useMemo(() => {

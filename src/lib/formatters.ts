@@ -54,3 +54,18 @@ export function getInitials(name: string): string {
   if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
+
+/**
+ * Obtém a data efetiva de pagamento do lançamento (payment_date com fallback para date).
+ * Usada para ordenação cronológica e agrupamento/filtro por mês na grid e nos relatórios.
+ */
+export function getTxEffectiveDate(tx: {
+  payment_date?: string | null
+  date?: string | null
+}): string {
+  return tx.payment_date && tx.payment_date.trim() !== ''
+    ? tx.payment_date.trim()
+    : tx.date && tx.date.trim() !== ''
+      ? tx.date.trim()
+      : ''
+}

@@ -6,7 +6,7 @@ import { AnimatedCounter } from '@/components/common/AnimatedCounter'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
 import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
-import { formatCurrency, formatDateBR, getGreeting } from '@/lib/formatters'
+import { formatCurrency, formatDateBR, getGreeting, getTxEffectiveDate } from '@/lib/formatters'
 import { isParentTransaction } from '@/lib/transaction-propagation'
 import { Transaction } from '@/types/database'
 import {
@@ -67,11 +67,6 @@ const DONUT_COLORS = [
   '#F97316',
   '#84CC16',
 ]
-
-// Helper para obter a data de pagamento efetiva (com fallback para date)
-function getTxEffectiveDate(t: Transaction): string {
-  return t.payment_date || t.date || ''
-}
 
 export default function Dashboard() {
   const { user } = useAuth()
