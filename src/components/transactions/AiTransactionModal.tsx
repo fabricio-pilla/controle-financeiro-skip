@@ -29,7 +29,7 @@ import {
 } from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
 import { toast } from 'sonner'
-import { formatCurrency } from '@/lib/formatters'
+import { formatCurrency, isFutureDate } from '@/lib/formatters'
 import { calculatePaymentDate } from '@/lib/invoice-helper'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import {
@@ -109,6 +109,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const [amountStr, setAmountStr] = useState('')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0])
+  const [paid, setPaid] = useState<boolean>(true)
   const [accountId, setAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [subcategoryId, setSubcategoryId] = useState('')
@@ -147,7 +148,9 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setAmountStr('')
       const today = new Date().toISOString().split('T')[0]
       setDate(today)
-      setPaymentDate(calculatePaymentDate(today, primaryAccount))
+      const initialPayDate = calculatePaymentDate(today, primaryAccount)
+      setPaymentDate(initialPayDate)
+      setPaid(!isFutureDate(initialPayDate))
       setAccountId(primaryAccount?.id || '')
       setCategoryId('')
       setSubcategoryId('')
@@ -227,14 +230,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
 
         // Se a transação for PIX, payment_date = date (mesmo dia), ignorando fechamento/vencimento
         const isPix = /\bpix\b/i.test(stripAccents(text))
+        let effectiveInterpretedPayDate = chosenPurchaseDate
         if (isPix) {
-          setPaymentDate(chosenPurchaseDate)
+          effectiveInterpretedPayDate = chosenPurchaseDate
         } else {
           // Calcula a data de pagamento conforme fechamento/vencimento do cartão
           const accObj = accounts.find((a) => a.id === resolvedAccId) || null
-          const calculatedPayDate = calculatePaymentDate(chosenPurchaseDate, accObj)
-          setPaymentDate(calculatedPayDate)
+          effectiveInterpretedPayDate = calculatePaymentDate(chosenPurchaseDate, accObj)
         }
+        setPaymentDate(effectiveInterpretedPayDate)
+        setPaid(!isFutureDate(effectiveInterpretedPayDate))
 
         setInstallmentsTotal(result.installments_total)
         setIsRecurring(Boolean(result.is_recurring))
@@ -305,6 +310,10 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       return
     }
 
+    const effectivePaymentDate = paymentDate || date
+    const effectiveIsFuture = isFutureDate(effectivePaymentDate)
+    const effectivePaid = effectiveIsFuture ? false : paid
+
     setIsSubmitting(true)
     try {
       const createdTx = await createTransaction({
@@ -315,7 +324,8 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         category_id: categoryId,
         subcategory_id: subcategoryId || undefined,
         date,
-        payment_date: paymentDate || date,
+        payment_date: effectivePaymentDate,
+        paid: effectivePaid,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
         installments_total: isRecurring ? 0 : installmentsTotal,
@@ -875,6 +885,47 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
                   )}
                 </div>
               )}
+
+              {/* Status Pago / Recebido Switch */}
+              {(() => {
+                const isFuture = isFutureDate(paymentDate || date)
+                const labelText = type === 'receita' ? 'Recebido' : 'Pago'
+                return (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50">
+                      <div className="space-y-0.5">
+                        <Label
+                          htmlFor="ai-paid-toggle"
+                          className={`text-sm font-medium ${
+                            isFuture ? 'text-slate-400' : 'text-slate-800'
+                          }`}
+                        >
+                          {labelText}
+                        </Label>
+                        <p className="text-xs text-slate-500">
+                          {isFuture
+                            ? 'Indica se o lançamento já foi liquidado'
+                            : type === 'receita'
+                              ? 'Marque se este valor já entrou na conta'
+                              : 'Marque se esta conta já foi paga'}
+                        </p>
+                      </div>
+                      <Switch
+                        id="ai-paid-toggle"
+                        checked={isFuture ? false : paid}
+                        disabled={isFuture}
+                        onCheckedChange={(checked) => setPaid(checked)}
+                      />
+                    </div>
+                    {isFuture && (
+                      <p className="text-xs text-amber-700 font-medium px-1 flex items-center gap-1.5 animate-fade-in">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                        Data de pagamento futura — será salvo como pendente
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           )}
 

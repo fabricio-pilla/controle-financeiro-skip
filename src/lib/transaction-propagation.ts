@@ -4,6 +4,7 @@ import { skipCloud } from '@/lib/skip-cloud'
 import { AdaptiveRateLimiter, executeWithRetry, runInPool } from '@/lib/pocketbase/retry'
 import { PropagationChoice } from '@/components/transactions/RecurrencePropagationModal'
 import { computeTargetDate, parseDateParts } from '@/lib/recurring-generation'
+import { isFutureDate, resolvePaidStatus } from '@/lib/formatters'
 
 export interface UpdateTransactionPayload {
   description: string
@@ -530,6 +531,10 @@ export async function updateTransactionWithPropagation({
       ? formData.recurrence_type || transaction.recurrence_type || 'mensal'
       : undefined
 
+    const singlePaymentDate = formData.payment_date || formData.date
+    const desiredPaid = formData.paid !== undefined ? formData.paid : transaction.paid
+    const effectivePaid = resolvePaidStatus(singlePaymentDate, desiredPaid)
+
     const updated = await skipCloud.updateTransaction(transaction.id, {
       description: formData.description.trim(),
       amount: formData.amount,
@@ -538,7 +543,8 @@ export async function updateTransactionWithPropagation({
       category_id: formData.category_id,
       subcategory_id: formData.subcategory_id || '',
       date: formData.date,
-      payment_date: formData.payment_date || formData.date,
+      payment_date: singlePaymentDate,
+      paid: effectivePaid,
       notes: formData.notes?.trim() || '',
       is_recurring: effectiveIsRecurring,
       recurrence_type: effectiveRecurrenceType,
@@ -654,6 +660,13 @@ async function handleInstallmentPropagation({
         }
       }
 
+      const isTargetFuture = isFutureDate(itemPaymentDate)
+      const targetPaid = isTargetFuture
+        ? false
+        : item.id === transaction.id && formData.paid !== undefined
+          ? formData.paid
+          : item.paid
+
       return await skipCloud.updateTransaction(
         item.id,
         {
@@ -665,6 +678,7 @@ async function handleInstallmentPropagation({
           subcategory_id: formData.subcategory_id || '',
           date: itemDate,
           payment_date: itemPaymentDate,
+          paid: targetPaid,
           notes: formData.notes?.trim() || '',
           installment_number: itemNum,
           installments_total: newTotal,
@@ -939,6 +953,13 @@ async function handleRecurringPropagation({
         ? effectiveRecurrenceType || item.recurrence_type || 'mensal'
         : undefined
 
+      const isTargetFuture = isFutureDate(targetPaymentDate)
+      const targetPaid = isTargetFuture
+        ? false
+        : item.id === transaction.id && formData.paid !== undefined
+          ? formData.paid
+          : item.paid
+
       return await skipCloud.updateTransaction(
         item.id,
         {
@@ -950,6 +971,7 @@ async function handleRecurringPropagation({
           subcategory_id: formData.subcategory_id || '',
           date: targetDate,
           payment_date: targetPaymentDate,
+          paid: targetPaid,
           notes: formData.notes?.trim() || '',
           is_recurring: itemIsRecurring,
           recurrence_type: itemRecurrenceType,
@@ -1150,6 +1172,7 @@ async function handleRecurringPropagation({
           // D. Atualizar o registro existente com o novo valor em vez de criar duplicata
           const alreadyUpdated = updatedItems.some((u) => u.id === existingTxInControl.id)
           if (!alreadyUpdated) {
+            const isCandFuture = isFutureDate(candidate.payment_date || candidate.date)
             const updatedExisting = await skipCloud.updateTransaction(
               existingTxInControl.id,
               {
@@ -1161,6 +1184,7 @@ async function handleRecurringPropagation({
                 subcategory_id: candidate.subcategory_id || '',
                 date: candidate.date,
                 payment_date: candidate.payment_date,
+                paid: isCandFuture ? false : existingTxInControl.paid,
                 notes: candidate.notes,
                 is_recurring: true,
                 recurrence_type: candidate.recurrence_type,

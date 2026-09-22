@@ -31,8 +31,9 @@ import {
   CreditCard,
   Package,
   Repeat,
+  AlertCircle,
 } from 'lucide-react'
-import { formatCurrency } from '@/lib/formatters'
+import { formatCurrency, isFutureDate } from '@/lib/formatters'
 import { calculatePaymentDate } from '@/lib/invoice-helper'
 import { RecurrencePropagationModal, PropagationChoice } from './RecurrencePropagationModal'
 import {
@@ -134,6 +135,9 @@ export function TransactionModal({
   const [paymentDate, setPaymentDate] = useState(
     transaction?.payment_date || transaction?.date || new Date().toISOString().split('T')[0],
   )
+  const [paid, setPaid] = useState<boolean>(
+    transaction?.paid !== undefined ? Boolean(transaction.paid) : true,
+  )
   const [isRecurring, setIsRecurring] = useState(
     transaction ? isRecurringTransaction(transaction) : false,
   )
@@ -156,7 +160,15 @@ export function TransactionModal({
       setCategoryId(transaction.category_id)
       setSubcategoryId(transaction.subcategory_id || '')
       setDate(transaction.date)
-      setPaymentDate(transaction.payment_date || transaction.date)
+      const payD = transaction.payment_date || transaction.date
+      setPaymentDate(payD)
+      setPaid(
+        isFutureDate(payD)
+          ? false
+          : transaction.paid !== undefined
+            ? Boolean(transaction.paid)
+            : true,
+      )
       setIsRecurring(isRecurringTransaction(transaction))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
       setNotes(transaction.notes || '')
@@ -170,7 +182,9 @@ export function TransactionModal({
       setAccountId(acc?.id || '')
       setSubcategoryId('')
       setDate(today)
-      setPaymentDate(calculatePaymentDate(today, acc))
+      const initialPayDate = calculatePaymentDate(today, acc)
+      setPaymentDate(initialPayDate)
+      setPaid(!isFutureDate(initialPayDate))
       setIsRecurring(false)
       setNotes('')
       setInstallmentsTotal(1)
@@ -304,6 +318,10 @@ export function TransactionModal({
       return
     }
 
+    const effectivePaymentDate = paymentDate || date
+    const effectiveIsFuture = isFutureDate(effectivePaymentDate)
+    const effectivePaid = effectiveIsFuture ? false : paid
+
     const payload: UpdateTransactionPayload = {
       description: description.trim(),
       amount: parsedAmount,
@@ -312,7 +330,8 @@ export function TransactionModal({
       category_id: categoryId,
       subcategory_id: subcategoryId || undefined,
       date,
-      payment_date: paymentDate || date,
+      payment_date: effectivePaymentDate,
+      paid: effectivePaid,
       is_recurring: isRecurring,
       recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
       notes: notes.trim(),
@@ -367,7 +386,8 @@ export function TransactionModal({
         category_id: categoryId,
         subcategory_id: subcategoryId || undefined,
         date,
-        payment_date: paymentDate || date,
+        payment_date: effectivePaymentDate,
+        paid: effectivePaid,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
         notes,
@@ -830,6 +850,47 @@ export function TransactionModal({
               )}
             </div>
           )}
+
+          {/* Status Pago / Recebido Switch */}
+          {(() => {
+            const isFuture = isFutureDate(paymentDate || date)
+            const labelText = type === 'receita' ? 'Recebido' : 'Pago'
+            return (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50">
+                  <div className="space-y-0.5">
+                    <Label
+                      htmlFor="tx-paid-toggle"
+                      className={`text-sm font-medium ${
+                        isFuture ? 'text-slate-400' : 'text-slate-800'
+                      }`}
+                    >
+                      {labelText}
+                    </Label>
+                    <p className="text-xs text-slate-500">
+                      {isFuture
+                        ? 'Indica se o lançamento já foi liquidado'
+                        : type === 'receita'
+                          ? 'Marque se este valor já entrou na conta'
+                          : 'Marque se esta conta já foi paga'}
+                    </p>
+                  </div>
+                  <Switch
+                    id="tx-paid-toggle"
+                    checked={isFuture ? false : paid}
+                    disabled={isFuture}
+                    onCheckedChange={(checked) => setPaid(checked)}
+                  />
+                </div>
+                {isFuture && (
+                  <p className="text-xs text-amber-700 font-medium px-1 flex items-center gap-1.5 animate-fade-in">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                    Data de pagamento futura — será salvo como pendente
+                  </p>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Notes */}
           <div className="space-y-1.5">

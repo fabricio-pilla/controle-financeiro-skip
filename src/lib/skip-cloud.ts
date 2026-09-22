@@ -18,6 +18,7 @@ import {
   UserRole,
 } from '@/types/database'
 import pb from '@/lib/pocketbase/client'
+import { resolvePaidStatus, isFutureDate } from '@/lib/formatters'
 
 export const DEFAULT_CATEGORIES = [
   {
@@ -1219,6 +1220,7 @@ class SkipCloudService {
       type: TransactionType
       date: string
       payment_date?: string
+      paid?: boolean
       is_recurring?: boolean
       recurrence_type?: any
       notes?: string
@@ -1239,6 +1241,7 @@ class SkipCloudService {
 
     try {
       const basePaymentDate = data.payment_date || data.date
+      const desiredPaid = data.paid !== undefined ? Boolean(data.paid) : true
 
       if (installmentsTotal > 1) {
         const totalAmount = Number(data.amount)
@@ -1252,6 +1255,9 @@ class SkipCloudService {
         for (let i = 1; i <= installmentsTotal; i++) {
           const parcelAmount =
             i === 1 ? Math.round((baseAmount + remainder) * 100) / 100 : baseAmount
+          const parcelPaymentDate = addMonths(basePaymentDate, i - 1)
+          const parcelPaid = resolvePaidStatus(parcelPaymentDate, i === 1 ? desiredPaid : false)
+
           const payload: any = {
             control_id: companyId,
             user_id: userId,
@@ -1262,8 +1268,8 @@ class SkipCloudService {
             subcategory_id: data.subcategory_id || '',
             account_id: data.account_id,
             date: addMonths(baseDate, i - 1),
-            payment_date: addMonths(basePaymentDate, i - 1),
-            paid: true,
+            payment_date: parcelPaymentDate,
+            paid: parcelPaid,
             is_recurring: Boolean(data.is_recurring),
             recurrence_type: data.recurrence_type || '',
             installments_total: installmentsTotal,
@@ -1292,6 +1298,8 @@ class SkipCloudService {
 
       // Single transaction
       const isRec = Boolean(data.is_recurring)
+      const singlePaid = resolvePaidStatus(basePaymentDate, desiredPaid)
+
       const payload: any = {
         control_id: companyId,
         user_id: userId,
@@ -1303,7 +1311,7 @@ class SkipCloudService {
         account_id: data.account_id,
         date: data.date,
         payment_date: basePaymentDate,
-        paid: true,
+        paid: singlePaid,
         is_recurring: isRec,
         recurring: isRec,
         recurrence_type: isRec ? data.recurrence_type || 'mensal' : '',
@@ -1376,7 +1384,17 @@ class SkipCloudService {
         payload.recurring = data.is_recurring
       }
       if (data.recurrence_type !== undefined) payload.recurrence_type = data.recurrence_type || ''
-      if (data.paid !== undefined) payload.paid = data.paid
+      if (data.paid !== undefined) {
+        payload.paid = data.paid
+      }
+      // Se a data de pagamento informada (ou já existente) for futura, forçar paid: false
+      const effectivePaymentDateForUpdate =
+        payload.payment_date !== undefined
+          ? payload.payment_date
+          : existing?.payment_date || existing?.date
+      if (isFutureDate(effectivePaymentDateForUpdate)) {
+        payload.paid = false
+      }
       if (data.parent_transaction_id !== undefined)
         payload.parent_transaction_id = data.parent_transaction_id
       if (data.installment_number !== undefined)

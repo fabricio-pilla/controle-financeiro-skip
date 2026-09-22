@@ -69,3 +69,42 @@ export function getTxEffectiveDate(tx: {
       ? tx.date.trim()
       : ''
 }
+
+/**
+ * Retorna a data local atual no formato YYYY-MM-DD.
+ * Evita desvios causados por fuso horário ao usar toISOString().
+ */
+export function getTodayLocalDateStr(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
+ * Retorna se uma string de data (YYYY-MM-DD ou com timestamp ISO) é estritamente futura
+ * em relação à data local de hoje (comparando apenas a parte YYYY-MM-DD).
+ */
+export function isFutureDate(dateStr?: string | null): boolean {
+  if (!dateStr) return false
+  const clean = String(dateStr).trim().split(/[T\s]/)[0]
+  if (!clean || clean.length < 10) return false
+  const today = getTodayLocalDateStr()
+  return clean > today
+}
+
+/**
+ * Determina o status pago/recebido de uma transação.
+ * Se a data de pagamento for estritamente futura, o status é obrigatoriamente false (pendente).
+ * Se for hoje ou passada, respeita o valor desejado (desiredPaid, padrão true).
+ */
+export function resolvePaidStatus(
+  paymentDateStr?: string | null,
+  desiredPaid: boolean = true,
+): boolean {
+  if (isFutureDate(paymentDateStr)) {
+    return false
+  }
+  return desiredPaid
+}

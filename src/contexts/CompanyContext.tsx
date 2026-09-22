@@ -116,6 +116,7 @@ interface CompanyContextType {
     type: TransactionType
     date: string
     payment_date?: string
+    paid?: boolean
     is_recurring?: boolean
     recurrence_type?: any
     notes?: string
@@ -440,6 +441,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       type: TransactionType
       date: string
       payment_date?: string
+      paid?: boolean
       is_recurring?: boolean
       recurrence_type?: any
       notes?: string
