@@ -4,7 +4,20 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { PALETTE_COLORS } from '@/lib/skip-cloud'
 import { toast } from 'sonner'
-import { Building2, Sliders, LogOut, AlertTriangle, Loader2, Trash2, Calendar } from 'lucide-react'
+import {
+  Building2,
+  Sliders,
+  LogOut,
+  AlertTriangle,
+  Loader2,
+  Trash2,
+  Calendar,
+  Sparkles,
+  Brain,
+} from 'lucide-react'
+import { AiLearning } from '@/types/database'
+import { skipCloud } from '@/lib/skip-cloud'
+import { formatDateBR } from '@/lib/formatters'
 import pb from '@/lib/pocketbase/client'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -60,6 +73,41 @@ export default function SettingsPage() {
   const [emailNotifications, setEmailNotifications] = useState(true)
   const [dateFormat] = useState('DD/MM/YYYY')
   const [currency] = useState('BRL (R$)')
+
+  // Tab: Aprendizado da IA
+  const [learnings, setLearnings] = useState<AiLearning[]>([])
+  const [isLoadingLearnings, setIsLoadingLearnings] = useState(false)
+  const [deletingLearningId, setDeletingLearningId] = useState<string | null>(null)
+
+  const loadLearnings = React.useCallback(async () => {
+    if (!currentCompany?.id) return
+    setIsLoadingLearnings(true)
+    try {
+      const data = await skipCloud.getAiLearnings(currentCompany.id)
+      setLearnings(data)
+    } finally {
+      setIsLoadingLearnings(false)
+    }
+  }, [currentCompany?.id])
+
+  React.useEffect(() => {
+    loadLearnings()
+  }, [loadLearnings])
+
+  const handleDeleteLearning = async (learningId: string) => {
+    setDeletingLearningId(learningId)
+    try {
+      const ok = await skipCloud.deleteAiLearning(learningId)
+      if (ok) {
+        setLearnings((prev) => prev.filter((item) => item.id !== learningId))
+        toast.success('Aprendizado removido com sucesso!')
+      } else {
+        toast.error('Não foi possível remover o aprendizado.')
+      }
+    } finally {
+      setDeletingLearningId(null)
+    }
+  }
 
   // Tab 4: Limpeza de Dados
   const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false)
@@ -587,13 +635,20 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="controle" className="space-y-6">
-        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-4 max-w-xl">
+        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-5 max-w-2xl">
           <TabsTrigger
             value="controle"
             className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
           >
             <Building2 className="w-4 h-4" />
             <span>Controle</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="aprendizado"
+            className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
+          >
+            <Brain className="w-4 h-4" />
+            <span>Aprendizado IA</span>
           </TabsTrigger>
           <TabsTrigger
             value="preferencias"
@@ -690,6 +745,141 @@ export default function SettingsPage() {
                 </Button>
               </div>
             </form>
+          </div>
+        </TabsContent>
+
+        {/* TAB: APRENDIZADO DA IA */}
+        <TabsContent value="aprendizado" className="space-y-6 focus-visible:outline-none">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-violet-100 text-violet-700">
+                    <Brain className="w-5 h-5" />
+                  </div>
+                  <h2 className="text-base font-bold text-slate-900">Aprendizado da IA</h2>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Sempre que você corrige uma classificação feita pela IA, o sistema aprende suas
+                  preferências e melhora os próximos lançamentos automaticamente.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={loadLearnings}
+                  disabled={isLoadingLearnings}
+                  className="rounded-xl text-xs font-semibold"
+                >
+                  {isLoadingLearnings ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      Atualizando...
+                    </>
+                  ) : (
+                    'Atualizar Lista'
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {isLoadingLearnings ? (
+              <div className="py-12 flex flex-col items-center justify-center text-slate-400 space-y-2">
+                <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                <span className="text-xs">Carregando histórico de aprendizado...</span>
+              </div>
+            ) : learnings.length === 0 ? (
+              <div className="py-12 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-center p-6 space-y-3">
+                <div className="p-3 bg-violet-50 text-violet-600 rounded-2xl">
+                  <Sparkles className="w-6 h-6" />
+                </div>
+                <div className="max-w-sm">
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Nenhum aprendizado registrado ainda
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Crie um lançamento pela IA e, se você precisar ajustar categoria, subcategoria
+                    ou tipo ao editar, a IA aprenderá sua preferência automaticamente.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="text-xs font-medium text-slate-500 flex items-center justify-between">
+                  <span>{learnings.length} regra(s) aprendida(s)</span>
+                  <span>Prioridade máxima sobre regras genéricas</span>
+                </div>
+
+                <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden bg-slate-50/40">
+                  {learnings.map((item) => {
+                    const corrCatName = item.corrected_category?.name || 'Categoria ajustada'
+                    const corrSubName = item.corrected_subcategory?.name
+                    const corrTypeName =
+                      item.corrected_type === 'receita'
+                        ? 'Receita'
+                        : item.corrected_type === 'despesa'
+                          ? 'Despesa'
+                          : undefined
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors"
+                      >
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-900 break-words">
+                              «{item.original_text}»
+                            </span>
+                            <span className="text-slate-400 text-xs">→</span>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              {corrTypeName && <span>[{corrTypeName}]</span>}
+                              <span>{corrCatName}</span>
+                              {corrSubName && (
+                                <span className="text-emerald-600">/ {corrSubName}</span>
+                              )}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-[11px] text-slate-500 flex-wrap">
+                            <span>Registrado em: {formatDateBR(item.created_at)}</span>
+                            {item.corrected_description && (
+                              <span>
+                                Descrição corrigida: <strong>{item.corrected_description}</strong>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={deletingLearningId === item.id}
+                            onClick={() => handleDeleteLearning(item.id)}
+                            className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 h-9 px-3 rounded-xl text-xs"
+                            title="Remover aprendizado"
+                          >
+                            {deletingLearningId === item.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-rose-600" />
+                            ) : (
+                              <>
+                                <Trash2 className="w-4 h-4 mr-1.5" />
+                                <span>Remover</span>
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </TabsContent>
 

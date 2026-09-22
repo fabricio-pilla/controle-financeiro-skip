@@ -13,6 +13,7 @@ import {
   Category,
   Subcategory,
   Transaction,
+  AiLearning,
   AccountType,
   TransactionType,
   UserRole,
@@ -355,6 +356,45 @@ function mapSubcategory(r: any, categoriesCache?: Record<string, Category>): Sub
     icon: r.icon || undefined,
     created_at: r.created || new Date().toISOString(),
     category: cat,
+  }
+}
+
+function mapAiLearning(
+  r: any,
+  categoriesCache?: Record<string, Category>,
+  subcategoriesCache?: Record<string, Subcategory>,
+): AiLearning {
+  const aiCat = r.expand?.ai_category_id
+    ? mapCategory(r.expand.ai_category_id)
+    : categoriesCache?.[r.ai_category_id]
+  const aiSubcat = r.expand?.ai_subcategory_id
+    ? mapSubcategory(r.expand.ai_subcategory_id, categoriesCache)
+    : subcategoriesCache?.[r.ai_subcategory_id]
+  const corrCat = r.expand?.corrected_category_id
+    ? mapCategory(r.expand.corrected_category_id)
+    : categoriesCache?.[r.corrected_category_id]
+  const corrSubcat = r.expand?.corrected_subcategory_id
+    ? mapSubcategory(r.expand.corrected_subcategory_id, categoriesCache)
+    : subcategoriesCache?.[r.corrected_subcategory_id]
+
+  return {
+    id: r.id,
+    control_id: r.control_id || '',
+    user_id: r.user_id || '',
+    original_text: r.original_text || '',
+    ai_category_id: r.ai_category_id || undefined,
+    ai_subcategory_id: r.ai_subcategory_id || undefined,
+    ai_type: (r.ai_type as TransactionType) || undefined,
+    ai_description: r.ai_description || undefined,
+    corrected_category_id: r.corrected_category_id || undefined,
+    corrected_subcategory_id: r.corrected_subcategory_id || undefined,
+    corrected_type: (r.corrected_type as TransactionType) || undefined,
+    corrected_description: r.corrected_description || undefined,
+    created_at: r.created || new Date().toISOString(),
+    ai_category: aiCat,
+    ai_subcategory: aiSubcat,
+    corrected_category: corrCat,
+    corrected_subcategory: corrSubcat,
   }
 }
 
@@ -1481,6 +1521,123 @@ class SkipCloudService {
       return updatedRecords
     } catch (e: any) {
       throw pbErr(e)
+    }
+  }
+
+  // --- AI LEARNINGS ---
+  async getAiLearnings(companyId: string): Promise<AiLearning[]> {
+    try {
+      const recs = await pb.collection('ai_learnings').getFullList({
+        filter: `control_id="${companyId}"`,
+        sort: '-created',
+        expand: 'ai_category_id,ai_subcategory_id,corrected_category_id,corrected_subcategory_id',
+      })
+      return recs.map((r: any) => mapAiLearning(r))
+    } catch {
+      return []
+    }
+  }
+
+  async saveAiLearning(
+    companyId: string,
+    data: {
+      original_text: string
+      ai_category_id?: string
+      ai_subcategory_id?: string
+      ai_type?: TransactionType
+      ai_description?: string
+      corrected_category_id?: string
+      corrected_subcategory_id?: string
+      corrected_type?: TransactionType
+      corrected_description?: string
+    },
+  ): Promise<AiLearning | null> {
+    const userId = (pb.authStore.model as any)?.id || ''
+    const normText = data.original_text.trim().toLowerCase()
+    if (!normText) return null
+
+    try {
+      const { executeWithRetry } = await import('@/lib/pocketbase/retry')
+
+      // Verificar se já existe registro com o mesmo texto original para este controle/usuário
+      const existingList = await executeWithRetry(
+        () =>
+          pb.collection('ai_learnings').getList(1, 10, {
+            filter: `control_id="${companyId}"`,
+          }),
+        2,
+        300,
+        'CHECK_AI_LEARNING',
+      )
+
+      const existing = existingList.items.find(
+        (item: any) => (item.original_text || '').trim().toLowerCase() === normText,
+      )
+
+      const payload: any = {
+        control_id: companyId,
+        user_id: userId,
+        original_text: data.original_text.trim(),
+        ai_category_id: data.ai_category_id || '',
+        ai_subcategory_id: data.ai_subcategory_id || '',
+        ai_type: data.ai_type || '',
+        ai_description: data.ai_description?.trim() || '',
+        corrected_category_id: data.corrected_category_id || '',
+        corrected_subcategory_id: data.corrected_subcategory_id || '',
+        corrected_type: data.corrected_type || '',
+        corrected_description: data.corrected_description?.trim() || '',
+      }
+
+      if (existing) {
+        // Se a correção já for idêntica, não duplica nem regrava
+        const sameCat =
+          (existing.corrected_category_id || '') === (payload.corrected_category_id || '')
+        const sameSub =
+          (existing.corrected_subcategory_id || '') === (payload.corrected_subcategory_id || '')
+        const sameType = (existing.corrected_type || '') === (payload.corrected_type || '')
+        const sameDesc =
+          (existing.corrected_description || '').trim() ===
+          (payload.corrected_description || '').trim()
+
+        if (sameCat && sameSub && sameType && sameDesc) {
+          return mapAiLearning(existing)
+        }
+
+        // Se a correção mudou, atualiza o registro existente
+        const updated = await executeWithRetry(
+          () => pb.collection('ai_learnings').update(existing.id, payload),
+          3,
+          400,
+          'UPDATE_AI_LEARNING',
+        )
+        return mapAiLearning(updated)
+      }
+
+      const created = await executeWithRetry(
+        () => pb.collection('ai_learnings').create(payload),
+        3,
+        400,
+        'CREATE_AI_LEARNING',
+      )
+      return mapAiLearning(created)
+    } catch {
+      // Falha silenciosa para não quebrar fluxos
+      return null
+    }
+  }
+
+  async deleteAiLearning(learningId: string): Promise<boolean> {
+    try {
+      const { executeWithRetry } = await import('@/lib/pocketbase/retry')
+      await executeWithRetry(
+        () => pb.collection('ai_learnings').delete(learningId),
+        3,
+        400,
+        'DELETE_AI_LEARNING',
+      )
+      return true
+    } catch {
+      return false
     }
   }
 

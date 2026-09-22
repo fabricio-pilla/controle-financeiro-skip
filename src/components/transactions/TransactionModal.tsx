@@ -42,6 +42,7 @@ import {
   isRecurringTransaction,
 } from '@/lib/transaction-propagation'
 import { isCategoryAllowedForType } from '@/lib/nlp-parser'
+import { trackAiCorrectionSilently } from '@/lib/ai-learning-tracker'
 
 interface TransactionModalProps {
   open: boolean
@@ -240,6 +241,16 @@ export function TransactionModal({
         formData,
         choice,
       })
+
+      // Gravação silenciosa de aprendizado da IA se for edição corretiva
+      if (currentCompany) {
+        trackAiCorrectionSilently(currentCompany.id, transaction, {
+          category_id: formData.category_id,
+          subcategory_id: formData.subcategory_id,
+          type: formData.type,
+          description: formData.description,
+        })
+      }
 
       // Immediately apply batch changes to context state (no blocking reload)
       applyTransactionsBatchUpdate(result)

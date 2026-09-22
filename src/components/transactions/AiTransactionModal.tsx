@@ -21,13 +21,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useCompany } from '@/contexts/CompanyContext'
-import { TransactionType, RecurrenceType, Account } from '@/types/database'
+import { TransactionType, RecurrenceType, Account, AiLearning } from '@/types/database'
 import {
   parseNaturalLanguageTransaction,
   isCategoryAllowedForType,
   stripAccents,
 } from '@/lib/nlp-parser'
 import type { ParsedTransaction } from '@/lib/nlp-parser'
+import { skipCloud } from '@/lib/skip-cloud'
 import { toast } from 'sonner'
 import { formatCurrency, isFutureDate } from '@/lib/formatters'
 import { calculatePaymentDate } from '@/lib/invoice-helper'
@@ -116,6 +117,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
   const [isRecurring, setIsRecurring] = useState(false)
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('mensal')
   const [installmentsTotal, setInstallmentsTotal] = useState(1)
+  const [learnings, setLearnings] = useState<AiLearning[]>([])
 
   // Assistente de voz (Web Speech API)
   const {
@@ -136,6 +138,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       toast.error(err)
     },
   })
+
+  // Carregar aprendizados da IA para enriquecer o contexto
+  React.useEffect(() => {
+    if (open && currentCompany) {
+      skipCloud
+        .getAiLearnings(currentCompany.id)
+        .then(setLearnings)
+        .catch(() => {})
+    }
+  }, [open, currentCompany])
 
   // Reset when modal opens/closes
   React.useEffect(() => {
@@ -214,7 +226,13 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
     // Simulate small delay for UX feedback
     setTimeout(() => {
       try {
-        const result = parseNaturalLanguageTransaction(text, accounts, categories, subcategories)
+        const result = parseNaturalLanguageTransaction(
+          text,
+          accounts,
+          categories,
+          subcategories,
+          learnings,
+        )
         setParsed(result)
         setType(result.type)
         setDescription(result.description)
@@ -316,6 +334,15 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
 
     setIsSubmitting(true)
     try {
+      const aiMeta = {
+        orig: text.trim(),
+        cat: parsed?.category_id || '',
+        sub: parsed?.subcategory_id || '',
+        typ: parsed?.type || type,
+        desc: parsed?.description || '',
+      }
+      const aiNotesTag = `[IA:${JSON.stringify(aiMeta)}]`
+
       const createdTx = await createTransaction({
         description,
         amount: parsedAmount,
@@ -328,6 +355,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         paid: effectivePaid,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
+        notes: aiNotesTag,
         installments_total: isRecurring ? 0 : installmentsTotal,
       })
       toast.success(

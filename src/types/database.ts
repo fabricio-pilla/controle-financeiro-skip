@@ -102,6 +102,27 @@ export interface Transaction {
   user?: User
 }
 
+export interface AiLearning {
+  id: string
+  control_id: string
+  user_id: string
+  original_text: string
+  ai_category_id?: string
+  ai_subcategory_id?: string
+  ai_type?: TransactionType
+  ai_description?: string
+  corrected_category_id?: string
+  corrected_subcategory_id?: string
+  corrected_type?: TransactionType
+  corrected_description?: string
+  created_at: string
+  // Populated for UI display
+  ai_category?: Category
+  ai_subcategory?: Subcategory
+  corrected_category?: Category
+  corrected_subcategory?: Subcategory
+}
+
 export interface CompanyPreferences {
   currency: string
   dateFormat: string

@@ -1,4 +1,12 @@
-import { Account, Category, Subcategory, TransactionType, RecurrenceType } from '@/types/database'
+import {
+  Account,
+  Category,
+  Subcategory,
+  TransactionType,
+  RecurrenceType,
+  AiLearning,
+} from '@/types/database'
+import { applyLearningsToClassification } from '@/lib/ai-learning-matcher'
 
 export interface ParsedTransaction {
   description: string
@@ -1466,11 +1474,18 @@ export function parseNaturalLanguageTransaction(
   accounts: Account[],
   categories: Category[],
   subcategories: Subcategory[] = [],
+  learnings: AiLearning[] = [],
 ): ParsedTransaction {
   const normalized = stripAccents(text.toLowerCase())
 
-  // 1. First extract Type (receita / despesa) from text cues
+  // 0. Check user AI learning history first (prioritized context)
+  const learningResult = applyLearningsToClassification(text, learnings, categories, subcategories)
+
+  // 1. First extract Type (receita / despesa) from text cues or learned correction
   let typeResult = extractType(normalized)
+  if (learningResult.type) {
+    typeResult = { type: learningResult.type, matched: true }
+  }
 
   // 2. If type was not conclusively matched by text keywords, do a preliminary category/subcategory match to check cues
   if (!typeResult.matched) {
@@ -1484,8 +1499,33 @@ export function parseNaturalLanguageTransaction(
 
   // 3. Extract category & subcategory strictly filtered by the detected type
   const compatibleCategories = categories.filter((c) => c.type === typeResult.type)
-  const { category, subcategory, categoryMatched, subcategoryMatched } =
+  let { category, subcategory, categoryMatched, subcategoryMatched } =
     extractCategoryAndSubcategory(normalized, compatibleCategories, subcategories, typeResult.type)
+
+  // Se o aprendizado tiver alta correspondência, sobrepor categoria/subcategoria
+  if (learningResult.categoryId) {
+    const learnedCat = categories.find((c) => c.id === learningResult.categoryId)
+    if (learnedCat) {
+      category = learnedCat
+      categoryMatched = true
+      if (learningResult.subcategoryId) {
+        const learnedSub = subcategories.find(
+          (s) => s.id === learningResult.subcategoryId && s.category_id === learnedCat.id,
+        )
+        if (learnedSub) {
+          subcategory = learnedSub
+          subcategoryMatched = true
+        } else {
+          // Também aceitar se o subcat pertencer à categoria
+          const anySub = subcategories.find((s) => s.id === learningResult.subcategoryId)
+          if (anySub) {
+            subcategory = anySub
+            subcategoryMatched = true
+          }
+        }
+      }
+    }
+  }
 
   // 3. Extract Recurrence
   const recurrenceResult = extractRecurrence(normalized)
@@ -1498,8 +1538,8 @@ export function parseNaturalLanguageTransaction(
   const installments = extractInstallments(text)
   const amount = extractAmount(text)
 
-  // 6. Build clean description
-  const description = buildDescription(
+  // 6. Build clean description (usar descrição corrigida se o aprendizado indicar)
+  let description = buildDescription(
     text,
     amount,
     installments,
@@ -1508,6 +1548,9 @@ export function parseNaturalLanguageTransaction(
     accounts,
     categories,
   )
+  if (learningResult.description && learningResult.description.trim()) {
+    description = learningResult.description.trim()
+  }
 
   return {
     description,
