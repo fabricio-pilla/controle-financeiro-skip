@@ -7,6 +7,8 @@ describe('Transactions Sorting and Grouping by Effective Payment Date', () => {
     id: 'tx-' + Math.random().toString(36).substring(2, 9),
     control_id: 'ctrl-1',
     user_id: 'user-1',
+    account_id: 'acc-1',
+    category_id: 'cat-1',
     type: 'despesa',
     amount: 100,
     description: 'Item Teste',
