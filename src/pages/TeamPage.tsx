@@ -264,7 +264,7 @@ export default function TeamPage() {
 
                     <td className="py-3.5 px-4 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        {(canManageTeam || isCurrentUser) && mem.user_id && (
+                        {canManageTeam || isCurrentUser ? (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -277,7 +277,7 @@ export default function TeamPage() {
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
-                        )}
+                        ) : null}
 
                         {canManageTeam && !isCurrentUser && (isOwner || mem.role !== 'owner') ? (
                           <Button

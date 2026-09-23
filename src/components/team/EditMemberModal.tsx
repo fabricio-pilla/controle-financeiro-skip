@@ -74,8 +74,14 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!member || !member.user_id) {
-      toast.error('Colaborador ainda não cadastrou uma conta ou usuário inválido.')
+    if (!member) {
+      toast.error('Nenhum colaborador selecionado.')
+      return
+    }
+
+    const targetUserId = member.user_id || member.user?.id
+    if (!targetUserId || member.status === 'pending') {
+      toast.info('Este colaborador ainda não criou a conta; apenas o convite pode ser gerenciado.')
       return
     }
 
@@ -97,7 +103,7 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
 
     setIsSubmitting(true)
     try {
-      await updateMemberProfile(member.user_id, {
+      await updateMemberProfile(targetUserId, {
         name: name.trim(),
         password: newPassword ? newPassword : undefined,
         avatarFile: selectedFile,
@@ -110,7 +116,11 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
       toast.success('Dados do colaborador atualizados com sucesso!')
       onOpenChange(false)
     } catch (err: any) {
-      const msg = err?.message || 'Falha ao atualizar dados do colaborador.'
+      // Usar console.warn se necessário diagnosticar sem acionar alarmes de runtime
+      console.warn('Falha ao atualizar colaborador:', err)
+      const msg =
+        err?.message ||
+        'Não foi possível atualizar os dados do colaborador. Verifique sua conexão e tente novamente.'
       toast.error(msg)
     } finally {
       setIsSubmitting(false)
@@ -145,13 +155,25 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
             <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
             <span>Apenas administradores podem editar outros colaboradores.</span>
           </div>
-        ) : !member?.user_id ? (
-          <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
-            <p className="font-semibold mb-1">Convite pendente</p>
+        ) : !member?.user_id || member?.status === 'pending' ? (
+          <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 space-y-2">
+            <p className="font-semibold">Convite pendente</p>
             <p>
-              Este colaborador ({displayEmail}) ainda não concluiu o cadastro no sistema. O nome,
-              senha e foto poderão ser editados assim que ele criar sua conta.
+              Este colaborador ({displayEmail}) ainda não criou a conta; só o convite pode ser
+              gerenciado. O nome, senha e foto de perfil poderão ser editados assim que ele concluir
+              o cadastro.
             </p>
+            <div className="pt-2 flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onOpenChange(false)}
+                className="rounded-lg text-xs"
+              >
+                Fechar
+              </Button>
+            </div>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4 pt-2">

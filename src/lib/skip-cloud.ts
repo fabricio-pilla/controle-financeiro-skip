@@ -925,19 +925,45 @@ class SkipCloudService {
     }
   }
 
-  async updateMemberRole(memberId: string, role: UserRole): Promise<CompanyMember> {
+  async updateMemberRole(memberOrUserId: string, role: UserRole): Promise<CompanyMember> {
     try {
+      if (!memberOrUserId || typeof memberOrUserId !== 'string') {
+        throw new Error('Identificador de colaborador inválido.')
+      }
+      // Resolver se foi passado o ID de control_members ou o user_id
+      let targetMemberId = memberOrUserId.trim()
+      let memberRec: any = null
+      try {
+        memberRec = await pb.collection('control_members').getOne(targetMemberId)
+      } catch (notFoundErr: any) {
+        // Tentar encontrar por user_id em control_members
+        try {
+          const found = await pb
+            .collection('control_members')
+            .getFirstListItem(`user_id="${targetMemberId}"`)
+          if (found) {
+            targetMemberId = found.id
+            memberRec = found
+          }
+        } catch {
+          throw pbErr(notFoundErr)
+        }
+      }
+
+      if (!memberRec) {
+        memberRec = await pb.collection('control_members').getOne(targetMemberId)
+      }
+
       // Prevent demoting the last owner
-      const member = await pb.collection('control_members').getOne(memberId)
-      if (member.role === 'owner' && role !== 'owner') {
+      if (memberRec.role === 'owner' && role !== 'owner') {
         const owners = await pb.collection('control_members').getFullList({
-          filter: `control_id="${member.control_id}" && role="owner" && status="active"`,
+          filter: `control_id="${memberRec.control_id}" && role="owner" && status="active"`,
         })
         if (owners.length <= 1) {
           throw new Error('O controle deve possuir pelo menos um Proprietário.')
         }
       }
-      const r = await pb.collection('control_members').update(memberId, { role })
+      const r = await pb.collection('control_members').update(targetMemberId, { role })
       return mapMember(r)
     } catch (e: any) {
       throw pbErr(e)
@@ -954,57 +980,118 @@ class SkipCloudService {
     },
   ): Promise<User> {
     try {
-      const isSelf = pb.authStore.model?.id === targetUserId
+      // Validação defensiva: se não houver targetUserId válido, lança erro amigável
+      if (!targetUserId || typeof targetUserId !== 'string' || !targetUserId.trim()) {
+        throw new Error('Identificador de usuário inválido ou colaborador sem conta ativa.')
+      }
 
-      // 1. If password or name needs admin privilege or custom hook
+      // Verificar se o ID fornecido pertence diretamente a users ou se foi passado o id de control_members
+      let realUserId = targetUserId.trim()
+      try {
+        await pb.collection('users').getOne(realUserId)
+      } catch (checkErr: any) {
+        // Se deu 404 em users, pode ter sido passado o ID do registro de control_members
+        try {
+          const memberRec = await pb.collection('control_members').getOne(realUserId)
+          if (memberRec && memberRec.user_id) {
+            realUserId = memberRec.user_id
+          } else if (memberRec && (!memberRec.user_id || memberRec.status === 'pending')) {
+            throw new Error(
+              'Este colaborador ainda não criou a conta; apenas o convite pode ser gerenciado.',
+            )
+          }
+        } catch (memberErr: any) {
+          if (memberErr?.message?.includes('ainda não criou a conta')) {
+            throw memberErr
+          }
+          // Caso também não encontre em control_members, verifica por status 404
+          const status = checkErr?.status || checkErr?.statusCode || checkErr?.response?.status
+          if (status === 404) {
+            throw new Error(
+              'Usuário do colaborador não encontrado no sistema. Ele pode não ter concluído o cadastro.',
+            )
+          }
+          throw pbErr(checkErr)
+        }
+      }
+
+      const isSelf = pb.authStore.model?.id === realUserId
+
+      // 1. Se necessita de privilégio administrativo para atualizar senha ou nome de terceiros
       if (data.password || (!isSelf && data.name)) {
         await pb.send('/backend/v1/custom/admin-update-member', {
           method: 'POST',
           body: {
             controlId,
-            userId: targetUserId,
+            userId: realUserId,
             name: data.name,
             password: data.password,
           },
         })
       } else if (isSelf && data.name) {
-        await pb.collection('users').update(targetUserId, { name: data.name.trim() })
+        await pb.collection('users').update(realUserId, { name: data.name.trim() })
       }
 
       // 2. Avatar update (uses FormData multipart)
       if (data.avatarFile) {
         const formData = new FormData()
         formData.append('avatar', data.avatarFile)
-        await pb.collection('users').update(targetUserId, formData)
+        await pb.collection('users').update(realUserId, formData)
       }
 
       // 3. Return updated user
-      const updatedUserRec = await pb.collection('users').getOne(targetUserId)
+      const updatedUserRec = await pb.collection('users').getOne(realUserId)
       return mapUser(updatedUserRec)
     } catch (e: any) {
       throw pbErr(e)
     }
   }
 
-  async removeMember(memberId: string): Promise<void> {
+  async removeMember(memberOrUserId: string): Promise<void> {
     try {
-      const member = await pb.collection('control_members').getOne(memberId)
-      if (member.role === 'owner') {
+      if (!memberOrUserId || typeof memberOrUserId !== 'string') {
+        throw new Error('Identificador de colaborador inválido.')
+      }
+      // Resolver se foi passado o ID de control_members ou o user_id
+      let targetMemberId = memberOrUserId.trim()
+      let memberRec: any = null
+      try {
+        memberRec = await pb.collection('control_members').getOne(targetMemberId)
+      } catch (notFoundErr: any) {
+        // Tentar encontrar por user_id em control_members
+        try {
+          const found = await pb
+            .collection('control_members')
+            .getFirstListItem(`user_id="${targetMemberId}"`)
+          if (found) {
+            targetMemberId = found.id
+            memberRec = found
+          }
+        } catch {
+          throw pbErr(notFoundErr)
+        }
+      }
+
+      if (!memberRec) {
+        memberRec = await pb.collection('control_members').getOne(targetMemberId)
+      }
+
+      if (memberRec.role === 'owner') {
         const owners = await pb.collection('control_members').getFullList({
-          filter: `control_id="${member.control_id}" && role="owner" && status="active"`,
+          filter: `control_id="${memberRec.control_id}" && role="owner" && status="active"`,
         })
         if (owners.length <= 1) {
           throw new Error('Não é possível remover o único Proprietário do controle.')
         }
       }
-      await pb.collection('control_members').delete(memberId)
+      await pb.collection('control_members').delete(targetMemberId)
 
       // Also clean up any matching pending invitation in control_invitations
-      const email = member.email || member.invited_email
-      if (email && member.control_id) {
+      const email = memberRec.email || memberRec.invited_email
+      if (email && memberRec.control_id) {
         try {
           const invs = await pb.collection('control_invitations').getFullList({
-            filter: `control_id="${member.control_id}" && email="${email}"`,
+            filter: `control_id="${memberRec.control_id}" && email="${email}"`,
           })
           for (const inv of invs) {
             await pb.collection('control_invitations').delete(inv.id)

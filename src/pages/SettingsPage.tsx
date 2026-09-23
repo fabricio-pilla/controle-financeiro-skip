@@ -925,7 +925,7 @@ export default function SettingsPage() {
 
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1">
-                            {(canManageTeam || isCurrentUser) && mem.user_id && (
+                            {canManageTeam || isCurrentUser ? (
                               <Button
                                 type="button"
                                 variant="outline"
@@ -939,7 +939,7 @@ export default function SettingsPage() {
                                 <Pencil className="w-3.5 h-3.5" />
                                 <span>Editar</span>
                               </Button>
-                            )}
+                            ) : null}
 
                             {canManageTeam &&
                               !isCurrentUser &&
