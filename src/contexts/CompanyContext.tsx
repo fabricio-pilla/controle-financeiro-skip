@@ -199,11 +199,25 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       let targetComp: Company | null = null
 
       if (cachedControlId) {
-        targetComp = await skipCloud.getCompany(cachedControlId)
+        try {
+          targetComp = await Promise.race([
+            skipCloud.getCompany(cachedControlId),
+            new Promise<null>((r) => setTimeout(() => r(null), 3500)),
+          ])
+        } catch {
+          targetComp = null
+        }
       }
 
       if (!targetComp) {
-        targetComp = await skipCloud.getSingleCompany(userId)
+        try {
+          targetComp = await Promise.race([
+            skipCloud.getSingleCompany(userId),
+            new Promise<null>((r) => setTimeout(() => r(null), 4000)),
+          ])
+        } catch {
+          targetComp = null
+        }
       }
 
       if (targetComp) {
@@ -218,28 +232,30 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setUserCompanies([targetComp])
         setCurrentCompany(targetComp)
 
-        // Carrega papel e dados do controle único
+        // Carrega papel e dados do controle único com resiliência: cada consulta
+        // tem fallback isolado para nunca travar a inicialização do app
         const [role, mems, accs, cats, subcats, txs] = await Promise.all([
-          skipCloud.getUserRoleInCompany(targetComp.id, userId),
-          skipCloud.getCompanyMembers(targetComp.id),
-          skipCloud.getAccounts(targetComp.id),
-          skipCloud.getCategories(targetComp.id),
-          skipCloud.getSubcategories(targetComp.id),
-          skipCloud.getTransactions(targetComp.id),
+          skipCloud.getUserRoleInCompany(targetComp.id, userId).catch(() => 'owner' as UserRole),
+          skipCloud.getCompanyMembers(targetComp.id).catch(() => [] as CompanyMember[]),
+          skipCloud.getAccounts(targetComp.id).catch(() => [] as Account[]),
+          skipCloud.getCategories(targetComp.id).catch(() => [] as Category[]),
+          skipCloud.getSubcategories(targetComp.id).catch(() => [] as Subcategory[]),
+          skipCloud.getTransactions(targetComp.id).catch(() => [] as Transaction[]),
         ])
 
         setCurrentRole(role || 'owner')
-        setMembers(mems)
-        setAccounts(accs)
-        setCategories(cats)
-        setSubcategories(subcats)
-        setTransactions(txs)
+        setMembers(mems || [])
+        setAccounts(accs || [])
+        setCategories(cats || [])
+        setSubcategories(subcats || [])
+        setTransactions(txs || [])
       } else {
         setUserCompanies([])
         setCurrentCompany(null)
         setCurrentRole(null)
       }
-    } catch {
+    } catch (e) {
+      console.warn('[CompanyContext] reloadUserCompanies encontrou erro:', e)
       setUserCompanies([])
     } finally {
       setIsLoading(false)
@@ -277,22 +293,22 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
 
       const [role, mems, accs, cats, subcats, txs] = await Promise.all([
-        skipCloud.getUserRoleInCompany(finalControlId, userId),
-        skipCloud.getCompanyMembers(finalControlId),
-        skipCloud.getAccounts(finalControlId),
-        skipCloud.getCategories(finalControlId),
-        skipCloud.getSubcategories(finalControlId),
-        skipCloud.getTransactions(finalControlId),
+        skipCloud.getUserRoleInCompany(finalControlId, userId).catch(() => null),
+        skipCloud.getCompanyMembers(finalControlId).catch(() => [] as CompanyMember[]),
+        skipCloud.getAccounts(finalControlId).catch(() => [] as Account[]),
+        skipCloud.getCategories(finalControlId).catch(() => [] as Category[]),
+        skipCloud.getSubcategories(finalControlId).catch(() => [] as Subcategory[]),
+        skipCloud.getTransactions(finalControlId).catch(() => [] as Transaction[]),
       ])
 
       setCurrentCompany(resolvedComp)
       setUserCompanies([resolvedComp])
       if (role) setCurrentRole(role)
-      setMembers(mems)
-      setAccounts(accs)
-      setCategories(cats)
-      setSubcategories(subcats)
-      setTransactions(txs)
+      setMembers(mems || [])
+      setAccounts(accs || [])
+      setCategories(cats || [])
+      setSubcategories(subcats || [])
+      setTransactions(txs || [])
     } catch {
       // Falha silenciosa sem expor 404/erros no console
     } finally {
@@ -334,17 +350,17 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setCurrentRole(role || 'owner')
 
         const [mems, accs, cats, subcats, txs] = await Promise.all([
-          skipCloud.getCompanyMembers(comp.id),
-          skipCloud.getAccounts(comp.id),
-          skipCloud.getCategories(comp.id),
-          skipCloud.getSubcategories(comp.id),
-          skipCloud.getTransactions(comp.id),
+          skipCloud.getCompanyMembers(comp.id).catch(() => [] as CompanyMember[]),
+          skipCloud.getAccounts(comp.id).catch(() => [] as Account[]),
+          skipCloud.getCategories(comp.id).catch(() => [] as Category[]),
+          skipCloud.getSubcategories(comp.id).catch(() => [] as Subcategory[]),
+          skipCloud.getTransactions(comp.id).catch(() => [] as Transaction[]),
         ])
-        setMembers(mems)
-        setAccounts(accs)
-        setCategories(cats)
-        setSubcategories(subcats)
-        setTransactions(txs)
+        setMembers(mems || [])
+        setAccounts(accs || [])
+        setCategories(cats || [])
+        setSubcategories(subcats || [])
+        setTransactions(txs || [])
         return true
       } catch {
         return false

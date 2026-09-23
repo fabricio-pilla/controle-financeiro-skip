@@ -47,10 +47,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshUser = useCallback(async () => {
     try {
-      const u = await skipCloud.getCurrentUser()
+      // Timeout de segurança para evitar que uma requisição travada/offline
+      // prenda o estado de carregamento do app indefinitamente no preview
+      const userPromise = skipCloud.getCurrentUser()
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000))
+      const u = await Promise.race([userPromise, timeoutPromise])
       applyUser(u)
     } catch (e) {
-      console.error('[AuthContext] refreshUser falhou:', e)
+      console.warn('[AuthContext] refreshUser falhou:', e)
       lastUserIdRef.current = null
       setUser(null)
     } finally {
