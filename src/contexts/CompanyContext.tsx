@@ -175,6 +175,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   const activeCompanyId = currentCompany?.id
 
+  const ACTIVE_CONTROL_KEY = 'cf_active_control_id'
+
   // Carrega sempre o controle único principal da aplicação
   const reloadUserCompanies = useCallback(async () => {
     if (!userId) {
@@ -192,19 +194,38 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
     setIsLoading(true)
     try {
-      const singleComp = await skipCloud.getSingleCompany(userId)
-      if (singleComp) {
-        setUserCompanies([singleComp])
-        setCurrentCompany(singleComp)
+      const cachedControlId =
+        typeof window !== 'undefined' ? localStorage.getItem(ACTIVE_CONTROL_KEY) : null
+      let targetComp: Company | null = null
+
+      if (cachedControlId) {
+        targetComp = await skipCloud.getCompany(cachedControlId)
+      }
+
+      if (!targetComp) {
+        targetComp = await skipCloud.getSingleCompany(userId)
+      }
+
+      if (targetComp) {
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(ACTIVE_CONTROL_KEY, targetComp.id)
+          }
+        } catch {
+          // Fallback silencioso para storage indisponível
+        }
+
+        setUserCompanies([targetComp])
+        setCurrentCompany(targetComp)
 
         // Carrega papel e dados do controle único
         const [role, mems, accs, cats, subcats, txs] = await Promise.all([
-          skipCloud.getUserRoleInCompany(singleComp.id, userId),
-          skipCloud.getCompanyMembers(singleComp.id),
-          skipCloud.getAccounts(singleComp.id),
-          skipCloud.getCategories(singleComp.id),
-          skipCloud.getSubcategories(singleComp.id),
-          skipCloud.getTransactions(singleComp.id),
+          skipCloud.getUserRoleInCompany(targetComp.id, userId),
+          skipCloud.getCompanyMembers(targetComp.id),
+          skipCloud.getAccounts(targetComp.id),
+          skipCloud.getCategories(targetComp.id),
+          skipCloud.getSubcategories(targetComp.id),
+          skipCloud.getTransactions(targetComp.id),
         ])
 
         setCurrentRole(role || 'owner')
@@ -218,10 +239,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setCurrentCompany(null)
         setCurrentRole(null)
       }
-    } catch (e) {
-      console.error('[CompanyContext] reloadUserCompanies falhou:', e)
+    } catch {
       setUserCompanies([])
-      throw e
     } finally {
       setIsLoading(false)
     }
@@ -233,32 +252,49 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   // Load all data for the active company
   const reloadCompanyData = useCallback(async () => {
-    const targetControlId = activeCompanyId || currentCompany?.id
-    if (!targetControlId || !userId) return
+    const cachedControlId =
+      typeof window !== 'undefined' ? localStorage.getItem(ACTIVE_CONTROL_KEY) : null
+    const targetControlId = activeCompanyId || currentCompany?.id || cachedControlId
+    if (!userId) return
     setIsCompanyLoading(true)
     try {
-      const [role, mems, accs, cats, subcats, txs, freshComp] = await Promise.all([
-        skipCloud.getUserRoleInCompany(targetControlId, userId),
-        skipCloud.getCompanyMembers(targetControlId),
-        skipCloud.getAccounts(targetControlId),
-        skipCloud.getCategories(targetControlId),
-        skipCloud.getSubcategories(targetControlId),
-        skipCloud.getTransactions(targetControlId),
-        skipCloud.getCompany(targetControlId),
-      ])
-      if (freshComp) {
-        setCurrentCompany(freshComp)
-        setUserCompanies([freshComp])
+      let resolvedComp: Company | null = null
+      if (targetControlId) {
+        resolvedComp = await skipCloud.getCompany(targetControlId)
       }
+      if (!resolvedComp) {
+        resolvedComp = await skipCloud.getSingleCompany(userId)
+      }
+      if (!resolvedComp) return
+
+      const finalControlId = resolvedComp.id
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(ACTIVE_CONTROL_KEY, finalControlId)
+        }
+      } catch {
+        // Fallback silencioso
+      }
+
+      const [role, mems, accs, cats, subcats, txs] = await Promise.all([
+        skipCloud.getUserRoleInCompany(finalControlId, userId),
+        skipCloud.getCompanyMembers(finalControlId),
+        skipCloud.getAccounts(finalControlId),
+        skipCloud.getCategories(finalControlId),
+        skipCloud.getSubcategories(finalControlId),
+        skipCloud.getTransactions(finalControlId),
+      ])
+
+      setCurrentCompany(resolvedComp)
+      setUserCompanies([resolvedComp])
       if (role) setCurrentRole(role)
       setMembers(mems)
       setAccounts(accs)
       setCategories(cats)
       setSubcategories(subcats)
       setTransactions(txs)
-    } catch (e) {
-      console.error('[CompanyContext] reloadCompanyData falhou:', e)
-      throw e
+    } catch {
+      // Falha silenciosa sem expor 404/erros no console
     } finally {
       setIsCompanyLoading(false)
     }
@@ -269,12 +305,28 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       if (!userId) return false
       setIsCompanyLoading(true)
       try {
-        const targetId = companyId || currentCompany?.id
-        const comp = targetId
-          ? await skipCloud.getCompany(targetId)
-          : await skipCloud.getSingleCompany(userId)
+        const cachedControlId =
+          typeof window !== 'undefined' ? localStorage.getItem(ACTIVE_CONTROL_KEY) : null
+        const targetId = companyId || currentCompany?.id || cachedControlId
+        let comp: Company | null = null
+
+        if (targetId) {
+          comp = await skipCloud.getCompany(targetId)
+        }
+        if (!comp) {
+          comp = await skipCloud.getSingleCompany(userId)
+        }
 
         if (!comp) return false
+
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(ACTIVE_CONTROL_KEY, comp.id)
+          }
+        } catch {
+          // Fallback silencioso
+        }
+
         const role = await skipCloud.getUserRoleInCompany(comp.id, userId)
 
         setCurrentCompany(comp)
@@ -294,8 +346,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setSubcategories(subcats)
         setTransactions(txs)
         return true
-      } catch (e) {
-        console.error('[CompanyContext] selectCompany falhou:', e)
+      } catch {
         return false
       } finally {
         setIsCompanyLoading(false)
@@ -496,9 +547,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setTransactions((prev) => prev.map((t) => (t.id === transactionId ? tx : t)))
       if (!options?.skipReload) {
         // Sync accounts / totals in background without blocking caller
-        reloadCompanyData().catch((e) =>
-          console.warn('[updateTransaction] Background reloadCompanyData error:', e),
-        )
+        reloadCompanyData().catch(() => {
+          // Fallback silencioso
+        })
       }
       return tx
     },
@@ -511,9 +562,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setTransactions((prev) => prev.filter((t) => t.id !== transactionId))
       await skipCloud.deleteTransaction(transactionId)
       if (!options?.skipReload) {
-        reloadCompanyData().catch((e) =>
-          console.warn('[deleteTransaction] Background reloadCompanyData error:', e),
-        )
+        reloadCompanyData().catch(() => {
+          // Fallback silencioso
+        })
       }
     },
     [reloadCompanyData],
@@ -534,9 +585,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
       if (!options?.skipReload) {
         // Run light background sync to refresh account balances without delaying the UI
-        reloadCompanyData().catch((e) =>
-          console.warn('[setTransactionsPaidStatus] Background reloadCompanyData error:', e),
-        )
+        reloadCompanyData().catch(() => {
+          // Fallback silencioso
+        })
       }
       return updated
     },

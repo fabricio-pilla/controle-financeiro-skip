@@ -623,10 +623,13 @@ class SkipCloudService {
             sort: 'created',
           })
           if (members.items.length > 0 && members.items[0].control_id) {
-            const comp = await pb
-              .collection('financial_controls')
-              .getOne(members.items[0].control_id)
-            if (comp) return mapCompany(comp)
+            const controlId = members.items[0].control_id
+            const res = await pb.collection('financial_controls').getList(1, 1, {
+              filter: `id="${controlId}"`,
+            })
+            if (res.items.length > 0) {
+              return mapCompany(res.items[0])
+            }
           }
         } catch {
           // Fallback silencioso
@@ -657,9 +660,16 @@ class SkipCloudService {
   }
 
   async getCompany(companyId: string): Promise<Company | null> {
+    const cleanId = typeof companyId === 'string' ? companyId.trim() : ''
+    if (!cleanId) return null
     try {
-      const r = await pb.collection('financial_controls').getOne(companyId)
-      return mapCompany(r)
+      const res = await pb.collection('financial_controls').getList(1, 1, {
+        filter: `id="${cleanId}"`,
+      })
+      if (res.items.length > 0) {
+        return mapCompany(res.items[0])
+      }
+      return null
     } catch {
       return null
     }
@@ -759,8 +769,13 @@ class SkipCloudService {
         bank: 'Banco Principal',
       })
 
-      const fresh = await pb.collection('financial_controls').getOne(companyId)
-      return mapCompany(fresh)
+      const freshRes = await pb.collection('financial_controls').getList(1, 1, {
+        filter: `id="${companyId}"`,
+      })
+      if (freshRes.items.length > 0) {
+        return mapCompany(freshRes.items[0])
+      }
+      return mapCompany(comp)
     } catch (e: any) {
       throw pbErr(e)
     }
