@@ -35,19 +35,20 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email.trim() || !email.includes('@')) {
+    const trimmedEmail = email.trim().toLowerCase()
+    if (!trimmedEmail || !trimmedEmail.includes('@')) {
       toast.error('Informe um e-mail válido.')
       return
     }
 
     setIsSubmitting(true)
     try {
-      const mem = await inviteMember(email, role)
+      const mem = await inviteMember(trimmedEmail, role)
       if (mem.status === 'active') {
-        toast.success(`Usuário ${email} já cadastrado foi adicionado com sucesso!`)
+        toast.success(`Usuário ${trimmedEmail} já cadastrado foi adicionado com sucesso!`)
       } else {
         toast.success(
-          `Convite enviado para ${email}! O usuário terá acesso assim que criar a conta.`,
+          `Convite gerado para ${trimmedEmail}! O colaborador agora pode se cadastrar em /register.`,
         )
       }
       setEmail('')
@@ -70,10 +71,10 @@ export function InviteMemberModal({ open, onOpenChange }: InviteMemberModalProps
             </div>
             <div>
               <DialogTitle className="text-xl font-bold text-slate-900">
-                Convidar Membro
+                Convidar Colaborador
               </DialogTitle>
-              <DialogDescription className="text-sm text-slate-500">
-                Convide familiares ou parceiros para gerenciar juntos este controle financeiro.
+              <DialogDescription className="text-xs text-slate-500">
+                Convide parceiros ou familiares para gerenciar juntos este controle financeiro.
               </DialogDescription>
             </div>
           </div>

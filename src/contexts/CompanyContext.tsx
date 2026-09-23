@@ -16,6 +16,7 @@ import {
   UserRole,
   AccountType,
   TransactionType,
+  User,
 } from '@/types/database'
 import { skipCloud } from '@/lib/skip-cloud'
 import { useAuth } from './AuthContext'
@@ -142,6 +143,14 @@ interface CompanyContextType {
   // Team
   inviteMember: (email: string, role: UserRole) => Promise<CompanyMember>
   updateMemberRole: (memberId: string, role: UserRole) => Promise<CompanyMember>
+  updateMemberProfile: (
+    targetUserId: string,
+    data: {
+      name?: string
+      password?: string
+      avatarFile?: File | null
+    },
+  ) => Promise<User>
   removeMember: (memberId: string) => Promise<void>
 }
 
@@ -554,6 +563,23 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     [reloadCompanyData],
   )
 
+  const updateMemberProfile = useCallback(
+    async (
+      targetUserId: string,
+      data: {
+        name?: string
+        password?: string
+        avatarFile?: File | null
+      },
+    ) => {
+      if (!currentCompany) throw new Error('Nenhum controle selecionado.')
+      const updatedUser = await skipCloud.updateMemberProfile(currentCompany.id, targetUserId, data)
+      await reloadCompanyData()
+      return updatedUser
+    },
+    [currentCompany, reloadCompanyData],
+  )
+
   const removeMember = useCallback(
     async (memberId: string) => {
       await skipCloud.removeMember(memberId)
@@ -612,6 +638,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         applyTransactionsBatchUpdate,
         inviteMember,
         updateMemberRole,
+        updateMemberProfile,
         removeMember,
       }}
     >

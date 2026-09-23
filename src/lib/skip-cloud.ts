@@ -269,11 +269,17 @@ function avatarUrl(userId: string): string {
 }
 
 function mapUser(m: any): User {
+  const avatarFile = m.avatar
+  const avatarFullUrl =
+    avatarFile && typeof avatarFile === 'string' && !avatarFile.startsWith('http')
+      ? pb.files.getURL(m, avatarFile)
+      : avatarFile || avatarUrl(m.id)
+
   return {
     id: m.id,
     name: m.name || '',
     email: m.email || '',
-    avatar: m.avatar || avatarUrl(m.id),
+    avatar: avatarFullUrl,
     created_at: m.created || new Date().toISOString(),
   }
 }
@@ -517,16 +523,44 @@ class SkipCloudService {
     const normalizedEmail = email.trim().toLowerCase()
 
     // --- Invite-only: a new user CANNOT register without a pending invitation ---
-    let hasPendingInvite = false
+    let pendingMembers: any[] = []
     try {
-      const pending = await pb.collection('control_members').getFullList({
-        filter: `email="${normalizedEmail}" && status="pending"`,
+      // Check control_members for matching email or invited_email
+      pendingMembers = await pb.collection('control_members').getFullList({
+        filter: `email="${normalizedEmail}" || invited_email="${normalizedEmail}"`,
       })
-      hasPendingInvite = pending.length > 0
     } catch {
-      // If the query itself fails, fail safe by blocking registration
+      // If the query itself fails, check fallback
     }
-    if (!hasPendingInvite) {
+
+    // Also check control_invitations collection if control_members didn't find anything
+    if (pendingMembers.length === 0) {
+      try {
+        const pendingInvites = await pb.collection('control_invitations').getFullList({
+          filter: `email="${normalizedEmail}"`,
+        })
+        if (pendingInvites.length > 0) {
+          for (const inv of pendingInvites) {
+            try {
+              const newMem = await pb.collection('control_members').create({
+                control_id: inv.control_id,
+                email: normalizedEmail,
+                invited_email: normalizedEmail,
+                role: inv.role || 'member',
+                status: 'pending',
+              })
+              pendingMembers.push(newMem)
+            } catch {
+              /* intentionally ignored */
+            }
+          }
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+    }
+
+    if (pendingMembers.length === 0) {
       throw new Error(
         'Este e-mail não possui convite pendente. Solicite um convite ao proprietário de um controle financeiro.',
       )
@@ -541,10 +575,7 @@ class SkipCloudService {
       })
       // Auto-activate any pending invitations for this email
       try {
-        const pending = await pb.collection('control_members').getFullList({
-          filter: `email="${normalizedEmail}" && status="pending"`,
-        })
-        for (const m of pending) {
+        for (const m of pendingMembers) {
           await pb.collection('control_members').update(m.id, {
             user_id: record.id,
             status: 'active',
@@ -846,7 +877,9 @@ class SkipCloudService {
       try {
         const existing = await pb
           .collection('control_members')
-          .getFirstListItem(`control_id="${companyId}" && email="${normalized}"`)
+          .getFirstListItem(
+            `control_id="${companyId}" && (email="${normalized}" || invited_email="${normalized}")`,
+          )
         if (existing) throw new Error('Este e-mail já está associado a este controle.')
       } catch (e: any) {
         if (e?.message?.includes('já está associado')) throw e
@@ -871,6 +904,21 @@ class SkipCloudService {
         role,
         status,
       })
+
+      // Also mirror to control_invitations if user was not yet registered
+      if (status === 'pending') {
+        try {
+          await pb.collection('control_invitations').create({
+            control_id: companyId,
+            email: normalized,
+            role,
+            status: 'pending',
+          })
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+
       return mapMember(r)
     } catch (e: any) {
       throw pbErr(e)
@@ -896,6 +944,48 @@ class SkipCloudService {
     }
   }
 
+  async updateMemberProfile(
+    controlId: string,
+    targetUserId: string,
+    data: {
+      name?: string
+      password?: string
+      avatarFile?: File | null
+    },
+  ): Promise<User> {
+    try {
+      const isSelf = pb.authStore.model?.id === targetUserId
+
+      // 1. If password or name needs admin privilege or custom hook
+      if (data.password || (!isSelf && data.name)) {
+        await pb.send('/backend/v1/custom/admin-update-member', {
+          method: 'POST',
+          body: {
+            controlId,
+            userId: targetUserId,
+            name: data.name,
+            password: data.password,
+          },
+        })
+      } else if (isSelf && data.name) {
+        await pb.collection('users').update(targetUserId, { name: data.name.trim() })
+      }
+
+      // 2. Avatar update (uses FormData multipart)
+      if (data.avatarFile) {
+        const formData = new FormData()
+        formData.append('avatar', data.avatarFile)
+        await pb.collection('users').update(targetUserId, formData)
+      }
+
+      // 3. Return updated user
+      const updatedUserRec = await pb.collection('users').getOne(targetUserId)
+      return mapUser(updatedUserRec)
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
   async removeMember(memberId: string): Promise<void> {
     try {
       const member = await pb.collection('control_members').getOne(memberId)
@@ -904,15 +994,29 @@ class SkipCloudService {
           filter: `control_id="${member.control_id}" && role="owner" && status="active"`,
         })
         if (owners.length <= 1) {
-          throw new Error('O último proprietário não pode ser removido do controle.')
+          throw new Error('Não é possível remover o único Proprietário do controle.')
         }
       }
       await pb.collection('control_members').delete(memberId)
+
+      // Also clean up any matching pending invitation in control_invitations
+      const email = member.email || member.invited_email
+      if (email && member.control_id) {
+        try {
+          const invs = await pb.collection('control_invitations').getFullList({
+            filter: `control_id="${member.control_id}" && email="${email}"`,
+          })
+          for (const inv of invs) {
+            await pb.collection('control_invitations').delete(inv.id)
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+      }
     } catch (e: any) {
       throw pbErr(e)
     }
   }
-
   // --- ACCOUNTS ---
   async getAccounts(companyId: string): Promise<Account[]> {
     try {

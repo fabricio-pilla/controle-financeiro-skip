@@ -14,12 +14,27 @@ import {
   Calendar,
   Sparkles,
   Brain,
+  Users,
+  UserPlus,
+  Pencil,
+  Clock,
+  CheckCircle2,
 } from 'lucide-react'
-import { AiLearning } from '@/types/database'
+import { AiLearning, CompanyMember, UserRole } from '@/types/database'
 import { skipCloud } from '@/lib/skip-cloud'
-import { formatDateBR } from '@/lib/formatters'
+import { formatDateBR, getInitials } from '@/lib/formatters'
 import pb from '@/lib/pocketbase/client'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { InviteMemberModal } from '@/components/team/InviteMemberModal'
+import { EditMemberModal } from '@/components/team/EditMemberModal'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -59,9 +74,45 @@ const MONTHS = [
 
 export default function SettingsPage() {
   const { user, logout } = useAuth()
-  const { currentCompany, updateCompany, reloadCompanyData, applyTransactionsBatchUpdate } =
-    useCompany()
+  const {
+    currentCompany,
+    updateCompany,
+    reloadCompanyData,
+    applyTransactionsBatchUpdate,
+    members,
+    isOwner,
+    canManageTeam,
+    updateMemberRole,
+    removeMember,
+  } = useCompany()
   const navigate = useNavigate()
+
+  // Tab Colaboradores state
+  const [inviteModalOpen, setInviteModalOpen] = useState(false)
+  const [editMemberModalOpen, setEditMemberModalOpen] = useState(false)
+  const [memberToEdit, setMemberToEdit] = useState<CompanyMember | null>(null)
+  const [confirmRemoveMemberOpen, setConfirmRemoveMemberOpen] = useState(false)
+  const [memberToRemove, setMemberToRemove] = useState<CompanyMember | null>(null)
+
+  const handleMemberRoleChange = async (memberId: string, newRole: UserRole) => {
+    try {
+      await updateMemberRole(memberId, newRole)
+      toast.success('Papel do colaborador atualizado!')
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao atualizar papel do colaborador.')
+    }
+  }
+
+  const confirmRemoveMember = async () => {
+    if (!memberToRemove) return
+    try {
+      await removeMember(memberToRemove.id)
+      toast.success('Colaborador removido do controle com sucesso!')
+      setMemberToRemove(null)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao remover colaborador.')
+    }
+  }
 
   // Tab 1: Controle details
   const [name, setName] = useState(currentCompany?.name || '')
@@ -635,7 +686,7 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="controle" className="space-y-6">
-        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-5 max-w-2xl">
+        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 sm:grid-cols-6 max-w-3xl">
           <TabsTrigger
             value="controle"
             className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
@@ -644,11 +695,18 @@ export default function SettingsPage() {
             <span>Controle</span>
           </TabsTrigger>
           <TabsTrigger
+            value="colaboradores"
+            className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
+          >
+            <Users className="w-4 h-4" />
+            <span>Colaboradores</span>
+          </TabsTrigger>
+          <TabsTrigger
             value="aprendizado"
             className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
           >
             <Brain className="w-4 h-4" />
-            <span>Aprendizado IA</span>
+            <span>Aprendizado</span>
           </TabsTrigger>
           <TabsTrigger
             value="preferencias"
@@ -745,6 +803,169 @@ export default function SettingsPage() {
                 </Button>
               </div>
             </form>
+          </div>
+        </TabsContent>
+
+        {/* TAB: COLABORADORES */}
+        <TabsContent value="colaboradores" className="space-y-6 focus-visible:outline-none">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  Colaboradores do Controle
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Convide novos colaboradores e edite nome, foto e senha dos usuários deste controle
+                  financeiro.
+                </p>
+              </div>
+
+              {canManageTeam && (
+                <Button
+                  type="button"
+                  onClick={() => setInviteModalOpen(true)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-10 px-4 font-semibold shadow-md shadow-indigo-600/20 flex items-center gap-2 text-xs"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Convidar Colaborador</span>
+                </Button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/70 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <th className="py-3 px-4">Usuário</th>
+                    <th className="py-3 px-4">E-mail</th>
+                    <th className="py-3 px-4">Função</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-sm">
+                  {members.map((mem) => {
+                    const isCurrentUser = mem.user_id === user?.id
+                    const displayName =
+                      mem.user?.name || mem.invited_email?.split('@')[0] || 'Usuário'
+                    const displayEmail = mem.user?.email || mem.invited_email || ''
+
+                    return (
+                      <tr key={mem.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0">
+                              {mem.user?.avatar ? (
+                                <img
+                                  src={mem.user.avatar}
+                                  alt={displayName}
+                                  className="w-full h-full rounded-full object-cover"
+                                />
+                              ) : (
+                                getInitials(displayName)
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-900 text-xs flex items-center gap-1.5">
+                                <span>{displayName}</span>
+                                {isCurrentUser && (
+                                  <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
+                                    Você
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-4 text-xs font-medium text-slate-600">
+                          {displayEmail}
+                        </td>
+
+                        <td className="py-3 px-4">
+                          {canManageTeam && !isCurrentUser && (isOwner || mem.role !== 'owner') ? (
+                            <Select
+                              value={mem.role}
+                              onValueChange={(v: UserRole) => handleMemberRoleChange(mem.id, v)}
+                            >
+                              <SelectTrigger className="h-8 w-32 rounded-lg text-xs font-medium border-slate-200">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="rounded-xl">
+                                {isOwner && <SelectItem value="owner">Proprietário</SelectItem>}
+                                <SelectItem value="admin">Administrador</SelectItem>
+                                <SelectItem value="member">Membro</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
+                              {mem.role === 'owner'
+                                ? 'Proprietário'
+                                : mem.role === 'admin'
+                                  ? 'Administrador'
+                                  : 'Membro'}
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-4">
+                          {mem.status === 'active' ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Ativo
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                              <Clock className="w-3 h-3" />
+                              Pendente
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {(canManageTeam || isCurrentUser) && mem.user_id && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setMemberToEdit(mem)
+                                  setEditMemberModalOpen(true)
+                                }}
+                                className="h-8 px-2.5 rounded-lg text-xs font-medium text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 border-slate-200 gap-1.5"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>Editar</span>
+                              </Button>
+                            )}
+
+                            {canManageTeam &&
+                              !isCurrentUser &&
+                              (isOwner || mem.role !== 'owner') && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    setMemberToRemove(mem)
+                                    setConfirmRemoveMemberOpen(true)
+                                  }}
+                                  className="h-8 w-8 text-slate-400 hover:text-rose-600 rounded-lg"
+                                  title="Remover colaborador"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </TabsContent>
 
@@ -1045,6 +1266,29 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Invite Member Modal */}
+      <InviteMemberModal open={inviteModalOpen} onOpenChange={setInviteModalOpen} />
+
+      {/* Edit Member Modal */}
+      <EditMemberModal
+        open={editMemberModalOpen}
+        onOpenChange={setEditMemberModalOpen}
+        member={memberToEdit}
+      />
+
+      {/* Confirm Remove Member Dialog */}
+      <ConfirmDialog
+        open={confirmRemoveMemberOpen}
+        onOpenChange={setConfirmRemoveMemberOpen}
+        title="Remover Colaborador"
+        description={`Tem certeza que deseja remover "${
+          memberToRemove?.user?.name || memberToRemove?.invited_email
+        }" deste controle? Ele perderá imediatamente o acesso a todas as contas e relatórios.`}
+        confirmText="Remover Colaborador"
+        variant="danger"
+        onConfirm={confirmRemoveMember}
+      />
 
       {/* Modal Confirm Delete All Transactions with "EXCLUIR TUDO" text */}
       <Dialog open={deleteAllModalOpen} onOpenChange={setDeleteAllModalOpen}>

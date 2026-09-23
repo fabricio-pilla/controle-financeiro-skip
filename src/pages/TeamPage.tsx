@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { InviteMemberModal } from '@/components/team/InviteMemberModal'
+import { EditMemberModal } from '@/components/team/EditMemberModal'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { formatDateBR, getInitials } from '@/lib/formatters'
 import { CompanyMember, UserRole } from '@/types/database'
@@ -15,6 +16,7 @@ import {
   Clock,
   CheckCircle2,
   ShieldAlert,
+  Pencil,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +33,8 @@ export default function TeamPage() {
     useCompany()
 
   const [inviteModalOpen, setInviteModalOpen] = useState(false)
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [memberToEdit, setMemberToEdit] = useState<CompanyMember | null>(null)
   const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false)
   const [memberToRemove, setMemberToRemove] = useState<CompanyMember | null>(null)
 
@@ -259,19 +263,34 @@ export default function TeamPage() {
                     </td>
 
                     <td className="py-3.5 px-4 text-center">
-                      {canManageTeam && !isCurrentUser && (isOwner || mem.role !== 'owner') ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleRemovePrompt(mem)}
-                          className="h-8 w-8 text-slate-400 hover:text-rose-600 rounded-lg"
-                          title="Remover do controle"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-slate-300">-</span>
-                      )}
+                      <div className="flex items-center justify-center gap-1">
+                        {(canManageTeam || isCurrentUser) && mem.user_id && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setMemberToEdit(mem)
+                              setEditModalOpen(true)
+                            }}
+                            className="h-8 w-8 text-slate-400 hover:text-indigo-600 rounded-lg"
+                            title="Editar colaborador (nome, senha, foto)"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+
+                        {canManageTeam && !isCurrentUser && (isOwner || mem.role !== 'owner') ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRemovePrompt(mem)}
+                            className="h-8 w-8 text-slate-400 hover:text-rose-600 rounded-lg"
+                            title="Remover do controle"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -283,6 +302,9 @@ export default function TeamPage() {
 
       {/* Invite Member Modal */}
       <InviteMemberModal open={inviteModalOpen} onOpenChange={setInviteModalOpen} />
+
+      {/* Edit Member Modal */}
+      <EditMemberModal open={editModalOpen} onOpenChange={setEditModalOpen} member={memberToEdit} />
 
       {/* Confirm Remove Member Dialog */}
       <ConfirmDialog
