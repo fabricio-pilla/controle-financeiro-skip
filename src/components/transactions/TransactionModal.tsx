@@ -42,7 +42,7 @@ import {
   isRecurringTransaction,
 } from '@/lib/transaction-propagation'
 import { isCategoryAllowedForType } from '@/lib/nlp-parser'
-import { trackAiCorrectionSilently } from '@/lib/ai-learning-tracker'
+import { trackAiCorrectionSilently, cleanNotesForDisplay } from '@/lib/ai-learning-tracker'
 
 interface TransactionModalProps {
   open: boolean
