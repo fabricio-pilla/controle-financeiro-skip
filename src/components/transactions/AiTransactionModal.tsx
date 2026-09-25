@@ -334,17 +334,8 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
 
     setIsSubmitting(true)
     try {
-      const aiMeta = {
-        orig: text.trim(),
-        cat: parsed?.category_id || '',
-        sub: parsed?.subcategory_id || '',
-        typ: parsed?.type || type,
-        desc: parsed?.description || '',
-      }
-      const aiNotesTag = `[IA:${JSON.stringify(aiMeta)}]`
-
       const createdTx = await createTransaction({
-        description,
+        description: description.trim(),
         amount: parsedAmount,
         type,
         account_id: accountId,
@@ -355,9 +346,45 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         paid: effectivePaid,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
-        notes: aiNotesTag,
+        notes: '',
         installments_total: isRecurring ? 0 : installmentsTotal,
       })
+
+      // Se o usuário ajustou a classificação antes de confirmar no modal, registra o aprendizado de forma invisível
+      if (currentCompany && parsed) {
+        const textOrig = text.trim()
+        const userCat = categoryId
+        const userSub = subcategoryId || undefined
+        const userType = type
+        const userDesc = description.trim()
+
+        const aiCat = parsed.category_id || undefined
+        const aiSub = parsed.subcategory_id || undefined
+        const aiType = parsed.type
+        const aiDesc = (parsed.description || '').trim()
+
+        const hasCorrection =
+          (aiCat && userCat && aiCat !== userCat) ||
+          (aiSub && userSub && aiSub !== userSub) ||
+          (aiType && userType && aiType !== userType)
+
+        if (hasCorrection) {
+          skipCloud
+            .saveAiLearning(currentCompany.id, {
+              original_text: textOrig,
+              ai_category_id: aiCat,
+              ai_subcategory_id: aiSub,
+              ai_type: aiType,
+              ai_description: aiDesc,
+              corrected_category_id: userCat,
+              corrected_subcategory_id: userSub,
+              corrected_type: userType,
+              corrected_description: userDesc,
+            })
+            .catch(() => {})
+        }
+      }
+
       toast.success(
         installmentsTotal > 1
           ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`

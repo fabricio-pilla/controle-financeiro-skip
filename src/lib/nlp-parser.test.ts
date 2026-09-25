@@ -282,6 +282,36 @@ export function runTests(): { passed: number; failed: number; errors: string[] }
     )
   }
 
+  // Test 2b: Preservation of original description without trailing ' 0' when amount has trailing zero
+  {
+    const resA = parseNaturalLanguageTransaction(
+      'Alimentação Viagem 57,70',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(resA.amount === 57.7, `Test 2b amount: got ${resA.amount}`)
+    assert(
+      !resA.description.endsWith('0'),
+      `Test 2b: description should NOT end with '0', got "${resA.description}"`,
+    )
+    assert(
+      resA.description === 'Alimentação Viagem',
+      `Test 2b: description should be "Alimentação Viagem", got "${resA.description}"`,
+    )
+
+    const resB = parseNaturalLanguageTransaction(
+      'Combustivel Viagens 143,80',
+      mockAccounts,
+      mockCategories,
+      mockSubcategories,
+    )
+    assert(
+      resB.description === 'Combustivel Viagens',
+      `Test 2b: description should be "Combustivel Viagens", got "${resB.description}"`,
+    )
+  }
+
   // Test 3: Phrase without account -> falls back to primary account
   {
     const res = parseNaturalLanguageTransaction(

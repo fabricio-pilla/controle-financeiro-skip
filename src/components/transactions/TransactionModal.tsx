@@ -145,7 +145,7 @@ export function TransactionModal({
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(
     transaction?.recurrence_type || 'mensal',
   )
-  const [notes, setNotes] = useState(transaction?.notes || '')
+  const [notes, setNotes] = useState(cleanNotesForDisplay(transaction?.notes) || '')
   const [installmentsTotal, setInstallmentsTotal] = useState(resolvedInstallmentsTotal)
   const [propagationModalOpen, setPropagationModalOpen] = useState(false)
   const [pendingFormData, setPendingFormData] = useState<UpdateTransactionPayload | null>(null)
@@ -172,7 +172,7 @@ export function TransactionModal({
       )
       setIsRecurring(isRecurringTransaction(transaction))
       setRecurrenceType(transaction.recurrence_type || 'mensal')
-      setNotes(transaction.notes || '')
+      setNotes(cleanNotesForDisplay(transaction.notes) || '')
       setInstallmentsTotal(resolvedInstallmentsTotal)
     } else {
       const today = new Date().toISOString().split('T')[0]
@@ -345,7 +345,7 @@ export function TransactionModal({
       paid: effectivePaid,
       is_recurring: isRecurring,
       recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
-      notes: notes.trim(),
+      notes: cleanNotesForDisplay(notes),
       installments_total: isRecurring ? 0 : installmentsTotal,
     }
 
@@ -401,7 +401,7 @@ export function TransactionModal({
         paid: effectivePaid,
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
-        notes,
+        notes: cleanNotesForDisplay(notes),
         installments_total: isRecurring ? 0 : installmentsTotal,
       })
       toast.success(

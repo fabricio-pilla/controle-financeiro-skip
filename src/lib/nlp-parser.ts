@@ -1332,7 +1332,7 @@ function buildDescription(
   // Remove currency symbols
   desc = desc.replace(/r\$\s?/gi, '')
 
-  // Remove amount mentions
+  // Remove amount mentions safely (order by longest candidate first, using word/separator boundaries)
   if (amount !== null) {
     const candidates = new Set<string>()
     const raw = amount.toString().replace('.', ',')
@@ -1346,11 +1346,19 @@ function buildDescription(
     )
     candidates.add(amount.toLocaleString('pt-BR'))
     candidates.add(String(amount))
-    // Also candidate for "45,0" when amount is 45
-    candidates.add(`${Math.floor(amount)},0`)
-    candidates.forEach((cand) => {
-      desc = desc.split(cand).join(' ')
-    })
+    if (Number.isInteger(amount)) {
+      candidates.add(`${Math.floor(amount)},0`)
+    }
+
+    // Sort descending by string length so that "57,70" is matched before "57,7"
+    const sortedCandidates = Array.from(candidates).sort((a, b) => b.length - a.length)
+    for (const cand of sortedCandidates) {
+      if (!cand) continue
+      const escaped = cand.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
+      // Ensure we match as a standalone number (boundary or surrounded by spaces/start/end), not a partial sub-token
+      const reg = new RegExp(`(^|\\s)${escaped}(?=\\s|$|[.,;!?])`, 'g')
+      desc = desc.replace(reg, '$1 ')
+    }
   }
 
   // Remove recurrence keywords

@@ -27,6 +27,7 @@ import pb from '@/lib/pocketbase/client'
 import { cleanDescription, planNextRecurringTransactions } from '@/lib/recurring-generation'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR, getTxEffectiveDate } from '@/lib/formatters'
+import { cleanNotesForDisplay } from '@/lib/ai-learning-tracker'
 import { Transaction, TransactionType } from '@/types/database'
 import { toast } from 'sonner'
 import {
@@ -1354,8 +1355,10 @@ export default function TransactionsPage() {
                         </span>
                       )}
                     </div>
-                    {tx.notes && (
-                      <p className="text-xs text-slate-400 font-normal mt-0.5">{tx.notes}</p>
+                    {cleanNotesForDisplay(tx.notes) && (
+                      <p className="text-xs text-slate-400 font-normal mt-0.5">
+                        {cleanNotesForDisplay(tx.notes)}
+                      </p>
                     )}
                   </td>
 

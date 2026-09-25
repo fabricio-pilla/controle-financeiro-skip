@@ -54,7 +54,11 @@ export function extractAiMetadata(notes?: string): ParsedAiNotes | null {
  */
 export function cleanNotesForDisplay(notes?: string): string {
   if (!notes) return ''
-  return notes.replace(/\[IA:\{.*?\}\]/g, '').trim()
+  return notes
+    .replace(/\[IA:\{.*?\}\]/g, '')
+    .replace(/\[IA\]/g, '')
+    .replace(/^IA:.*$/gm, '')
+    .trim()
 }
 
 /**
