@@ -508,24 +508,38 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   // Transaction operations
   const createTransaction = useCallback(
-    async (data: {
-      account_id: string
-      category_id: string
-      subcategory_id?: string
-      description: string
-      amount: number
-      type: TransactionType
-      date: string
-      payment_date?: string
-      paid?: boolean
-      is_recurring?: boolean
-      recurrence_type?: any
-      notes?: string
-      installments_total?: number
-    }) => {
+    async (
+      data: {
+        account_id: string
+        category_id: string
+        subcategory_id?: string
+        description: string
+        amount: number
+        type: TransactionType
+        date: string
+        payment_date?: string
+        paid?: boolean
+        is_recurring?: boolean
+        recurrence_type?: any
+        notes?: string
+        installments_total?: number
+      },
+      options?: { skipReload?: boolean },
+    ) => {
       if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const tx = await skipCloud.createTransaction(currentCompany.id, data)
-      await reloadCompanyData()
+      // Instant insertion in local state so UI updates immediately without waiting for reload
+      setTransactions((prev) => {
+        const next = [tx, ...prev.filter((t) => t.id !== tx.id)]
+        next.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        return next
+      })
+      if (!options?.skipReload) {
+        // Run light background sync to refresh account balances and stats without delaying caller
+        reloadCompanyData().catch(() => {
+          // Fallback silencioso
+        })
+      }
       return tx
     },
     [currentCompany, reloadCompanyData],

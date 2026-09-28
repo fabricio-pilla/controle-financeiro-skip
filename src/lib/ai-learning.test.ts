@@ -282,4 +282,85 @@ describe('End-to-end NLP parser with AI Learning', () => {
     expect(parsed.confidence.category).toBe(true)
     expect(parsed.confidence.subcategory).toBe(true)
   })
+
+  it('cenario do usuario: texto identico "Alimentação 142,55 viagens" com aprendizado registrado para Família/Viagens deve retornar Família e Viagens na 2a vez', () => {
+    const userCategories: Category[] = [
+      {
+        id: 'cat-alimentacao',
+        control_id: 'c-1',
+        name: 'Alimentação',
+        type: 'despesa',
+        color: '#ff0000',
+        icon: 'utensils',
+        created_at: '',
+      },
+      {
+        id: 'h6qdb8a4zr0d9xm',
+        control_id: 'c-1',
+        name: 'Família',
+        type: 'despesa',
+        color: '#00ff00',
+        icon: 'users',
+        created_at: '',
+      },
+    ]
+
+    const userSubcategories: Subcategory[] = [
+      {
+        id: '4alsarbqffvifxf',
+        control_id: 'c-1',
+        category_id: 'h6qdb8a4zr0d9xm',
+        name: 'Viagens',
+        icon: 'plane',
+        created_at: '',
+      },
+    ]
+
+    const userText = 'Alimentação 142,55 viagens'
+
+    // 1ª vez: Sem aprendizado anterior
+    const firstRun = parseNaturalLanguageTransaction(
+      userText,
+      accounts,
+      userCategories,
+      userSubcategories,
+      [],
+    )
+    expect(firstRun.amount).toBe(142.55)
+
+    // Simula a correção do usuário sendo adicionada ao cache/banco de aprendizado
+    const userLearnings: AiLearning[] = [
+      {
+        id: 'learning-1',
+        control_id: 'c-1',
+        user_id: 'u-1',
+        original_text: userText,
+        ai_category_id: firstRun.category_id,
+        ai_subcategory_id: firstRun.subcategory_id,
+        ai_type: firstRun.type,
+        ai_description: firstRun.description,
+        corrected_category_id: 'h6qdb8a4zr0d9xm', // Família
+        corrected_subcategory_id: '4alsarbqffvifxf', // Viagens
+        corrected_type: 'despesa',
+        corrected_description: 'Alimentação viagens',
+        created_at: new Date().toISOString(),
+      },
+    ]
+
+    // 2ª vez: Com o aprendizado no cache, deve vencer o dicionário "Alimentação" e retornar Família / Viagens
+    const secondRun = parseNaturalLanguageTransaction(
+      userText,
+      accounts,
+      userCategories,
+      userSubcategories,
+      userLearnings,
+    )
+
+    expect(secondRun.amount).toBe(142.55)
+    expect(secondRun.category_id).toBe('h6qdb8a4zr0d9xm') // Categoria: Família
+    expect(secondRun.subcategory_id).toBe('4alsarbqffvifxf') // Subcategoria: Viagens
+    expect(secondRun.type).toBe('despesa')
+    expect(secondRun.confidence.category).toBe(true)
+    expect(secondRun.confidence.subcategory).toBe(true)
+  })
 })

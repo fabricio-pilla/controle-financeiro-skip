@@ -1489,50 +1489,78 @@ export function parseNaturalLanguageTransaction(
   // 0. Check user AI learning history first (prioritized context)
   const learningResult = applyLearningsToClassification(text, learnings, categories, subcategories)
 
-  // 1. First extract Type (receita / despesa) from text cues or learned correction
-  let typeResult = extractType(normalized)
-  if (learningResult.type) {
-    typeResult = { type: learningResult.type, matched: true }
-  }
+  let typeResult: { type: TransactionType; matched: boolean }
+  let category: Category | undefined
+  let subcategory: Subcategory | undefined
+  let categoryMatched = false
+  let subcategoryMatched = false
 
-  // 2. If type was not conclusively matched by text keywords, do a preliminary category/subcategory match to check cues
-  if (!typeResult.matched) {
-    const preliminaryCatMatch = extractCategoryAndSubcategory(normalized, categories, subcategories)
-    typeResult = extractType(
-      normalized,
-      preliminaryCatMatch.category,
-      preliminaryCatMatch.subcategory,
-    )
-  }
-
-  // 3. Extract category & subcategory strictly filtered by the detected type
-  const compatibleCategories = categories.filter((c) => c.type === typeResult.type)
-  let { category, subcategory, categoryMatched, subcategoryMatched } =
-    extractCategoryAndSubcategory(normalized, compatibleCategories, subcategories, typeResult.type)
-
-  // Se o aprendizado tiver alta correspondência, sobrepor categoria/subcategoria
+  // Se houver correspondência forte de aprendizado com categoryId, o aprendizado tem PRIORIDADE MÁXIMA:
+  // ele vence regras de dicionário (CATEGORY_RULES), o tipo é forçado para o tipo da categoria aprendida
+  // (ou tipo corrigido no aprendizado) e confidence de categoria e subcategoria é true.
   if (learningResult.categoryId) {
     const learnedCat = categories.find((c) => c.id === learningResult.categoryId)
     if (learnedCat) {
       category = learnedCat
       categoryMatched = true
+
+      // Forçar o tipo da transação para o tipo da categoria aprendida (ou o tipo explícito do aprendizado)
+      const forcedType = learningResult.type || learnedCat.type
+      typeResult = { type: forcedType, matched: true }
+
+      // Atribuir diretamente a subcategoria aprendida se houver
       if (learningResult.subcategoryId) {
-        const learnedSub = subcategories.find(
-          (s) => s.id === learningResult.subcategoryId && s.category_id === learnedCat.id,
-        )
+        const learnedSub =
+          subcategories.find(
+            (s) => s.id === learningResult.subcategoryId && s.category_id === learnedCat.id,
+          ) ||
+          subcategories.find((s) => s.id === learningResult.subcategoryId) ||
+          null
+
         if (learnedSub) {
           subcategory = learnedSub
           subcategoryMatched = true
-        } else {
-          // Também aceitar se o subcat pertencer à categoria
-          const anySub = subcategories.find((s) => s.id === learningResult.subcategoryId)
-          if (anySub) {
-            subcategory = anySub
-            subcategoryMatched = true
-          }
         }
       }
+    } else {
+      // Fallback de tipo se o categoryId aprendido não estiver na lista de categorias
+      typeResult = learningResult.type
+        ? { type: learningResult.type, matched: true }
+        : extractType(normalized)
     }
+  } else {
+    // 1. Extrair tipo por palavras-chave ou regras convencionais
+    typeResult = extractType(normalized)
+    if (learningResult.type) {
+      typeResult = { type: learningResult.type, matched: true }
+    }
+
+    // 2. Se o tipo não foi conclusivo pelas palavras do texto, checar categorias preliminares
+    if (!typeResult.matched) {
+      const preliminaryCatMatch = extractCategoryAndSubcategory(
+        normalized,
+        categories,
+        subcategories,
+      )
+      typeResult = extractType(
+        normalized,
+        preliminaryCatMatch.category,
+        preliminaryCatMatch.subcategory,
+      )
+    }
+
+    // 3. Extrair categoria & subcategoria estritamente compatíveis com o tipo detectado
+    const compatibleCategories = categories.filter((c) => c.type === typeResult.type)
+    const catMatch = extractCategoryAndSubcategory(
+      normalized,
+      compatibleCategories,
+      subcategories,
+      typeResult.type,
+    )
+    category = catMatch.category
+    subcategory = catMatch.subcategory
+    categoryMatched = catMatch.categoryMatched
+    subcategoryMatched = catMatch.subcategoryMatched
   }
 
   // 3. Extract Recurrence

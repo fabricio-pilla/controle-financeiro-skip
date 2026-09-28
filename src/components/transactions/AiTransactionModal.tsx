@@ -267,8 +267,15 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         let finalCatId = ''
         if (result.category_id) {
           const catObj = categories.find((c) => c.id === result.category_id)
-          if (catObj && isCategoryAllowedForType(catObj, result.type)) {
-            finalCatId = result.category_id
+          if (catObj) {
+            // Se a categoria foi identificada com confiança (ex: por aprendizado forte), o tipo já foi alinhado
+            if (isCategoryAllowedForType(catObj, result.type)) {
+              finalCatId = result.category_id
+            } else if (result.confidence.category) {
+              // Categoria aprendida tem precedência: forçar tipo da categoria se houver divergência residual
+              setType(catObj.type)
+              finalCatId = result.category_id
+            }
           }
         }
         if (!finalCatId) {
@@ -350,7 +357,12 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         installments_total: isRecurring ? 0 : installmentsTotal,
       })
 
-      // Se o usuário ajustou a classificação antes de confirmar no modal, registra o aprendizado de forma invisível
+      // Inserir a transação criada no estado local imediatamente e fechar modal sem atraso
+      if (createdTx) {
+        applyTransactionsBatchUpdate({ created: [createdTx] })
+      }
+
+      // Se o usuário ajustou a classificação ou descrição antes de confirmar, registra o aprendizado de forma invisível
       if (currentCompany && parsed) {
         const textOrig = text.trim()
         const userCat = categoryId
@@ -366,20 +378,40 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
         const hasCorrection =
           (aiCat && userCat && aiCat !== userCat) ||
           (aiSub && userSub && aiSub !== userSub) ||
-          (aiType && userType && aiType !== userType)
+          (aiType && userType && aiType !== userType) ||
+          aiDesc !== userDesc
 
         if (hasCorrection) {
+          const learningPayload = {
+            original_text: textOrig,
+            ai_category_id: aiCat,
+            ai_subcategory_id: aiSub,
+            ai_type: aiType,
+            ai_description: aiDesc,
+            corrected_category_id: userCat,
+            corrected_subcategory_id: userSub,
+            corrected_type: userType,
+            corrected_description: userDesc,
+          }
+
+          // Atualiza o cache local imediatamente para que a próxima classificação na mesma sessão use o aprendizado
+          const optimisticLearning: AiLearning = {
+            id: `temp-${Date.now()}`,
+            control_id: currentCompany.id,
+            user_id: '',
+            ...learningPayload,
+            created_at: new Date().toISOString(),
+          }
+          setLearnings((prev) => [optimisticLearning, ...prev])
+
           skipCloud
-            .saveAiLearning(currentCompany.id, {
-              original_text: textOrig,
-              ai_category_id: aiCat,
-              ai_subcategory_id: aiSub,
-              ai_type: aiType,
-              ai_description: aiDesc,
-              corrected_category_id: userCat,
-              corrected_subcategory_id: userSub,
-              corrected_type: userType,
-              corrected_description: userDesc,
+            .saveAiLearning(currentCompany.id, learningPayload)
+            .then((persistedLearning) => {
+              if (persistedLearning?.id) {
+                setLearnings((prev) =>
+                  prev.map((l) => (l.id === optimisticLearning.id ? persistedLearning : l)),
+                )
+              }
             })
             .catch(() => {})
         }
