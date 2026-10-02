@@ -24,7 +24,7 @@ import {
   sleep,
 } from '@/lib/pocketbase/retry'
 import pb from '@/lib/pocketbase/client'
-import { cleanDescription, planNextRecurringTransactions } from '@/lib/recurring-generation'
+import { cleanDescription, planNextRecurringTransactionsDetailed } from '@/lib/recurring-generation'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR, getTxEffectiveDate } from '@/lib/formatters'
 import { cleanNotesForDisplay } from '@/lib/ai-learning-tracker'
@@ -520,7 +520,7 @@ export default function TransactionsPage() {
     }
 
     if (currentMonthRecurringSeeds.length === 0) {
-      toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
+      toast.info('Nenhum lançamento recorrente no mês atual para gerar.', {
         duration: 6000,
       })
       return
@@ -635,7 +635,7 @@ export default function TransactionsPage() {
 
       if (currentMonthRecurringSeeds.length === 0) {
         toast.dismiss(toastId)
-        toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
+        toast.info('Nenhum lançamento recorrente no mês atual para gerar.', {
           duration: 6000,
         })
         return
@@ -648,7 +648,7 @@ export default function TransactionsPage() {
       // Semente EXCLUSIVAMENTE dos lançamentos recorrentes do MÊS ATUAL
       // Gera as próximas 12 ocorrências mensais a partir do mês seguinte
       // ----------------------------------------------------
-      const plannedRecurring = planNextRecurringTransactions({
+      const planningResult = planNextRecurringTransactionsDetailed({
         allTransactions: freshCompanyTxs,
         currentMonthTransactions: currentMonthRecurringSeeds,
         existingTransactions: freshCompanyTxs,
@@ -659,11 +659,13 @@ export default function TransactionsPage() {
         allowGenericDescription: true,
       })
 
+      const plannedRecurring = planningResult.planned
       const totalPlanned = plannedRecurring.length
+      const alreadyExistingCount = planningResult.alreadyExistingCount
 
       if (totalPlanned === 0) {
         toast.dismiss(toastId)
-        toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
+        toast.info('As recorrências futuras já existiam — nada a gerar.', {
           duration: 6000,
         })
         return
@@ -787,20 +789,34 @@ export default function TransactionsPage() {
             { duration: 9000 },
           )
         } else {
-          toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
+          toast.info('As recorrências futuras já existiam — nada a gerar.', {
             duration: 6000,
           })
         }
       } else {
-        const parts = `${totalRecurCreated} recorrência(s) (${createdIncomeCount} receita(s) e ${createdExpenseCount} despesa(s))`
+        // Mensagem com feedback real e contagens:
+        // - Caso misto: "X geradas, Y meses já existiam" (ou com detalhes receitas/despesas)
+        // - "X recorrências geradas" quando criou e não havia meses já existentes
+        const countLabel =
+          totalRecurCreated === 1
+            ? '1 recorrência gerada'
+            : `${totalRecurCreated} recorrências geradas`
+        const mixedSummary =
+          alreadyExistingCount > 0
+            ? `${totalRecurCreated} geradas, ${alreadyExistingCount} ${alreadyExistingCount === 1 ? 'mês já existia' : 'meses já existiam'}`
+            : countLabel
 
         if (totalRateLimited > 0) {
           toast.warning(
-            `Geração parcial concluída: ${parts}. ${totalRateLimited} recorrência(s) ficaram pendentes por limite do servidor. Clique novamente no botão para gerar as restantes sem duplicações.`,
+            `Geração parcial: ${mixedSummary} (${createdIncomeCount} receita(s), ${createdExpenseCount} despesa(s)). ${totalRateLimited} pendente(s) por limite do servidor.`,
             { duration: 10000 },
           )
         } else {
-          toast.success(`Recorrências geradas com sucesso para os próximos 12 meses: ${parts}.`, {
+          const detailSuffix =
+            alreadyExistingCount > 0
+              ? ` (${createdIncomeCount} receita(s), ${createdExpenseCount} despesa(s))`
+              : ` (${createdIncomeCount} receita(s), ${createdExpenseCount} despesa(s))`
+          toast.success(`${mixedSummary}${detailSuffix}.`, {
             duration: 7500,
           })
         }

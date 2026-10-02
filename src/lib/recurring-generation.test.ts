@@ -5,6 +5,7 @@ import {
   parseDateParts,
   planOccurrencesForSingleRecurring,
   planNextRecurringTransactions,
+  planNextRecurringTransactionsDetailed,
   planNextInstallmentTransactions,
   planOccurrencesForSingleInstallment,
 } from './recurring-generation'
@@ -95,7 +96,7 @@ describe('recurring-generation engine', () => {
         date: '2026-10-10 00:00:00.000Z',
       }
 
-      const candidates = planNextRecurringTransactions({
+      const detailedResult = planNextRecurringTransactionsDetailed({
         currentMonthTransactions: [mockSeed],
         existingTransactions: [mockSeed, existingOct],
         currentCompanyId: 'ctrl_1',
@@ -104,10 +105,11 @@ describe('recurring-generation engine', () => {
         currentMonth: 9,
       })
 
-      // Deverá gerar 11 (pulando outubro/2026)
-      expect(candidates.length).toBe(11)
-      expect(candidates.some((c) => c.date.startsWith('2026-10'))).toBe(false)
-      expect(candidates[0].date).toBe('2026-11-10 00:00:00.000Z')
+      // Deverá gerar 11 (pulando outubro/2026) e reportar 1 mês já existente
+      expect(detailedResult.planned.length).toBe(11)
+      expect(detailedResult.alreadyExistingCount).toBe(1)
+      expect(detailedResult.planned.some((c) => c.date.startsWith('2026-10'))).toBe(false)
+      expect(detailedResult.planned[0].date).toBe('2026-11-10 00:00:00.000Z')
     })
 
     it('picks seeds EXCLUSIVELY from the current month (ignores past and future recurring seeds)', () => {

@@ -2,6 +2,12 @@ import { Transaction, TransactionType, Account } from '@/types/database'
 import { calculatePaymentDate } from '@/lib/invoice-helper'
 import { is429Error } from '@/lib/pocketbase/retry'
 
+export interface PlanNextRecurringTransactionsResult {
+  planned: RecurringGenerationCandidate[]
+  alreadyExistingCount: number
+  seriesCount: number
+}
+
 export interface RecurringGenerationCandidate {
   control_id: string
   user_id: string
@@ -862,7 +868,7 @@ export async function triggerAutoInstallmentGeneration({
  *    - Se for do mês atual ou passada: começa no mês seguinte ao mês atual (m=1..12), preservando o dia da data base.
  * - Idempotente: se já existir ocorrência naquele YYYY-MM para a série, não gera de novo.
  */
-export function planNextRecurringTransactions({
+export function planNextRecurringTransactionsDetailed({
   allTransactions,
   currentMonthTransactions,
   existingTransactions,
@@ -880,7 +886,7 @@ export function planNextRecurringTransactions({
   currentYear: number
   currentMonth: number
   allowGenericDescription?: boolean
-}): RecurringGenerationCandidate[] {
+}): PlanNextRecurringTransactionsResult {
   // A semente da geração deve vir exclusivamente dos lançamentos do mês atual (mês corrente).
   // Se currentMonthTransactions for fornecido, usamos ele.
   // Caso contrário, se allTransactions for fornecido, filtramos apenas as transações do mês corrente (currentYM).
@@ -980,6 +986,7 @@ export function planNextRecurringTransactions({
   }
 
   const planned: RecurringGenerationCandidate[] = []
+  let alreadyExistingCount = 0
 
   // 4. Para cada série única, gerar 12 meses futuros
   for (const seed of canonicalMap.values()) {
@@ -1028,6 +1035,7 @@ export function planNextRecurringTransactions({
       const checkKeyPayment = `${seed.type}_${accId}_${cleanD}_${targetPaymentYM}`
 
       if (existingSet.has(checkKeyDate) || existingSet.has(checkKeyPayment)) {
+        alreadyExistingCount++
         continue // Idempotente
       }
 
@@ -1060,7 +1068,17 @@ export function planNextRecurringTransactions({
     }
   }
 
-  return planned
+  return {
+    planned,
+    alreadyExistingCount,
+    seriesCount: canonicalMap.size,
+  }
+}
+
+export function planNextRecurringTransactions(
+  params: Parameters<typeof planNextRecurringTransactionsDetailed>[0],
+): RecurringGenerationCandidate[] {
+  return planNextRecurringTransactionsDetailed(params).planned
 }
 
 export interface InstallmentSeriesFromCurrentMonth {
