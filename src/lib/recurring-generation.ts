@@ -230,14 +230,18 @@ export async function triggerAutoRecurringGeneration({
     currentUserId,
   })
 
+  const { toast } = await import('sonner')
+
   if (planned.length === 0) {
     console.warn(
       `[triggerAutoRecurringGeneration] Nenhuma ocorrência futura planejada para a transação recorrente: id=${sourceTransaction.id}, desc="${sourceTransaction.description}", recurrence_type=${sourceTransaction.recurrence_type || (sourceTransaction as any).recurrence_period}. Possível motivo: os 12 meses futuros já possuem lançamentos nesta série.`,
     )
+    toast.info(
+      'Lançamento recorrente criado. As recorrências futuras já existiam e não foram duplicadas.',
+      { duration: 7000 },
+    )
     return
   }
-
-  const { toast } = await import('sonner')
 
   try {
     const { created, failedCount } = await createPlannedTransactionsInPool({
@@ -246,6 +250,13 @@ export async function triggerAutoRecurringGeneration({
 
     if (created.length > 0 && onSuccessCreated) {
       onSuccessCreated(created)
+    }
+
+    if (created.length > 0 && failedCount === 0) {
+      toast.success(
+        `Lançamento recorrente criado. ${created.length} recorrência(s) futura(s) gerada(s).`,
+        { duration: 6000 },
+      )
     }
 
     if (failedCount > 0 && created.length === 0) {

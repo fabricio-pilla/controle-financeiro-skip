@@ -404,13 +404,16 @@ export function TransactionModal({
         notes: cleanNotesForDisplay(notes),
         installments_total: isRecurring ? 0 : installmentsTotal,
       })
-      toast.success(
-        installmentsTotal > 1
-          ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
-          : isRecurring
-            ? 'Lançamento recorrente criado com sucesso!'
+      // Para recorrentes, triggerAutoRecurringGeneration já emite toast detalhado:
+      // se 0 novas geradas -> "Lançamento recorrente criado. As recorrências futuras já existiam e não foram duplicadas."
+      // se N novas geradas -> "Lançamento recorrente criado. N recorrência(s) futura(s) gerada(s)."
+      if (!isRecurring) {
+        toast.success(
+          installmentsTotal > 1
+            ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
             : 'Lançamento criado com sucesso!',
-      )
+        )
+      }
       onOpenChange(false)
 
       // Geração automática de ocorrências futuras se for recorrente
@@ -426,9 +429,6 @@ export function TransactionModal({
             currentUserId,
             onSuccessCreated: (createdList) => {
               applyTransactionsBatchUpdate({ created: createdList })
-              toast.success(
-                `Foram geradas automaticamente 12 ocorrências futuras para "${createdTx.description}".`,
-              )
             },
           }).catch((err) => {
             console.warn('[TransactionModal] Erro na geração automática:', err)

@@ -520,7 +520,9 @@ export default function TransactionsPage() {
     }
 
     if (currentMonthRecurringSeeds.length === 0) {
-      toast.info('Nenhum lançamento recorrente no mês atual para gerar', { duration: 6000 })
+      toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
+        duration: 6000,
+      })
       return
     }
 
@@ -633,7 +635,9 @@ export default function TransactionsPage() {
 
       if (currentMonthRecurringSeeds.length === 0) {
         toast.dismiss(toastId)
-        toast.info('Nenhum lançamento recorrente no mês atual para gerar', { duration: 6000 })
+        toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
+          duration: 6000,
+        })
         return
       }
 
@@ -659,7 +663,7 @@ export default function TransactionsPage() {
 
       if (totalPlanned === 0) {
         toast.dismiss(toastId)
-        toast.info('Todas as recorrências já estão geradas para os próximos 12 meses.', {
+        toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
           duration: 6000,
         })
         return
@@ -783,7 +787,9 @@ export default function TransactionsPage() {
             { duration: 9000 },
           )
         } else {
-          toast.info('Todas as recorrências já estão em dia para os próximos 12 meses.')
+          toast.info('Nada a gerar — as recorrências já existem para os próximos 12 meses.', {
+            duration: 6000,
+          })
         }
       } else {
         const parts = `${totalRecurCreated} recorrência(s) (${createdIncomeCount} receita(s) e ${createdExpenseCount} despesa(s))`
