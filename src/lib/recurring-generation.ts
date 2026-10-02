@@ -417,31 +417,34 @@ export function planOccurrencesForSingleRecurring({
   // Montar conjunto de checagem rápida de ocorrências existentes.
   // IMPORTANTE: A idempotência por mês de uma série recorrente deve checar
   // mesma conta (account_id), mesmo tipo (type) e descrição normalizada (cleanD),
-  // NÃO incluindo o valor no check, pois se o usuário acabou de editar o valor de um lançamento,
-  // as ocorrências futuras já existentes com o valor antigo não podem ser duplicadas.
-  // Restringir por conta garante que despesas com mesma descrição em contas diferentes não colidam.
+  // insensível a formato de data e cobrindo tanto date quanto payment_date.
   const sourceAccountId = sourceTransaction.account_id || ''
   const existingMonthSet = new Set<string>()
+
+  const extractYM = (d: any): string => {
+    if (!d) return ''
+    const clean = String(d).substring(0, 10).split(/[T\s]/)[0]
+    return clean.length >= 7 ? clean.substring(0, 7) : ''
+  }
+
   for (const t of existingTransactions) {
-    if (!t.date || (t.control_id && t.control_id !== currentCompanyId)) continue
+    if (t.control_id && t.control_id !== currentCompanyId) continue
     const d = cleanDescription(t.description).toLowerCase()
     const tAccountId = t.account_id || ''
     // Pertence à mesma série se tiver a mesma conta, tipo e descrição base
     if (d === cleanD && t.type === sourceTransaction.type && tAccountId === sourceAccountId) {
-      const cleanTDate = String(t.date).split(/[T\s]/)[0]
-      const ym = cleanTDate.substring(0, 7)
-      if (ym) existingMonthSet.add(ym)
+      const ymDate = extractYM(t.date)
+      if (ymDate) existingMonthSet.add(ymDate)
+      const ymPaymentDate = extractYM(t.payment_date)
+      if (ymPaymentDate) existingMonthSet.add(ymPaymentDate)
     }
   }
 
   // Normalização de datas sem depender de fuso horário
-  const cleanSourceDate = sourceTransaction.date
-    ? String(sourceTransaction.date).split(/[T\s]/)[0]
-    : ''
-  const sourceYM = cleanSourceDate
-    ? cleanSourceDate.substring(0, 7)
-    : getYearMonth(baseYear, baseMonth)
+  const sourceYM = extractYM(sourceTransaction.date) || getYearMonth(baseYear, baseMonth)
+  const sourcePayYM = extractYM(sourceTransaction.payment_date)
   existingMonthSet.add(sourceYM)
+  if (sourcePayYM) existingMonthSet.add(sourcePayYM)
   existingMonthSet.add(getYearMonth(baseYear, baseMonth))
 
   // Projetar dia de pagamento original da transação cadastrada
@@ -458,21 +461,23 @@ export function planOccurrencesForSingleRecurring({
     const targetDateStr = computeTargetDate(baseYear, baseMonth, origDay, m)
     const targetYM = targetDateStr.substring(0, 7)
 
+    // Data de pagamento projetada respeitando o dia original da payment_date
+    const targetPaymentDateStr = sourceTransaction.payment_date
+      ? computeTargetDate(baseYear, baseMonth, payOrigDay, m)
+      : targetDateStr
+    const targetPaymentYM = targetPaymentDateStr.substring(0, 7)
+
     // Blindagem: NUNCA criar ocorrência no mês do lançamento base ou anterior
     if (targetYM <= sourceYM) {
       continue
     }
 
-    if (existingMonthSet.has(targetYM)) {
+    if (existingMonthSet.has(targetYM) || existingMonthSet.has(targetPaymentYM)) {
       continue // Idempotente: mês já possui ocorrência desta série
     }
 
     existingMonthSet.add(targetYM)
-
-    // Data de pagamento projetada respeitando o dia original da payment_date
-    const targetPaymentDateStr = sourceTransaction.payment_date
-      ? computeTargetDate(baseYear, baseMonth, payOrigDay, m)
-      : targetDateStr
+    existingMonthSet.add(targetPaymentYM)
 
     planned.push({
       control_id: currentCompanyId,
@@ -916,34 +921,50 @@ export function planNextRecurringTransactions({
     return true
   })
 
-  // 2. Desduplicar seeds por série canônica (tipo + conta + categoria + cleanDesc)
-  // Independente do valor, ocorrências da mesma série pertencem à mesma recorrência.
+  // 2. Desduplicar seeds por série canônica: tipo + account_id + cleanDesc
+  // Independente do valor e categoria, ocorrências da mesma série pertencem à mesma recorrência.
   const canonicalMap = new Map<string, Transaction>()
   for (const t of recurringSeeds) {
     const cleanD = cleanDescription(t.description).toLowerCase()
-    const key = `${t.type}_${t.account_id || ''}_${t.category_id || ''}_${cleanD}`
-    if (!canonicalMap.has(key)) {
-      canonicalMap.set(key, t)
+    const seriesKey = `${t.type}_${t.account_id || ''}_${cleanD}`
+    if (!canonicalMap.has(seriesKey)) {
+      canonicalMap.set(seriesKey, t)
     } else {
-      // Se houver mais de um, manter o de maior data
-      const existing = canonicalMap.get(key)!
+      // Se houver mais de um no mês corrente, manter o de maior data
+      const existing = canonicalMap.get(seriesKey)!
       if (t.date > existing.date) {
-        canonicalMap.set(key, t)
+        canonicalMap.set(seriesKey, t)
       }
     }
   }
 
-  // 3. Montar conjunto de checagem rápida de ocorrências existentes por série e mês
-  // Chave: type_account_cleanDesc_ym e também type_account_category_cleanDesc_ym
+  // 3. Montar conjunto de checagem rápida de ocorrências existentes por série e ano/mês
+  // Chave canônica: ${tipo}_${account_id||''}_${descriçãoLimpa.toLowerCase()}_${anoMês}
+  // Robustez:
+  // - Extração de ano/mês insensível a formato ("2026-10-05 00:00:00.000Z" ou "2026-10-05")
+  // - Verificar idempotência tanto por date quanto por payment_date (uma ocorrência existente em
+  //   qualquer uma das duas datas no mesmo ano/mês impede recriação)
+  // - Chave NÃO inclui category_id nem amount para colidir mesmo se salva sem categoria ou com valor editado
   const existingSet = new Set<string>()
+  const extractYM = (d: any): string => {
+    if (!d) return ''
+    const clean = String(d).substring(0, 10).split(/[T\s]/)[0]
+    return clean.length >= 7 ? clean.substring(0, 7) : ''
+  }
+
   for (const t of existingTransactions) {
-    if (!t.date || t.control_id !== currentCompanyId) continue
-    const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
-    const ym = cleanDateOnly.substring(0, 7)
+    if (t.control_id !== currentCompanyId) continue
     const cleanD = cleanDescription(t.description).toLowerCase()
-    existingSet.add(`${t.type}_${t.account_id || ''}_${cleanD}_${ym}`)
-    if (t.category_id) {
-      existingSet.add(`${t.type}_${t.account_id || ''}_${t.category_id}_${cleanD}_${ym}`)
+    const accId = t.account_id || ''
+    const type = t.type
+
+    const ymDate = extractYM(t.date)
+    if (ymDate) {
+      existingSet.add(`${type}_${accId}_${cleanD}_${ymDate}`)
+    }
+    const ymPaymentDate = extractYM(t.payment_date)
+    if (ymPaymentDate && ymPaymentDate !== ymDate) {
+      existingSet.add(`${type}_${accId}_${cleanD}_${ymPaymentDate}`)
     }
   }
 
@@ -952,8 +973,9 @@ export function planNextRecurringTransactions({
   // 4. Para cada série única, gerar 12 meses futuros
   for (const seed of canonicalMap.values()) {
     const cleanD = cleanDescription(seed.description).toLowerCase()
+    const accId = seed.account_id || ''
     const origParts = parseDateParts(seed.date)
-    const seedCleanDate = seed.date ? String(seed.date).split(/[T\s]/)[0] : ''
+    const seedCleanDate = seed.date ? String(seed.date).substring(0, 10).split(/[T\s]/)[0] : ''
     const seedYM = seedCleanDate
       ? seedCleanDate.substring(0, 7)
       : getYearMonth(origParts.year, origParts.month)
@@ -985,22 +1007,22 @@ export function planNextRecurringTransactions({
         continue
       }
 
-      const checkKey = `${seed.type}_${seed.account_id || ''}_${cleanD}_${targetYM}`
-      const checkKeyWithCat = seed.category_id
-        ? `${seed.type}_${seed.account_id || ''}_${seed.category_id}_${cleanD}_${targetYM}`
-        : checkKey
+      const targetPaymentDateStr = seed.payment_date
+        ? computeTargetDate(startBaseYear, startBaseMonth, seedPayOrigDay, m)
+        : targetDateStr
+      const targetPaymentYM = targetPaymentDateStr.substring(0, 7)
 
-      if (existingSet.has(checkKey) || existingSet.has(checkKeyWithCat)) {
+      // Verificar idempotência canônica tanto por targetYM (date) quanto por targetPaymentYM (payment_date)
+      const checkKeyDate = `${seed.type}_${accId}_${cleanD}_${targetYM}`
+      const checkKeyPayment = `${seed.type}_${accId}_${cleanD}_${targetPaymentYM}`
+
+      if (existingSet.has(checkKeyDate) || existingSet.has(checkKeyPayment)) {
         continue // Idempotente
       }
 
       // Marcar no existingSet para não duplicar se houver colisão interna
-      existingSet.add(checkKey)
-      existingSet.add(checkKeyWithCat)
-
-      const targetPaymentDateStr = seed.payment_date
-        ? computeTargetDate(startBaseYear, startBaseMonth, seedPayOrigDay, m)
-        : targetDateStr
+      existingSet.add(checkKeyDate)
+      existingSet.add(checkKeyPayment)
 
       planned.push({
         control_id: currentCompanyId,

@@ -563,13 +563,50 @@ export default function TransactionsPage() {
       const currentMonth = now.getMonth() + 1 // 1-12
       const currentYM = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
 
-      // Filtrar todas as transações do controle atual
-      const companyTxs = transactions.filter((t) => t.control_id === currentCompany.id)
+      // Buscar a lista COMPLETA e FRESCA do banco para garantir idempotência máxima
+      setGenerationStepLabel('Consultando banco...')
+      let freshCompanyTxs: Transaction[] = []
+      try {
+        const freshRecords = await pb.collection('transactions').getFullList<any>({
+          filter: `control_id = '${currentCompany.id}'`,
+        })
+        freshCompanyTxs = freshRecords.map((r) => ({
+          id: r.id,
+          control_id: r.control_id,
+          user_id: r.user_id,
+          type: r.type,
+          amount: Number(r.amount),
+          description: r.description,
+          category_id: r.category_id,
+          subcategory_id: r.subcategory_id,
+          account_id: r.account_id,
+          credit_card_id: r.credit_card_id,
+          date: r.date,
+          payment_date: r.payment_date,
+          paid: Boolean(r.paid),
+          is_recurring: Boolean(r.is_recurring),
+          recurring: Boolean(r.recurring || r.is_recurring),
+          recurrence_type: r.recurrence_type,
+          recurrence_period: r.recurrence_period,
+          installment_number: r.installment_number ? Number(r.installment_number) : undefined,
+          installment_total: r.installment_total ? Number(r.installment_total) : undefined,
+          installments_total: r.installment_total ? Number(r.installment_total) : undefined,
+          parent_transaction_id: r.parent_transaction_id,
+          notes: r.notes,
+          created_at: r.created,
+        }))
+      } catch (freshErr) {
+        console.warn(
+          '[handleGenerateNext12Months] Falha ao consultar transações frescas do banco, usando estado local:',
+          freshErr,
+        )
+        freshCompanyTxs = transactions.filter((t) => t.control_id === currentCompany.id)
+      }
 
       // Transações do mês atual (mês corrente do calendário real, com normalização de data)
-      const currentMonthTxs = companyTxs.filter((t) => {
+      const currentMonthTxs = freshCompanyTxs.filter((t) => {
         if (!t.date) return false
-        const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
+        const cleanDateOnly = String(t.date).substring(0, 10).split(/[T\s]/)[0]
         return cleanDateOnly.startsWith(currentYM)
       })
 
@@ -603,14 +640,14 @@ export default function TransactionsPage() {
       const currentUserId = pb.authStore.model?.id || currentCompany.owner_id || ''
 
       // ----------------------------------------------------
-      // PLANEJAMENTO PURO EM MEMÓRIA (Sem chamadas adicionais de rede)
+      // PLANEJAMENTO PURO EM MEMÓRIA COM DADOS FRESCOS DO BANCO
       // Semente EXCLUSIVAMENTE dos lançamentos recorrentes do MÊS ATUAL
       // Gera as próximas 12 ocorrências mensais a partir do mês seguinte
       // ----------------------------------------------------
       const plannedRecurring = planNextRecurringTransactions({
-        allTransactions: companyTxs,
+        allTransactions: freshCompanyTxs,
         currentMonthTransactions: currentMonthRecurringSeeds,
-        existingTransactions: transactions,
+        existingTransactions: freshCompanyTxs,
         currentCompanyId: currentCompany.id,
         currentUserId,
         currentYear,

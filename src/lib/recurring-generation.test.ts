@@ -1327,5 +1327,131 @@ describe('recurring-generation engine', () => {
       // Nenhuma ocorrência deve ser gerada pois não há sementes no mês atual
       expect(planned).toHaveLength(0)
     })
+
+    it('idempotência real: rodar duas vezes com o mesmo conjunto não gera novas transações', () => {
+      const spotifySeed: Transaction = {
+        id: 'tx_spotify_seed',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 31.9,
+        description: 'Spotify',
+        category_id: 'cat_spotify',
+        account_id: 'acc_neon',
+        date: '2026-09-05 00:00:00.000Z',
+        payment_date: '2026-09-05 00:00:00.000Z',
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-09-05',
+      }
+
+      // 1ª execução
+      const firstRun = planNextRecurringTransactions({
+        allTransactions: [spotifySeed],
+        currentMonthTransactions: [spotifySeed],
+        existingTransactions: [spotifySeed],
+        currentCompanyId: 'comp_1',
+        currentUserId: 'u_1',
+        currentYear: 2026,
+        currentMonth: 9,
+      })
+      expect(firstRun).toHaveLength(12)
+
+      // Simular transações salvas após a 1ª execução
+      const savedTxs: Transaction[] = [
+        spotifySeed,
+        ...firstRun.map((candidate, idx) => ({
+          id: `tx_gen_${idx}`,
+          control_id: candidate.control_id,
+          user_id: candidate.user_id,
+          type: candidate.type,
+          amount: candidate.amount,
+          description: candidate.description,
+          category_id: candidate.category_id,
+          account_id: candidate.account_id,
+          date: candidate.date,
+          payment_date: candidate.payment_date,
+          paid: candidate.paid,
+          is_recurring: candidate.is_recurring,
+          recurring: candidate.recurring,
+          recurrence_type: candidate.recurrence_type as any,
+          installment_number: candidate.installment_number,
+          installment_total: candidate.installment_total,
+          created_at: '2026-09-05',
+        })),
+      ]
+
+      // 2ª execução com as transações salvas incluídas em existingTransactions
+      const secondRun = planNextRecurringTransactions({
+        allTransactions: savedTxs,
+        currentMonthTransactions: [spotifySeed],
+        existingTransactions: savedTxs,
+        currentCompanyId: 'comp_1',
+        currentUserId: 'u_1',
+        currentYear: 2026,
+        currentMonth: 9,
+      })
+
+      // Idempotência estrita: 0 geradas
+      expect(secondRun).toHaveLength(0)
+    })
+
+    it('chave canônica colide mesmo sem categoria e com formatos de data diferentes (ISO vs date-only)', () => {
+      const seedWithCategory: Transaction = {
+        id: 'tx_seed_cat',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 31.9,
+        description: 'Spotify (Total: R$ 31,90)',
+        category_id: 'cat_spotify',
+        account_id: 'acc_neon',
+        date: '2026-09-05 00:00:00.000Z',
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-09-05',
+      }
+
+      // Suponha que em outubro já exista um lançamento criado sem categoria e em formato "YYYY-MM-DD"
+      const existingOctNoCatDateOnly: Transaction = {
+        id: 'tx_oct_no_cat',
+        control_id: 'comp_1',
+        user_id: 'u_1',
+        type: 'despesa',
+        amount: 31.9,
+        description: 'Spotify',
+        category_id: '', // SEM categoria
+        account_id: 'acc_neon',
+        date: '2026-10-05', // date-only
+        payment_date: '2026-11-05 00:00:00.000Z', // ISO
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: 'mensal',
+        created_at: '2026-09-18',
+      }
+
+      const planned = planNextRecurringTransactions({
+        allTransactions: [seedWithCategory, existingOctNoCatDateOnly],
+        currentMonthTransactions: [seedWithCategory],
+        existingTransactions: [seedWithCategory, existingOctNoCatDateOnly],
+        currentCompanyId: 'comp_1',
+        currentUserId: 'u_1',
+        currentYear: 2026,
+        currentMonth: 9,
+      })
+
+      // Não deve gerar para outubro (2026-10) nem duplicar por causa de payment_date em novembro (2026-11)
+      const octPlanned = planned.filter(
+        (p) => p.date.startsWith('2026-10') || p.payment_date.startsWith('2026-10'),
+      )
+      expect(octPlanned).toHaveLength(0)
+
+      const novPlanned = planned.filter(
+        (p) => p.date.startsWith('2026-11') || p.payment_date.startsWith('2026-11'),
+      )
+      expect(novPlanned).toHaveLength(0)
+    })
   })
 })
