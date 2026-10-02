@@ -21,6 +21,114 @@ export interface AccountInvoiceConfig {
   due_day?: number
 }
 
+export interface InvoiceDifferenceInfo {
+  hasDifference: boolean
+  purchaseDateBR: string
+  purchaseDayMonth: string
+  invoiceMonthYear: string
+  closingDayMonth: string
+  dueDayMonth: string
+  paymentDateStr: string
+  bannerText: string
+}
+
+const MONTH_NAMES_PT: string[] = [
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+]
+
+/**
+ * Retorna os dados para exibição do banner informativo de fatura caso a conta selecionada
+ * seja cartão de crédito e a data calculada de pagamento caia num mês/ano diferente da compra.
+ */
+export function getInvoiceDifferenceInfo(
+  purchaseDateStr: string,
+  account?: AccountInvoiceConfig | null,
+): InvoiceDifferenceInfo | null {
+  if (!account || account.type !== 'credito') {
+    return null
+  }
+
+  if (!purchaseDateStr) {
+    return null
+  }
+
+  const parts = purchaseDateStr.split('T')[0].split('-')
+  const pYear = parseInt(parts[0], 10)
+  const pMonth = parseInt(parts[1], 10) // 1..12
+  const pDay = parseInt(parts[2], 10)
+
+  if (isNaN(pYear) || isNaN(pMonth) || isNaN(pDay)) {
+    return null
+  }
+
+  const paymentDateStr = calculatePaymentDate(purchaseDateStr, account)
+  const payParts = paymentDateStr.split('T')[0].split('-')
+  const payYear = parseInt(payParts[0], 10)
+  const payMonth = parseInt(payParts[1], 10) // 1..12
+  const payDay = parseInt(payParts[2], 10)
+
+  if (isNaN(payYear) || isNaN(payMonth) || isNaN(payDay)) {
+    return null
+  }
+
+  // Verifica se o payment_date calculado cai num mês/ano diferente da data da compra
+  if (pYear === payYear && pMonth === payMonth) {
+    return null
+  }
+
+  const purchaseDayMonth = `${String(pDay).padStart(2, '0')}/${String(pMonth).padStart(2, '0')}`
+  const purchaseDateBR = `${purchaseDayMonth}/${pYear}`
+
+  const invoiceMonthName = MONTH_NAMES_PT[payMonth - 1] || String(payMonth)
+  const invoiceMonthYear = `${invoiceMonthName}/${payYear}`
+
+  // Dia e mês de fechamento:
+  // Se purchaseDay >= closingDay, fechou no próprio mês da compra
+  // Se purchaseDay < closingDay mas caiu no mês anterior/diferente (fallback), usa mês da compra
+  const closingDayNum =
+    account.closing_day !== undefined && account.closing_day !== null && account.closing_day > 0
+      ? Math.min(31, Math.max(1, Math.floor(account.closing_day)))
+      : null
+
+  let closingMonth = pMonth
+  let closingYear = pYear
+  if (closingDayNum !== null && pDay < closingDayNum) {
+    // Se por alguma razão o payment caiu em outro mês mesmo com pDay < closingDay
+    closingMonth = pMonth
+  }
+
+  const closingDayActual = closingDayNum
+    ? Math.min(closingDayNum, getLastDayOfMonth(closingYear, closingMonth))
+    : pDay
+
+  const closingDayMonth = `${String(closingDayActual).padStart(2, '0')}/${String(closingMonth).padStart(2, '0')}`
+  const dueDayMonth = `${String(payDay).padStart(2, '0')}/${String(payMonth).padStart(2, '0')}`
+
+  const bannerText = `Compra em ${purchaseDayMonth} cai na fatura de ${invoiceMonthYear} (fecha ${closingDayMonth}, vence ${dueDayMonth}) — o lançamento aparecerá em ${invoiceMonthYear}.`
+
+  return {
+    hasDifference: true,
+    purchaseDateBR,
+    purchaseDayMonth,
+    invoiceMonthYear,
+    closingDayMonth,
+    dueDayMonth,
+    paymentDateStr,
+    bannerText,
+  }
+}
+
 /**
  * Retorna o último dia de um determinado mês e ano.
  * Mês em base 1..12

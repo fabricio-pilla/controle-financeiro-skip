@@ -34,7 +34,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { formatCurrency, isFutureDate } from '@/lib/formatters'
-import { calculatePaymentDate } from '@/lib/invoice-helper'
+import { calculatePaymentDate, getInvoiceDifferenceInfo } from '@/lib/invoice-helper'
 import { RecurrencePropagationModal, PropagationChoice } from './RecurrencePropagationModal'
 import {
   updateTransactionWithPropagation,
@@ -711,6 +711,23 @@ export function TransactionModal({
               </Select>
             </div>
           </div>
+
+          {/* Banner informativo de fechamento de fatura (cartão de crédito com pagamento em mês diferente) */}
+          {(() => {
+            const selectedAcc = accounts.find((a) => a.id === accountId) || null
+            const invoiceNotice = getInvoiceDifferenceInfo(date, selectedAcc)
+            if (!invoiceNotice) return null
+
+            return (
+              <div
+                data-testid="invoice-closing-banner"
+                className="p-3 rounded-xl border border-sky-200 bg-sky-50/80 text-sky-900 text-xs flex items-start gap-2.5 animate-fade-in"
+              >
+                <CreditCard className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                <p className="leading-relaxed font-medium">{invoiceNotice.bannerText}</p>
+              </div>
+            )
+          })()}
 
           {/* Subcategory */}
           <div className="space-y-1.5">

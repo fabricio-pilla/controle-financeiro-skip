@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calculatePaymentDate, getLastDayOfMonth } from './invoice-helper'
+import { calculatePaymentDate, getLastDayOfMonth, getInvoiceDifferenceInfo } from './invoice-helper'
 
 describe('Invoice Closing and Due Date Rules (calculatePaymentDate)', () => {
   const creditCardConfig = {
@@ -99,5 +99,56 @@ describe('Invoice Closing and Due Date Rules (calculatePaymentDate)', () => {
     expect(getLastDayOfMonth(2024, 2)).toBe(29)
     expect(getLastDayOfMonth(2026, 4)).toBe(30)
     expect(getLastDayOfMonth(2026, 8)).toBe(31)
+  })
+})
+
+describe('Invoice Difference Info Banner (getInvoiceDifferenceInfo)', () => {
+  const creditCardConfig = {
+    type: 'credito',
+    closing_day: 10,
+    due_day: 18,
+  }
+
+  it('retorna null se a conta não for cartão de crédito', () => {
+    const bankAccount = {
+      type: 'banco',
+      closing_day: 10,
+      due_day: 18,
+    }
+    const info = getInvoiceDifferenceInfo('2026-08-15', bankAccount)
+    expect(info).toBeNull()
+  })
+
+  it('retorna null se a compra cair no mesmo mês do pagamento', () => {
+    // Compra 05/08 com fechamento 10/08 -> fatura vence 18/08 (mesmo mês)
+    const info = getInvoiceDifferenceInfo('2026-08-05', creditCardConfig)
+    expect(info).toBeNull()
+  })
+
+  it('retorna os dados e o banner correto quando o pagamento cai em mês posterior', () => {
+    // Compra 10/08 (dia do fechamento) -> fatura de Setembro/2026 (fecha 10/08, vence 18/09)
+    const info = getInvoiceDifferenceInfo('2026-08-10', creditCardConfig)
+    expect(info).not.toBeNull()
+    expect(info?.hasDifference).toBe(true)
+    expect(info?.purchaseDayMonth).toBe('10/08')
+    expect(info?.invoiceMonthYear).toBe('Setembro/2026')
+    expect(info?.closingDayMonth).toBe('10/08')
+    expect(info?.dueDayMonth).toBe('18/09')
+    expect(info?.bannerText).toBe(
+      'Compra em 10/08 cai na fatura de Setembro/2026 (fecha 10/08, vence 18/09) — o lançamento aparecerá em Setembro/2026.',
+    )
+  })
+
+  it('funciona corretamente na virada de ano', () => {
+    // Compra 20/12/2026 -> fatura de Janeiro/2027 (fecha 10/12, vence 18/01)
+    const info = getInvoiceDifferenceInfo('2026-12-20', creditCardConfig)
+    expect(info).not.toBeNull()
+    expect(info?.purchaseDayMonth).toBe('20/12')
+    expect(info?.invoiceMonthYear).toBe('Janeiro/2027')
+    expect(info?.closingDayMonth).toBe('10/12')
+    expect(info?.dueDayMonth).toBe('18/01')
+    expect(info?.bannerText).toBe(
+      'Compra em 20/12 cai na fatura de Janeiro/2027 (fecha 10/12, vence 18/01) — o lançamento aparecerá em Janeiro/2027.',
+    )
   })
 })
