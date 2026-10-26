@@ -198,22 +198,30 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         typeof window !== 'undefined' ? localStorage.getItem(ACTIVE_CONTROL_KEY) : null
       let targetComp: Company | null = null
 
+      // Paraleliza resolução do controle: se houver cachedControlId, busca ambos em paralelo com fallback rápido
       if (cachedControlId) {
         try {
-          targetComp = await Promise.race([
-            skipCloud.getCompany(cachedControlId),
-            new Promise<null>((r) => setTimeout(() => r(null), 3500)),
+          const [cachedRes, singleRes] = await Promise.allSettled([
+            Promise.race([
+              skipCloud.getCompany(cachedControlId),
+              new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+            ]),
+            Promise.race([
+              skipCloud.getSingleCompany(userId),
+              new Promise<null>((r) => setTimeout(() => r(null), 3500)),
+            ]),
           ])
+          targetComp =
+            (cachedRes.status === 'fulfilled' ? cachedRes.value : null) ||
+            (singleRes.status === 'fulfilled' ? singleRes.value : null)
         } catch {
           targetComp = null
         }
-      }
-
-      if (!targetComp) {
+      } else {
         try {
           targetComp = await Promise.race([
             skipCloud.getSingleCompany(userId),
-            new Promise<null>((r) => setTimeout(() => r(null), 4000)),
+            new Promise<null>((r) => setTimeout(() => r(null), 3500)),
           ])
         } catch {
           targetComp = null
@@ -276,9 +284,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     try {
       let resolvedComp: Company | null = null
       if (targetControlId) {
-        resolvedComp = await skipCloud.getCompany(targetControlId)
-      }
-      if (!resolvedComp) {
+        const [targetRes, singleRes] = await Promise.allSettled([
+          skipCloud.getCompany(targetControlId),
+          skipCloud.getSingleCompany(userId),
+        ])
+        resolvedComp =
+          (targetRes.status === 'fulfilled' ? targetRes.value : null) ||
+          (singleRes.status === 'fulfilled' ? singleRes.value : null)
+      } else {
         resolvedComp = await skipCloud.getSingleCompany(userId)
       }
       if (!resolvedComp) return
@@ -323,13 +336,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       try {
         const cachedControlId =
           typeof window !== 'undefined' ? localStorage.getItem(ACTIVE_CONTROL_KEY) : null
-        const targetId = companyId || currentCompany?.id || cachedControlId
+        const targetId = companyId || cachedControlId || currentCompany?.id
         let comp: Company | null = null
 
         if (targetId) {
-          comp = await skipCloud.getCompany(targetId)
-        }
-        if (!comp) {
+          const [byTarget, singleRes] = await Promise.allSettled([
+            skipCloud.getCompany(targetId),
+            skipCloud.getSingleCompany(userId),
+          ])
+          comp =
+            (byTarget.status === 'fulfilled' ? byTarget.value : null) ||
+            (singleRes.status === 'fulfilled' ? singleRes.value : null)
+        } else {
           comp = await skipCloud.getSingleCompany(userId)
         }
 

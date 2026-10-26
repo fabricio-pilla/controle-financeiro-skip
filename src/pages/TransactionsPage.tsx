@@ -103,9 +103,9 @@ export default function TransactionsPage() {
   })
   // Default month filter to current month ("YYYY-MM") or from search param
   const currentMonthStr = useMemo(() => {
-    const now = new Date()
-    const yyyy = now.getFullYear()
-    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const today = new Date()
+    const yyyy = today.getFullYear()
+    const mm = String(today.getMonth() + 1).padStart(2, '0')
     return `${yyyy}-${mm}`
   }, [])
 
@@ -146,9 +146,17 @@ export default function TransactionsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [isBulkUpdating, setIsBulkUpdating] = useState(false)
 
-  // Modals state
+  // Modals state com callbacks estáveis
   const [modalOpen, setModalOpen] = useState(false)
   const [aiModalOpen, setAiModalOpen] = useState(false)
+
+  const handleOpenAiModal = React.useCallback(() => {
+    setAiModalOpen(true)
+  }, [])
+
+  const handleCloseAiModal = React.useCallback((open: boolean) => {
+    setAiModalOpen(open)
+  }, [])
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [deletePropagationOpen, setDeletePropagationOpen] = useState(false)
@@ -263,7 +271,7 @@ export default function TransactionsPage() {
     monthFilter,
   ])
 
-  // Sorted list according to selected column header
+  // Sorted list according to selected column header (mantém ordenação crescente por payment_date com fallback para date quando sortField === 'date')
   const sortedTransactions = useMemo(() => {
     const list = [...filteredList]
     list.sort((a, b) => {
@@ -271,7 +279,7 @@ export default function TransactionsPage() {
       if (sortField === 'date') {
         const dateA = getTxEffectiveDate(a)
         const dateB = getTxEffectiveDate(b)
-        comparison = new Date(dateA).getTime() - new Date(dateB).getTime()
+        comparison = dateA.localeCompare(dateB)
       } else if (sortField === 'description') {
         comparison = a.description.localeCompare(b.description, 'pt-BR', { sensitivity: 'base' })
       } else if (sortField === 'category') {
@@ -482,19 +490,17 @@ export default function TransactionsPage() {
   // Lançamentos recorrentes do mês atual para servir como sementes da geração
   const currentMonthRecurringSeeds = useMemo(() => {
     if (!currentCompany?.id) return []
-    const now = new Date()
-    const currentYear = now.getFullYear()
-    const currentMonth = now.getMonth() + 1
+    const today = new Date()
+    const currentYear = today.getFullYear()
+    const currentMonth = today.getMonth() + 1
     const currentYM = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
 
     const companyTxs = transactions.filter((t) => t.control_id === currentCompany.id)
-    const currentMonthTxs = companyTxs.filter((t) => {
+    return companyTxs.filter((t) => {
       if (!t.date) return false
       const cleanDateOnly = String(t.date).split(/[T\s]/)[0]
-      return cleanDateOnly.startsWith(currentYM)
-    })
+      if (!cleanDateOnly.startsWith(currentYM)) return false
 
-    return currentMonthTxs.filter((t) => {
       const isRec = Boolean(
         t.is_recurring ||
         t.recurring ||
@@ -882,7 +888,7 @@ export default function TransactionsPage() {
               )}
             </Button>
             <Button
-              onClick={() => setAiModalOpen(true)}
+              onClick={handleOpenAiModal}
               variant="outline"
               className="rounded-xl h-11 px-4 font-semibold border-indigo-200 text-indigo-600 hover:bg-indigo-50 flex items-center gap-2"
             >
@@ -1749,7 +1755,7 @@ export default function TransactionsPage() {
       <TransactionModal open={modalOpen} onOpenChange={setModalOpen} transaction={selectedTx} />
 
       {/* AI Transaction Modal */}
-      <AiTransactionModal open={aiModalOpen} onOpenChange={setAiModalOpen} />
+      <AiTransactionModal open={aiModalOpen} onOpenChange={handleCloseAiModal} />
 
       {/* Confirm Delete Dialog (lançamentos simples) */}
       <ConfirmDialog

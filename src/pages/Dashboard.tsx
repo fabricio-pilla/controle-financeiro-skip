@@ -82,26 +82,51 @@ export default function Dashboard() {
   const [chartViewType, setChartViewType] = useState<'area' | 'bar'>('area')
   const [chartMonthRange, setChartMonthRange] = useState<'6' | '12'>('12')
 
-  // Modais de criação
+  // Modais de criação com callbacks estáveis para evitar re-render/remount desnecessário
   const [newTxOpen, setNewTxOpen] = useState(false)
   const [aiTxOpen, setAiTxOpen] = useState(false)
 
-  // -------------------------------------------------------------
-  // Cálculos de datas e limites
-  // -------------------------------------------------------------
-  const now = new Date()
-  const currentYear = now.getFullYear()
-  const currentMonth = now.getMonth() // 0-indexed
-  const curYm = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`
+  const handleOpenAiModal = React.useCallback(() => {
+    setAiTxOpen(true)
+  }, [])
 
-  // Mês anterior
-  const prevMonthNum = currentMonth === 0 ? 12 : currentMonth
-  const prevMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear
-  const prevYm = `${prevMonthYear}-${String(prevMonthNum).padStart(2, '0')}`
+  const handleCloseAiModal = React.useCallback((open: boolean) => {
+    setAiTxOpen(open)
+  }, [])
 
-  // Ano anterior
-  const prevYearPrefix = `${currentYear - 1}-`
-  const curYearPrefix = `${currentYear}-`
+  // -------------------------------------------------------------
+  // Cálculos de datas e limites memoizados
+  // -------------------------------------------------------------
+  const {
+    now,
+    currentYear,
+    currentMonth,
+    curYm,
+    prevMonthNum,
+    prevMonthYear,
+    prevYm,
+    prevYearPrefix,
+    curYearPrefix,
+  } = useMemo(() => {
+    const d = new Date()
+    const yr = d.getFullYear()
+    const mo = d.getMonth()
+    const cYm = `${yr}-${String(mo + 1).padStart(2, '0')}`
+    const pMonthNum = mo === 0 ? 12 : mo
+    const pMonthYear = mo === 0 ? yr - 1 : yr
+    const pYm = `${pMonthYear}-${String(pMonthNum).padStart(2, '0')}`
+    return {
+      now: d,
+      currentYear: yr,
+      currentMonth: mo,
+      curYm: cYm,
+      prevMonthNum: pMonthNum,
+      prevMonthYear: pMonthYear,
+      prevYm: pYm,
+      prevYearPrefix: `${yr - 1}-`,
+      curYearPrefix: `${yr}-`,
+    }
+  }, [])
 
   // -------------------------------------------------------------
   // Filtro de transações do período selecionado
@@ -155,7 +180,7 @@ export default function Dashboard() {
   // -------------------------------------------------------------
   // Card 1: Saldo Total em Contas
   // -------------------------------------------------------------
-  const totalBalance = useMemo(() => {
+  const totalBalance = useMemo((): number => {
     return accounts.reduce((acc, a) => {
       if (a.type === 'credito') return acc // Cartão não entra como saldo positivo
       return acc + (a.balance || 0)
@@ -248,9 +273,16 @@ export default function Dashboard() {
   // Item 6: Taxa de Economia do Período (substitui o 4º card)
   // Economia = Receitas − Despesas; % da renda
   // -------------------------------------------------------------
-  const netSavings = totalIncome - totalExpense
-  const savingsRate = totalIncome > 0 ? (netSavings / totalIncome) * 100 : 0
-  const savingsProgress = Math.max(0, Math.min(100, savingsRate))
+  const { netSavings, savingsRate, savingsProgress } = useMemo(() => {
+    const savings = totalIncome - totalExpense
+    const rate = totalIncome > 0 ? (savings / totalIncome) * 100 : 0
+    const progress = Math.max(0, Math.min(100, rate))
+    return {
+      netSavings: savings,
+      savingsRate: rate,
+      savingsProgress: progress,
+    }
+  }, [totalIncome, totalExpense])
 
   // -------------------------------------------------------------
   // Item 2 & 7: Gráfico de Evolução adaptável ao filtro de período
@@ -586,7 +618,7 @@ export default function Dashboard() {
 
           {canManageTransactions && (
             <Button
-              onClick={() => setAiTxOpen(true)}
+              onClick={handleOpenAiModal}
               className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-10 px-4 text-xs font-semibold shadow-md shadow-indigo-600/20 flex items-center gap-1.5"
             >
               <Sparkles className="w-4 h-4" />
@@ -1436,7 +1468,7 @@ export default function Dashboard() {
 
       {/* Transaction Modals */}
       <TransactionModal open={newTxOpen} onOpenChange={setNewTxOpen} />
-      <AiTransactionModal open={aiTxOpen} onOpenChange={setAiTxOpen} />
+      <AiTransactionModal open={aiTxOpen} onOpenChange={handleCloseAiModal} />
     </div>
   )
 }

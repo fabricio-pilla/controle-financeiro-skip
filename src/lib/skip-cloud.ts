@@ -1410,19 +1410,40 @@ class SkipCloudService {
   // --- TRANSACTIONS ---
   async getTransactions(companyId: string): Promise<Transaction[]> {
     try {
+      // Busca paralela otimizada:
+      // - batch: 2000 em getFullList para carregar tudo em uma só requisição sem múltiplas páginas pequenas
+      // - fields enxutos selecionando apenas as colunas necessárias para reduzir payload de rede
       const [recs, accs, cats, mems, subcats] = await Promise.all([
         pb.collection('transactions').getFullList({
+          batch: 2000,
           filter: `control_id="${companyId}"`,
           sort: '-date,-created',
+          fields:
+            'id,control_id,account_id,category_id,subcategory_id,user_id,description,amount,type,date,payment_date,paid,is_recurring,recurring,recurrence_type,recurrence_period,installment_total,installments_total,installment_number,parent_transaction_id,notes,created,expand.account_id.*,expand.category_id.*,expand.subcategory_id.*,expand.user_id.*',
           expand: 'account_id,category_id,subcategory_id,user_id',
         }),
-        pb.collection('accounts').getFullList({ filter: `control_id="${companyId}"` }),
-        pb.collection('categories').getFullList({ filter: `control_id="${companyId}"` }),
-        pb.collection('control_members').getFullList({
+        pb.collection('accounts').getFullList({
+          batch: 500,
           filter: `control_id="${companyId}"`,
+          fields:
+            'id,control_id,name,type,balance,limit,color,bank,due_day,closing_day,is_primary,created',
+        }),
+        pb.collection('categories').getFullList({
+          batch: 500,
+          filter: `control_id="${companyId}"`,
+          fields: 'id,control_id,name,type,color,icon,is_default,created',
+        }),
+        pb.collection('control_members').getFullList({
+          batch: 500,
+          filter: `control_id="${companyId}"`,
+          fields: 'id,control_id,user_id,email,role,status,invited_email,created,expand.user_id.*',
           expand: 'user_id',
         }),
-        pb.collection('subcategories').getFullList({ filter: `control_id="${companyId}"` }),
+        pb.collection('subcategories').getFullList({
+          batch: 500,
+          filter: `control_id="${companyId}"`,
+          fields: 'id,control_id,category_id,name,color,icon,created,expand.category_id.*',
+        }),
       ])
       const accountsCache: Record<string, Account> = {}
       accs.forEach((a: any) => (accountsCache[a.id] = mapAccount(a)))

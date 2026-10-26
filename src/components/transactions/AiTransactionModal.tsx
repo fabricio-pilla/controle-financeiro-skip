@@ -65,7 +65,10 @@ const EXAMPLES = [
   'Uber 25,50',
 ]
 
-export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalProps) {
+export const AiTransactionModal = React.memo(function AiTransactionModal({
+  open,
+  onOpenChange,
+}: AiTransactionModalProps) {
   const {
     currentCompany,
     accounts,
@@ -149,9 +152,16 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
     }
   }, [open, currentCompany])
 
-  // Reset when modal opens/closes
+  // Ref para detectar transições de fechado para aberto (open: false -> true)
+  const prevOpenRef = React.useRef(open)
+
+  // Reset APENAS na transição explícita de fechado -> aberto (não em re-renders por atualização de dados do pai)
   React.useEffect(() => {
-    if (open) {
+    const wasOpen = prevOpenRef.current
+    prevOpenRef.current = open
+
+    if (!wasOpen && open) {
+      // Aberto intencionalmente pelo usuário: reinicializar os campos
       setText('')
       setParsed(null)
       setHasInterpreted(false)
@@ -169,12 +179,13 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       setIsRecurring(false)
       setRecurrenceType('mensal')
       setInstallmentsTotal(1)
-    } else {
+    } else if (wasOpen && !open) {
+      // Fechado
       if (isListening) {
         stopListening()
       }
     }
-  }, [open, accounts, primaryAccount])
+  }, [open, primaryAccount, isListening, stopListening])
 
   const filteredCategories = useMemo(() => {
     return categories
@@ -1065,7 +1076,7 @@ export function AiTransactionModal({ open, onOpenChange }: AiTransactionModalPro
       </DialogContent>
     </Dialog>
   )
-}
+})
 
 function ConfidenceBadge({ label, ok }: { label: string; ok: boolean }) {
   return (
