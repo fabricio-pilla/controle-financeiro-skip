@@ -25,6 +25,8 @@ import { skipCloud } from '@/lib/skip-cloud'
 import { formatDateBR, getInitials } from '@/lib/formatters'
 import pb from '@/lib/pocketbase/client'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { BackupsTab } from '@/components/settings/BackupsTab'
+import { HardDrive } from 'lucide-react'
 import { InviteMemberModal } from '@/components/team/InviteMemberModal'
 import { EditMemberModal } from '@/components/team/EditMemberModal'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -686,7 +688,7 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="controle" className="space-y-6">
-        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 sm:grid-cols-6 max-w-3xl">
+        <TabsList className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 sm:grid-cols-7 max-w-4xl">
           <TabsTrigger
             value="controle"
             className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
@@ -707,6 +709,13 @@ export default function SettingsPage() {
           >
             <Brain className="w-4 h-4" />
             <span>Aprendizado</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="backups"
+            className="rounded-xl font-semibold text-xs flex items-center gap-1.5 data-[state=active]:bg-indigo-600 data-[state=active]:text-white"
+          >
+            <HardDrive className="w-4 h-4" />
+            <span>Backups</span>
           </TabsTrigger>
           <TabsTrigger
             value="preferencias"
@@ -1264,6 +1273,13 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+        </TabsContent>
+
+        {/* TAB 7: BACKUPS */}
+        <TabsContent value="backups" className="space-y-6 focus-visible:outline-none">
+          {currentCompany && (
+            <BackupsTab controlId={currentCompany.id} isAdmin={isOwner || canManageTeam} />
+          )}
         </TabsContent>
       </Tabs>
 
