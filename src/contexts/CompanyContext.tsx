@@ -122,6 +122,7 @@ interface CompanyContextType {
     recurrence_type?: any
     notes?: string
     installments_total?: number
+    installment_total?: number
   }) => Promise<Transaction>
   updateTransaction: (
     transactionId: string,
@@ -541,6 +542,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         recurrence_type?: any
         notes?: string
         installments_total?: number
+        installment_total?: number
       },
       options?: { skipReload?: boolean },
     ) => {

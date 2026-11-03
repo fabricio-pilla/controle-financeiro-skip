@@ -1,5 +1,6 @@
 import { Transaction, TransactionType, Account } from '@/types/database'
 import { calculatePaymentDate } from '@/lib/invoice-helper'
+import pb from '@/lib/pocketbase/client'
 import { is429Error } from '@/lib/pocketbase/retry'
 
 export interface PlanNextRecurringTransactionsResult {
@@ -27,6 +28,7 @@ export interface RecurringGenerationCandidate {
   recurrence_period?: string
   installment_number?: number
   installment_total?: number
+  installments_total?: number
   parent_transaction_id?: string
   notes?: string
 }
@@ -49,7 +51,6 @@ export async function createPlannedTransactionsInPool({
     return { created: [], failedCount: 0 }
   }
 
-  const pb = (await import('@/lib/pocketbase/client')).default
   const { runInPool, executeWithRetry, AdaptiveRateLimiter } =
     await import('@/lib/pocketbase/retry')
 
@@ -306,6 +307,7 @@ export interface InstallmentGenerationCandidate {
   recurrence_period?: string
   installment_number?: number
   installment_total?: number
+  installments_total?: number
   parent_transaction_id?: string
   notes?: string
 }
@@ -823,8 +825,6 @@ export async function triggerAutoInstallmentGeneration({
   // para evitar recriar parcelas que já foram persistidas no PocketBase mas ainda não refletidas no state local
   let mergedExisting = existingTransactions
   try {
-    const pbModule = await import('@/lib/pocketbase/client')
-    const pb = pbModule.default || pbModule.pb
     const effectiveParentId =
       sourceTransaction.parent_transaction_id &&
       sourceTransaction.parent_transaction_id !== sourceTransaction.id

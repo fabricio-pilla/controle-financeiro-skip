@@ -1492,10 +1492,14 @@ class SkipCloudService {
       recurrence_type?: any
       notes?: string
       installments_total?: number
+      installment_total?: number
     },
   ): Promise<Transaction> {
     const userId = (pb.authStore.model as any)?.id || ''
-    const installmentsTotal = Math.max(1, Math.floor(Number(data.installments_total) || 1))
+    const installmentsTotal = Math.max(
+      1,
+      Math.floor(Number(data.installment_total ?? data.installments_total) || 1),
+    )
 
     const addMonths = (dateStr: string, months: number): string => {
       const d = new Date(dateStr + 'T00:00:00')
