@@ -19,6 +19,7 @@ export interface UpdateTransactionPayload {
   recurrence_type?: RecurrenceType
   notes?: string
   installments_total?: number
+  installment_total?: number
   paid?: boolean
 }
 

@@ -585,6 +585,14 @@ export function findInstallmentSeriesSiblings(
     return { siblings, parentId: sourceParentId }
   }
 
+  // 1b. Se sourceTx tiver pai e sourceTx for a parcela 1 (parentId ausente mas outras apontam para ela como pai)
+  if (sourceTx.id) {
+    const pointedSiblings = allTransactions.filter((t) => t.parent_transaction_id === sourceTx.id)
+    if (pointedSiblings.length > 0) {
+      return { siblings: [sourceTx, ...pointedSiblings], parentId: sourceTx.id }
+    }
+  }
+
   // 2. Se sourceTx não possui parent_transaction_id, procurar se há um pai consolidado existente com mesma conta e descrição
   const matchedParent = allTransactions.find((t) => {
     const { installmentNumber, installmentTotal } = resolveInstallmentInfo(t)
@@ -776,6 +784,7 @@ export function planOccurrencesForSingleInstallment({
       recurrence_period: undefined,
       installment_number: n,
       installment_total: total,
+      installments_total: total,
       parent_transaction_id: effectiveParentId || undefined,
       notes: sourceTransaction.notes || 'Gerado automaticamente: parcela da série',
     })
@@ -810,9 +819,38 @@ export async function triggerAutoInstallmentGeneration({
     return
   }
 
+  // Deduplicação defensiva antes de planejar: busca no backend transações recentes da mesma série
+  // para evitar recriar parcelas que já foram persistidas no PocketBase mas ainda não refletidas no state local
+  let mergedExisting = existingTransactions
+  try {
+    const pbModule = await import('@/lib/pocketbase/client')
+    const pb = pbModule.default || pbModule.pb
+    const effectiveParentId =
+      sourceTransaction.parent_transaction_id &&
+      sourceTransaction.parent_transaction_id !== sourceTransaction.id
+        ? sourceTransaction.parent_transaction_id
+        : sourceTransaction.id
+    if (effectiveParentId && pb?.collection) {
+      const dbRelatives = await pb.collection('transactions').getFullList({
+        filter: `control_id="${currentCompanyId}" && (id="${effectiveParentId}" || parent_transaction_id="${effectiveParentId}")`,
+        fields:
+          'id,control_id,installment_number,installment_total,description,date,parent_transaction_id',
+      })
+      if (dbRelatives && dbRelatives.length > 0) {
+        const existingIds = new Set(existingTransactions.map((t) => t.id))
+        const added = dbRelatives.filter((r: any) => !existingIds.has(r.id)) as any[]
+        if (added.length > 0) {
+          mergedExisting = [...existingTransactions, ...added]
+        }
+      }
+    }
+  } catch (_) {
+    // se falhar a consulta auxiliar, continua com existingTransactions
+  }
+
   const planned = planOccurrencesForSingleInstallment({
     sourceTransaction,
-    existingTransactions,
+    existingTransactions: mergedExisting,
     accounts,
     currentCompanyId,
     currentUserId,

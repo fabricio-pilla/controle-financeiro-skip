@@ -333,6 +333,7 @@ export function TransactionModal({
     const effectiveIsFuture = isFutureDate(effectivePaymentDate)
     const effectivePaid = effectiveIsFuture ? false : paid
 
+    const effectiveInstallmentTotal = isRecurring ? 0 : Math.max(1, installmentsTotal || 1)
     const payload: UpdateTransactionPayload = {
       description: description.trim(),
       amount: parsedAmount,
@@ -346,7 +347,8 @@ export function TransactionModal({
       is_recurring: isRecurring,
       recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
       notes: cleanNotesForDisplay(notes),
-      installments_total: isRecurring ? 0 : installmentsTotal,
+      installments_total: effectiveInstallmentTotal,
+      installment_total: effectiveInstallmentTotal,
     }
 
     if (isEditing && transaction) {
@@ -402,7 +404,7 @@ export function TransactionModal({
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
         notes: cleanNotesForDisplay(notes),
-        installments_total: isRecurring ? 0 : installmentsTotal,
+        installments_total: effectiveInstallmentTotal,
       })
       // Para recorrentes, triggerAutoRecurringGeneration já emite toast detalhado:
       // se 0 novas geradas -> "Lançamento recorrente criado. As recorrências futuras já existiam e não foram duplicadas."

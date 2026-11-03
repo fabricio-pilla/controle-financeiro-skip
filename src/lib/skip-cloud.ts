@@ -1540,6 +1540,7 @@ class SkipCloudService {
             is_recurring: Boolean(data.is_recurring),
             recurrence_type: data.recurrence_type || '',
             installments_total: installmentsTotal,
+            installment_total: installmentsTotal,
             installment_number: i,
             notes: data.notes?.trim() || '',
           }
@@ -1584,6 +1585,7 @@ class SkipCloudService {
         recurrence_type: isRec ? data.recurrence_type || 'mensal' : '',
         recurrence_period: isRec ? data.recurrence_type || 'mensal' : '',
         installments_total: isRec ? 0 : 1,
+        installment_total: isRec ? 0 : 1,
         installment_number: 1,
         parent_transaction_id: '',
         notes: data.notes?.trim() || '',
@@ -1666,7 +1668,13 @@ class SkipCloudService {
         payload.parent_transaction_id = data.parent_transaction_id
       if (data.installment_number !== undefined)
         payload.installment_number = data.installment_number
-      if (data.installments_total !== undefined) payload.installment_total = data.installments_total
+      if (data.installments_total !== undefined) {
+        payload.installment_total = data.installments_total
+        payload.installments_total = data.installments_total
+      }
+      if ((data as any).installment_total !== undefined) {
+        payload.installment_total = (data as any).installment_total
+      }
 
       const r = await pb.collection('transactions').update(transactionId, payload)
       if (!skipBalanceUpdate) {

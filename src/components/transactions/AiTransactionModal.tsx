@@ -352,6 +352,7 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
 
     setIsSubmitting(true)
     try {
+      const effectiveInstallmentTotal = isRecurring ? 0 : Math.max(1, installmentsTotal || 1)
       const createdTx = await createTransaction({
         description: description.trim(),
         amount: parsedAmount,
@@ -365,7 +366,8 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
         is_recurring: isRecurring,
         recurrence_type: isRecurring ? recurrenceType : undefined,
         notes: '',
-        installments_total: isRecurring ? 0 : installmentsTotal,
+        installments_total: effectiveInstallmentTotal,
+        installment_total: effectiveInstallmentTotal,
       })
 
       // Inserir a transação criada no estado local imediatamente e fechar modal sem atraso
