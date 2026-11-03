@@ -521,10 +521,10 @@ export function planOccurrencesForSingleRecurring({
         (sourceTransaction as any).recurrence_period ||
         sourceTransaction.recurrence_type ||
         'mensal',
-      installment_number: 1,
+      installment_number: 0,
       installment_total: 0,
-      parent_transaction_id: undefined,
-      notes: sourceTransaction.notes || 'Gerado automaticamente: recorrência mensal',
+      parent_transaction_id: sourceTransaction.id || undefined,
+      notes: 'Gerado automaticamente: recorrência mensal',
     })
   }
 
@@ -1098,10 +1098,10 @@ export function planNextRecurringTransactionsDetailed({
         recurring: true,
         recurrence_type: seed.recurrence_type || (seed as any).recurrence_period || 'mensal',
         recurrence_period: (seed as any).recurrence_period || seed.recurrence_type || 'mensal',
-        installment_number: 1,
+        installment_number: 0,
         installment_total: 0,
-        parent_transaction_id: undefined,
-        notes: seed.notes || 'Gerado automaticamente: recorrência mensal',
+        parent_transaction_id: seed.id || undefined,
+        notes: 'Gerado automaticamente: recorrência mensal',
       })
     }
   }
@@ -1111,6 +1111,170 @@ export function planNextRecurringTransactionsDetailed({
     alreadyExistingCount,
     seriesCount: canonicalMap.size,
   }
+}
+
+/**
+ * Identifica ocorrências futuras de TODAS as séries recorrentes ativas da empresa.
+ * Se uma série tiver sementes em meses passados (ex.: set/2026) mas ainda sem ocorrência
+ * gerada no mês corrente ou meses futuros, ela é considerada ativa e tem suas ocorrências projetadas.
+ */
+export function planNextRecurringTransactionsFromAllActiveSeeds({
+  allTransactions,
+  currentCompanyId,
+  currentUserId,
+  currentYear,
+  currentMonth,
+}: {
+  allTransactions: Transaction[]
+  currentCompanyId: string
+  currentUserId: string
+  currentYear: number
+  currentMonth: number
+}): PlanNextRecurringTransactionsResult {
+  const currentYM = getYearMonth(currentYear, currentMonth)
+
+  // 1. Filtrar todas as transações que têm recorrência mensal ativa
+  const recurringPool = allTransactions.filter((t) => {
+    if (t.control_id !== currentCompanyId) return false
+    if (!t.date) return false
+
+    const isRec = Boolean(
+      t.is_recurring ||
+      t.recurring ||
+      (t.recurrence_type && String(t.recurrence_type).trim() !== '') ||
+      Boolean((t as any).recurrence_period && String((t as any).recurrence_period).trim() !== ''),
+    )
+    if (!isRec) return false
+
+    // Não é parcelamento consolidado
+    if (
+      (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
+      Number(t.installments_total || (t as any).installment_total || 0) > 1
+    ) {
+      return false
+    }
+
+    const cleanD = cleanDescription(t.description || '')
+      .trim()
+      .toLowerCase()
+    if (!cleanD || cleanD === 'sem descrição' || cleanD === 'sem descricao') return false
+
+    return true
+  })
+
+  // 2. Mapear para a transação mais recente de cada série canônica (tipo + conta + cleanDesc)
+  const canonicalMap = new Map<string, Transaction>()
+  for (const t of recurringPool) {
+    const cleanD = cleanDescription(t.description).toLowerCase()
+    const seriesKey = `${t.type}_${t.account_id || ''}_${cleanD}`
+    if (!canonicalMap.has(seriesKey)) {
+      canonicalMap.set(seriesKey, t)
+    } else {
+      const existing = canonicalMap.get(seriesKey)!
+      if (t.date > existing.date) {
+        canonicalMap.set(seriesKey, t)
+      }
+    }
+  }
+
+  // 3. Montar set de existência
+  const existingSet = new Set<string>()
+  const extractYM = (d: any): string => {
+    if (!d) return ''
+    const clean = String(d).substring(0, 10).split(/[T\s]/)[0]
+    return clean.length >= 7 ? clean.substring(0, 7) : ''
+  }
+
+  for (const t of allTransactions) {
+    if (t.control_id !== currentCompanyId) continue
+    const cleanD = cleanDescription(t.description).toLowerCase()
+    const accId = t.account_id || ''
+    const type = t.type
+
+    const ymDate = extractYM(t.date)
+    if (ymDate) {
+      existingSet.add(`${type}_${accId}_${cleanD}_${ymDate}`)
+    }
+    const ymPaymentDate = extractYM(t.payment_date)
+    if (ymPaymentDate && ymPaymentDate !== ymDate) {
+      existingSet.add(`${type}_${accId}_${cleanD}_${ymPaymentDate}`)
+    }
+  }
+
+  const planned: RecurringGenerationCandidate[] = []
+  let alreadyExistingCount = 0
+
+  for (const seed of canonicalMap.values()) {
+    const cleanD = cleanDescription(seed.description).toLowerCase()
+    const accId = seed.account_id || ''
+    const origParts = parseDateParts(seed.date)
+    const seedCleanDate = seed.date ? String(seed.date).substring(0, 10).split(/[T\s]/)[0] : ''
+    const seedYM = seedCleanDate
+      ? seedCleanDate.substring(0, 7)
+      : getYearMonth(origParts.year, origParts.month)
+    const origDay = origParts.day
+
+    const isFutureSeed = seedYM > currentYM
+    const startBaseYear = isFutureSeed ? origParts.year : currentYear
+    const startBaseMonth = isFutureSeed ? origParts.month : currentMonth
+    const minYM = seedYM >= currentYM ? seedYM : currentYM
+
+    let seedPayOrigDay = origDay
+    if (seed.payment_date) {
+      const payParts = parseDateParts(seed.payment_date)
+      seedPayOrigDay = payParts.day
+    }
+
+    for (let m = 1; m <= 12; m++) {
+      const targetDateStr = computeTargetDate(startBaseYear, startBaseMonth, origDay, m)
+      const targetYM = targetDateStr.substring(0, 7)
+
+      if (targetYM <= minYM || targetYM <= seedYM) {
+        continue
+      }
+
+      const targetPaymentDateStr = seed.payment_date
+        ? computeTargetDate(startBaseYear, startBaseMonth, seedPayOrigDay, m)
+        : targetDateStr
+      const targetPaymentYM = targetPaymentDateStr.substring(0, 7)
+
+      const checkKeyDate = `${seed.type}_${accId}_${cleanD}_${targetYM}`
+      const checkKeyPayment = `${seed.type}_${accId}_${cleanD}_${targetPaymentYM}`
+
+      if (existingSet.has(checkKeyDate) || existingSet.has(checkKeyPayment)) {
+        alreadyExistingCount++
+        continue
+      }
+
+      existingSet.add(checkKeyDate)
+      existingSet.add(checkKeyPayment)
+
+      planned.push({
+        control_id: currentCompanyId,
+        user_id: currentUserId || seed.user_id || '',
+        type: seed.type,
+        amount: seed.amount,
+        description: cleanDescription(seed.description),
+        category_id: seed.category_id || undefined,
+        subcategory_id: seed.subcategory_id || undefined,
+        account_id: seed.account_id || undefined,
+        credit_card_id: (seed as any).credit_card_id || undefined,
+        date: targetDateStr,
+        payment_date: targetPaymentDateStr,
+        paid: false,
+        is_recurring: true,
+        recurring: true,
+        recurrence_type: seed.recurrence_type || (seed as any).recurrence_period || 'mensal',
+        recurrence_period: (seed as any).recurrence_period || seed.recurrence_type || 'mensal',
+        installment_number: 0,
+        installment_total: 0,
+        parent_transaction_id: seed.id || undefined,
+        notes: 'Gerado automaticamente: recorrência mensal',
+      })
+    }
+  }
+
+  return { planned, alreadyExistingCount, seriesCount: canonicalMap.size }
 }
 
 export function planNextRecurringTransactions(

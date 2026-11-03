@@ -93,6 +93,14 @@ routerAdd(
     const parentIds = {}
     for (let i = 0; i < all.length; i++) {
       const r = all[i]
+      const isRec =
+        r.getBool('is_recurring') ||
+        r.getBool('recurring') ||
+        r.getString('recurrence_type') !== '' ||
+        r.getString('recurrence_period') !== '' ||
+        String(r.getString('notes') || '').indexOf('recorrência mensal') !== -1
+      if (isRec) continue
+
       if (numOf(r) === 0 && totalOf(r) > 0) parentIds[r.id] = true
     }
     for (let i = 0; i < all.length; i++) {
@@ -115,6 +123,15 @@ routerAdd(
 
     for (let i = 0; i < all.length; i++) {
       const r = all[i]
+      // Blindagem estrita: lançamentos recorrentes NUNCA são parcelas!
+      const isRec =
+        r.getBool('is_recurring') ||
+        r.getBool('recurring') ||
+        r.getString('recurrence_type') !== '' ||
+        r.getString('recurrence_period') !== '' ||
+        String(r.getString('notes') || '').indexOf('recorrência mensal') !== -1
+      if (isRec) continue
+
       const num = numOf(r)
       if (num === 0) continue
       let parentId = r.getString('parent_transaction_id')

@@ -526,10 +526,25 @@ export default function TransactionsPage() {
     }
 
     if (currentMonthRecurringSeeds.length === 0) {
-      toast.info('Nenhum lançamento recorrente no mês atual para gerar.', {
-        duration: 6000,
+      // Verificar se há sementes em meses passados para alertar ou permitir
+      const hasAnySeed = transactions.some((t) => {
+        if (t.control_id !== currentCompany.id) return false
+        const isRec = Boolean(
+          t.is_recurring ||
+          t.recurring ||
+          (t.recurrence_type && String(t.recurrence_type).trim() !== '') ||
+          Boolean(
+            (t as any).recurrence_period && String((t as any).recurrence_period).trim() !== '',
+          ),
+        )
+        return isRec
       })
-      return
+      if (!hasAnySeed) {
+        toast.info('Nenhum lançamento recorrente configurado para gerar.', {
+          duration: 6000,
+        })
+        return
+      }
     }
 
     setConfirmGenerateOpen(true)
