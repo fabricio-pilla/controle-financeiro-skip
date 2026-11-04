@@ -28,6 +28,8 @@ export default function CategoriesPage() {
     categories,
     subcategories,
     transactions,
+    updateCategory,
+    updateSubcategory,
     deleteCategory,
     deleteSubcategory,
     canManageFinance,

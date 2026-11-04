@@ -48,6 +48,7 @@ export interface Account {
   closing_day?: number // dia do mês do fechamento da fatura (cartões de crédito, 1-31)
   is_primary?: boolean // conta principal/padrão do controle
   active?: boolean // soft delete (true por padrão)
+  is_archived?: boolean
   created_at: string
 }
 
@@ -60,6 +61,7 @@ export interface Category {
   icon: string
   is_default?: boolean
   active?: boolean // soft delete (true por padrão)
+  is_archived?: boolean
   created_at: string
 }
 
@@ -71,6 +73,7 @@ export interface Subcategory {
   color?: string
   icon?: string
   active?: boolean // soft delete (true por padrão)
+  is_archived?: boolean
   created_at: string
   // Populated for UI
   category?: Category

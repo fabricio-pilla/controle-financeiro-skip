@@ -700,7 +700,7 @@ export default function TransactionsPage() {
         throw new Error(resp?.message || 'Falha ao gerar recorrências.')
       }
 
-      const totalCreated = Number(resp.totalCreated || 0)
+      const totalCreated = Number(resp.totalCreated ?? resp.createdCount ?? 0)
       const alreadyExistingCount = Number(resp.alreadyExistingCount || 0)
       const createdIncomeCount = Number(resp.createdIncomeCount || 0)
       const createdExpenseCount = Number(resp.createdExpenseCount || 0)
@@ -1345,7 +1345,7 @@ export default function TransactionsPage() {
                       >
                         <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-3 h-3" />
                         {tx.category?.name || 'Geral'}
-                        {tx.category?.is_archived && (
+                        {(tx.category?.active === false || tx.category?.is_archived) && (
                           <span className="text-[9px] text-slate-400 font-normal">(inativa)</span>
                         )}
                       </span>
@@ -1353,7 +1353,7 @@ export default function TransactionsPage() {
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                           <span className="text-slate-400">↳</span>
                           <span>{tx.subcategory.name}</span>
-                          {tx.subcategory.is_archived && (
+                          {(tx.subcategory.active === false || tx.subcategory.is_archived) && (
                             <span className="text-[9px] text-slate-400 font-normal">(inativa)</span>
                           )}
                         </span>
@@ -1369,7 +1369,7 @@ export default function TransactionsPage() {
                         style={{ backgroundColor: tx.account?.color || '#94a3b8' }}
                       />
                       {tx.account?.name || 'Conta'}
-                      {tx.account?.is_archived && (
+                      {(tx.account?.active === false || tx.account?.is_archived) && (
                         <span className="text-[9px] text-slate-400 font-normal">(inativa)</span>
                       )}
                     </span>

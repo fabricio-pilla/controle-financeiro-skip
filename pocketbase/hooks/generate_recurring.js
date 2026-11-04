@@ -18,8 +18,8 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
   }
 
   const body = e.requestInfo().body || {}
-  const controlId = body.controlId
-  const transactionId = body.transactionId || null
+  const controlId = body.controlId || body.control_id
+  const transactionId = body.transactionId || body.transaction_id || null
   const reqYear = body.currentYear ? Number(body.currentYear) : null
   const reqMonth = body.currentMonth ? Number(body.currentMonth) : null
 
