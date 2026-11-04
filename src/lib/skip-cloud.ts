@@ -332,6 +332,7 @@ function mapAccount(r: any): Account {
         ? Number(r.closing_day)
         : undefined,
     is_primary: Boolean(r.is_primary),
+    active: r.active !== undefined && r.active !== null ? Boolean(r.active) : true,
     created_at: r.created || new Date().toISOString(),
   }
 }
@@ -345,6 +346,7 @@ function mapCategory(r: any): Category {
     color: r.color || '#6366F1',
     icon: r.icon || 'Tag',
     is_default: Boolean(r.is_default),
+    active: r.active !== undefined && r.active !== null ? Boolean(r.active) : true,
     created_at: r.created || new Date().toISOString(),
   }
 }
@@ -360,6 +362,7 @@ function mapSubcategory(r: any, categoriesCache?: Record<string, Category>): Sub
     name: r.name || '',
     color: r.color || undefined,
     icon: r.icon || undefined,
+    active: r.active !== undefined && r.active !== null ? Boolean(r.active) : true,
     created_at: r.created || new Date().toISOString(),
     category: cat,
   }
@@ -1232,15 +1235,28 @@ class SkipCloudService {
     }
   }
 
-  async deleteAccount(accountId: string): Promise<void> {
+  async deleteAccount(accountId: string): Promise<{ softDeleted: boolean }> {
     try {
-      const txs = await pb.collection('transactions').getFullList({
+      const txs = await pb.collection('transactions').getList(1, 1, {
         filter: `account_id="${accountId}"`,
       })
-      if (txs.length > 0) {
-        throw new Error('Não é possível excluir uma conta que possui lançamentos vinculados.')
+      if (txs.totalItems > 0) {
+        // Soft delete: possui lançamentos vinculados
+        await pb.collection('accounts').update(accountId, { active: false })
+        return { softDeleted: true }
       }
+      // Hard delete: nenhum lançamento vinculado
       await pb.collection('accounts').delete(accountId)
+      return { softDeleted: false }
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  async restoreAccount(accountId: string): Promise<Account> {
+    try {
+      const r = await pb.collection('accounts').update(accountId, { active: true })
+      return mapAccount(r)
     } catch (e: any) {
       throw pbErr(e)
     }
@@ -1297,43 +1313,60 @@ class SkipCloudService {
     }
   }
 
-  async deleteCategory(categoryId: string): Promise<void> {
+  async deleteCategory(categoryId: string): Promise<{ softDeleted: boolean }> {
     try {
       // 1. Check if category itself has any transactions linked
-      const catTxs = await pb.collection('transactions').getFullList({
+      const catTxs = await pb.collection('transactions').getList(1, 1, {
         filter: `category_id="${categoryId}"`,
       })
-      if (catTxs.length > 0) {
-        throw new Error(
-          `Não é possível excluir esta categoria pois ela possui ${catTxs.length} lançamento(s) vinculado(s).`,
-        )
-      }
 
       // 2. Find all subcategories under this category
       const subcats = await pb.collection('subcategories').getFullList({
         filter: `category_id="${categoryId}"`,
       })
 
-      // 3. Check if any of these subcategories have transactions linked
+      let subTxsTotal = 0
       if (subcats.length > 0) {
         const subFilter = subcats.map((s: any) => `subcategory_id="${s.id}"`).join(' || ')
-        const subTxs = await pb.collection('transactions').getFullList({
+        const subCheck = await pb.collection('transactions').getList(1, 1, {
           filter: subFilter,
         })
-        if (subTxs.length > 0) {
-          throw new Error(
-            `Não é possível excluir esta categoria pois há ${subTxs.length} lançamento(s) vinculado(s) às suas subcategorias.`,
-          )
-        }
-
-        // 4. Delete all linked subcategories
-        for (const sub of subcats) {
-          await pb.collection('subcategories').delete(sub.id)
-        }
+        subTxsTotal = subCheck.totalItems
       }
 
-      // 5. Delete the category itself
+      const hasTransactions = catTxs.totalItems > 0 || subTxsTotal > 0
+
+      if (hasTransactions) {
+        // Soft delete na categoria e em todas as suas subcategorias
+        await pb.collection('categories').update(categoryId, { active: false })
+        for (const sub of subcats) {
+          await pb.collection('subcategories').update(sub.id, { active: false })
+        }
+        return { softDeleted: true }
+      }
+
+      // Hard delete: pode apagar de verdade
+      for (const sub of subcats) {
+        await pb.collection('subcategories').delete(sub.id)
+      }
       await pb.collection('categories').delete(categoryId)
+      return { softDeleted: false }
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  async restoreCategory(categoryId: string): Promise<Category> {
+    try {
+      const r = await pb.collection('categories').update(categoryId, { active: true })
+      // Também reativa subcategorias associadas que estejam inativas
+      const subcats = await pb.collection('subcategories').getFullList({
+        filter: `category_id="${categoryId}" && active=false`,
+      })
+      for (const sub of subcats) {
+        await pb.collection('subcategories').update(sub.id, { active: true })
+      }
+      return mapCategory(r)
     } catch (e: any) {
       throw pbErr(e)
     }
@@ -1393,17 +1426,60 @@ class SkipCloudService {
     }
   }
 
-  async deleteSubcategory(subcategoryId: string): Promise<void> {
+  async deleteSubcategory(subcategoryId: string): Promise<{ softDeleted: boolean }> {
     try {
-      const txs = await pb.collection('transactions').getFullList({
+      const txs = await pb.collection('transactions').getList(1, 1, {
         filter: `subcategory_id="${subcategoryId}"`,
       })
-      if (txs.length > 0) {
-        throw new Error(
-          `Não é possível excluir esta subcategoria pois existem ${txs.length} lançamento(s) vinculado(s) a ela.`,
-        )
+      if (txs.totalItems > 0) {
+        await pb.collection('subcategories').update(subcategoryId, { active: false })
+        return { softDeleted: true }
       }
       await pb.collection('subcategories').delete(subcategoryId)
+      return { softDeleted: false }
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  async restoreSubcategory(subcategoryId: string): Promise<Subcategory> {
+    try {
+      const r = await pb.collection('subcategories').update(subcategoryId, { active: true })
+      return mapSubcategory(r)
+    } catch (e: any) {
+      throw pbErr(e)
+    }
+  }
+
+  // --- RECURRING GENERATION (BACKEND) ---
+  async generateNextRecurringTransactions(
+    companyId: string,
+    options?: {
+      transactionId?: string
+      currentYear?: number
+      currentMonth?: number
+    },
+  ): Promise<{
+    success: boolean
+    createdCount: number
+    alreadyExistingCount: number
+    createdIncomeCount: number
+    createdExpenseCount: number
+    seriesCount: number
+    affectedMonths?: string[]
+    message?: string
+  }> {
+    try {
+      const res = await pb.send('/backend/v1/custom/generate-recurring', {
+        method: 'POST',
+        body: {
+          controlId: companyId,
+          transactionId: options?.transactionId || undefined,
+          currentYear: options?.currentYear,
+          currentMonth: options?.currentMonth,
+        },
+      })
+      return res
     } catch (e: any) {
       throw pbErr(e)
     }

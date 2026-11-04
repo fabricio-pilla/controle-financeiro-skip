@@ -92,7 +92,8 @@ interface CompanyContextType {
     accountId: string,
     data: Partial<Omit<Account, 'id' | 'control_id' | 'created_at'>>,
   ) => Promise<Account>
-  deleteAccount: (accountId: string) => Promise<void>
+  deleteAccount: (accountId: string) => Promise<{ softDeleted: boolean }>
+  restoreAccount: (accountId: string) => Promise<Account>
 
   // Categories
   createCategory: (data: {
@@ -105,7 +106,8 @@ interface CompanyContextType {
     categoryId: string,
     data: Partial<Omit<Category, 'id' | 'control_id' | 'created_at'>>,
   ) => Promise<Category>
-  deleteCategory: (categoryId: string) => Promise<void>
+  deleteCategory: (categoryId: string) => Promise<{ softDeleted: boolean }>
+  restoreCategory: (categoryId: string) => Promise<Category>
 
   // Subcategories
   createSubcategory: (data: {
@@ -118,7 +120,8 @@ interface CompanyContextType {
     subcategoryId: string,
     data: Partial<Omit<Subcategory, 'id' | 'control_id' | 'created_at' | 'category'>>,
   ) => Promise<Subcategory>
-  deleteSubcategory: (subcategoryId: string) => Promise<void>
+  deleteSubcategory: (subcategoryId: string) => Promise<{ softDeleted: boolean }>
+  restoreSubcategory: (subcategoryId: string) => Promise<Subcategory>
 
   // Transactions
   createTransaction: (data: {
@@ -705,8 +708,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   const deleteAccount = useCallback(
     async (accountId: string) => {
-      await skipCloud.deleteAccount(accountId)
+      const res = await skipCloud.deleteAccount(accountId)
       await reloadCompanyData()
+      return res
+    },
+    [reloadCompanyData],
+  )
+
+  const restoreAccount = useCallback(
+    async (accountId: string) => {
+      const res = await skipCloud.restoreAccount(accountId)
+      await reloadCompanyData()
+      return res
     },
     [reloadCompanyData],
   )
@@ -736,8 +749,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   const deleteCategory = useCallback(
     async (categoryId: string) => {
-      await skipCloud.deleteCategory(categoryId)
+      const res = await skipCloud.deleteCategory(categoryId)
       await reloadCompanyData()
+      return res
+    },
+    [reloadCompanyData],
+  )
+
+  const restoreCategory = useCallback(
+    async (categoryId: string) => {
+      const res = await skipCloud.restoreCategory(categoryId)
+      await reloadCompanyData()
+      return res
     },
     [reloadCompanyData],
   )
@@ -767,8 +790,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   const deleteSubcategory = useCallback(
     async (subcategoryId: string) => {
-      await skipCloud.deleteSubcategory(subcategoryId)
+      const res = await skipCloud.deleteSubcategory(subcategoryId)
       await reloadCompanyData()
+      return res
+    },
+    [reloadCompanyData],
+  )
+
+  const restoreSubcategory = useCallback(
+    async (subcategoryId: string) => {
+      const res = await skipCloud.restoreSubcategory(subcategoryId)
+      await reloadCompanyData()
+      return res
     },
     [reloadCompanyData],
   )
@@ -989,12 +1022,15 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         createAccount,
         updateAccount,
         deleteAccount,
+        restoreAccount,
         createCategory,
         updateCategory,
         deleteCategory,
+        restoreCategory,
         createSubcategory,
         updateSubcategory,
         deleteSubcategory,
+        restoreSubcategory,
         createTransaction,
         updateTransaction,
         deleteTransaction,

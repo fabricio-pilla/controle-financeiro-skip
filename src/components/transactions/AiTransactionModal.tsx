@@ -189,14 +189,14 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
 
   const filteredCategories = useMemo(() => {
     return categories
-      .filter((c) => isCategoryAllowedForType(c, type))
+      .filter((c) => c.active !== false && isCategoryAllowedForType(c, type))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
   }, [categories, type])
 
   const filteredSubcategories = useMemo(
     () =>
       subcategories
-        .filter((s) => s.category_id === categoryId)
+        .filter((s) => s.active !== false && s.category_id === categoryId)
         .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })),
     [subcategories, categoryId],
   )
@@ -786,22 +786,24 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
                       <SelectValue placeholder="Selecione a conta..." />
                     </SelectTrigger>
                     <SelectContent className="rounded-xl">
-                      {accounts.map((acc) => (
-                        <SelectItem key={acc.id} value={acc.id}>
-                          <span className="flex items-center gap-2">
-                            <span
-                              className="w-2.5 h-2.5 rounded-full"
-                              style={{ backgroundColor: acc.color }}
-                            />
-                            {acc.name}
-                            {acc.is_primary && (
-                              <span className="text-[10px] font-semibold text-amber-600">
-                                (principal)
-                              </span>
-                            )}
-                          </span>
-                        </SelectItem>
-                      ))}
+                      {accounts
+                        .filter((acc) => acc.active !== false)
+                        .map((acc) => (
+                          <SelectItem key={acc.id} value={acc.id}>
+                            <span className="flex items-center gap-2">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full"
+                                style={{ backgroundColor: acc.color }}
+                              />
+                              {acc.name}
+                              {acc.is_primary && (
+                                <span className="text-[10px] font-semibold text-amber-600">
+                                  (principal)
+                                </span>
+                              )}
+                            </span>
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>

@@ -193,19 +193,29 @@ export function TransactionModal({
   }, [transaction, defaultType, accounts, primaryAccount, resolvedInstallmentsTotal])
 
   // Filter categories by selected type (categories with type === type OR dual-flow categories: Fabrício, Raffaela, Investimento) sorted A-Z
+  // Exclui categorias inativas (soft deleted), a não ser que a transação já esteja usando-a
   const filteredCategories = useMemo(() => {
     return categories
-      .filter((c) => isCategoryAllowedForType(c, type))
+      .filter(
+        (c) =>
+          (c.active !== false || c.id === transaction?.category_id) &&
+          isCategoryAllowedForType(c, type),
+      )
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
-  }, [categories, type])
+  }, [categories, type, transaction?.category_id])
 
   // Filter subcategories by selected category sorted A-Z
+  // Exclui subcategorias inativas (soft deleted), a não ser que a transação já esteja usando-a
   const filteredSubcategories = useMemo(
     () =>
       subcategories
-        .filter((s) => s.category_id === categoryId)
+        .filter(
+          (s) =>
+            (s.active !== false || s.id === transaction?.subcategory_id) &&
+            s.category_id === categoryId,
+        )
         .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })),
-    [subcategories, categoryId],
+    [subcategories, categoryId, transaction?.subcategory_id],
   )
 
   // Handlers for switching type
@@ -657,22 +667,34 @@ export function TransactionModal({
                   <SelectValue placeholder="Selecione a conta..." />
                 </SelectTrigger>
                 <SelectContent className="rounded-xl">
-                  {accounts.map((acc) => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: acc.color }}
-                        />
-                        {acc.name}
-                        {acc.is_primary && (
-                          <span className="text-[10px] font-semibold text-amber-600">
-                            (principal)
-                          </span>
-                        )}
-                      </span>
-                    </SelectItem>
-                  ))}
+                  {accounts
+                    .filter(
+                      (acc) =>
+                        acc.active !== false ||
+                        acc.id === accountId ||
+                        acc.id === transaction?.account_id,
+                    )
+                    .map((acc) => (
+                      <SelectItem key={acc.id} value={acc.id}>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full"
+                            style={{ backgroundColor: acc.color }}
+                          />
+                          {acc.name}
+                          {acc.active === false && (
+                            <span className="text-[10px] font-semibold text-slate-400">
+                              (inativa)
+                            </span>
+                          )}
+                          {acc.is_primary && (
+                            <span className="text-[10px] font-semibold text-amber-600">
+                              (principal)
+                            </span>
+                          )}
+                        </span>
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

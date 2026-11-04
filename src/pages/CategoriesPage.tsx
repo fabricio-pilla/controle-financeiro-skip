@@ -85,18 +85,33 @@ export default function CategoriesPage() {
     return { categoryStats: catStats, subcategoryStats: subStats }
   }, [transactions])
 
+  const [showArchived, setShowArchived] = useState(false)
+
+  // Separar ativas e inativas
+  const activeCategories = useMemo(() => categories.filter((c) => c.active !== false), [categories])
+  const archivedCategories = useMemo(
+    () => categories.filter((c) => c.active === false),
+    [categories],
+  )
+
   // Filter and sort categories alphabetically
   const expenseCategories = useMemo(() => {
-    return [...categories]
+    return [...activeCategories]
       .filter((c) => c.type === 'despesa')
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
-  }, [categories])
+  }, [activeCategories])
 
   const incomeCategories = useMemo(() => {
-    return [...categories]
+    return [...activeCategories]
       .filter((c) => c.type === 'receita')
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
-  }, [categories])
+  }, [activeCategories])
+
+  const archivedCategoriesForTab = useMemo(() => {
+    return archivedCategories
+      .filter((c) => c.type === activeTab)
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+  }, [archivedCategories, activeTab])
 
   // Group subcategories by category_id and sort alphabetically
   const subcategoriesByCategory = useMemo(() => {
@@ -123,29 +138,6 @@ export default function CategoriesPage() {
   }
 
   const handleDeletePrompt = (cat: Category) => {
-    // Check if category itself has transactions
-    const catUsage = categoryStats[cat.id]?.count || 0
-    if (catUsage > 0) {
-      toast.error(
-        `Esta categoria não pode ser excluída pois possui ${catUsage} lançamento(s) vinculado(s).`,
-      )
-      return
-    }
-
-    // Check if any of its subcategories have transactions
-    const catSubs = subcategoriesByCategory[cat.id] || []
-    let subTransactionsTotal = 0
-    catSubs.forEach((sub) => {
-      subTransactionsTotal += subcategoryStats[sub.id]?.count || 0
-    })
-
-    if (subTransactionsTotal > 0) {
-      toast.error(
-        `Esta categoria não pode ser excluída pois há ${subTransactionsTotal} lançamento(s) vinculado(s) às suas subcategorias.`,
-      )
-      return
-    }
-
     setCatToDelete(cat)
     setConfirmDeleteOpen(true)
   }
@@ -153,11 +145,36 @@ export default function CategoriesPage() {
   const confirmDelete = async () => {
     if (!catToDelete) return
     try {
-      await deleteCategory(catToDelete.id)
-      toast.success('Categoria excluída com sucesso!')
+      const res = await deleteCategory(catToDelete.id)
+      if (res?.softDeleted) {
+        toast.info(
+          `A categoria "${catToDelete.name}" possui lançamentos vinculados e foi desativada. Seus históricos e relatórios permanecem intactos.`,
+          { duration: 6000 },
+        )
+      } else {
+        toast.success('Categoria excluída com sucesso!')
+      }
       setCatToDelete(null)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao excluir categoria.')
+    }
+  }
+
+  const handleRestoreCategory = async (cat: Category) => {
+    try {
+      await updateCategory(cat.id, { active: true } as any)
+      toast.success(`Categoria "${cat.name}" restaurada com sucesso!`)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao restaurar categoria.')
+    }
+  }
+
+  const handleRestoreSubcategory = async (sub: Subcategory) => {
+    try {
+      await updateSubcategory(sub.id, { active: true } as any)
+      toast.success(`Subcategoria "${sub.name}" restaurada com sucesso!`)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao restaurar subcategoria.')
     }
   }
 
@@ -175,13 +192,6 @@ export default function CategoriesPage() {
   }
 
   const handleDeleteSubcategoryPrompt = (sub: Subcategory) => {
-    const usage = subcategoryStats[sub.id]?.count || 0
-    if (usage > 0) {
-      toast.error(
-        `Esta subcategoria não pode ser excluída pois possui ${usage} lançamento(s) vinculado(s).`,
-      )
-      return
-    }
     setSubToDelete(sub)
     setConfirmDeleteSubOpen(true)
   }
@@ -189,8 +199,15 @@ export default function CategoriesPage() {
   const confirmDeleteSubcategory = async () => {
     if (!subToDelete) return
     try {
-      await deleteSubcategory(subToDelete.id)
-      toast.success('Subcategoria excluída com sucesso!')
+      const res = await deleteSubcategory(subToDelete.id)
+      if (res?.softDeleted) {
+        toast.info(
+          `A subcategoria "${subToDelete.name}" possui lançamentos vinculados e foi desativada. Seus históricos permanecem intactos.`,
+          { duration: 6000 },
+        )
+      } else {
+        toast.success('Subcategoria excluída com sucesso!')
+      }
       setSubToDelete(null)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao excluir subcategoria.')
@@ -480,6 +497,75 @@ export default function CategoriesPage() {
         </TabsContent>
       </Tabs>
 
+      {/* Seção de Categorias Inativas / Desativadas */}
+      {archivedCategoriesForTab.length > 0 && (
+        <div className="mt-8 pt-6 border-t border-slate-200">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-700">
+                Categorias Desativadas ({archivedCategoriesForTab.length})
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Categorias com lançamentos vinculados no histórico. Não aparecem na seleção de novos
+                lançamentos.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowArchived((prev) => !prev)}
+              className="rounded-xl text-xs"
+            >
+              {showArchived ? 'Ocultar Inativas' : 'Mostrar Inativas'}
+            </Button>
+          </div>
+
+          {showArchived && (
+            <div className="space-y-3">
+              {archivedCategoriesForTab.map((cat) => {
+                const stats = categoryStats[cat.id] || { count: 0, totalAmount: 0 }
+                return (
+                  <div
+                    key={cat.id}
+                    className="bg-slate-50 rounded-2xl border border-slate-200 p-4 opacity-80 hover:opacity-100 transition-opacity flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center text-white"
+                        style={{ backgroundColor: cat.color || '#94A3B8' }}
+                      >
+                        <DynamicIcon name={cat.icon || 'Tag'} className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-800 text-sm">{cat.name}</span>
+                          <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-medium">
+                            inativa
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {stats.count} lançamento(s) • Total: {formatCurrency(stats.totalAmount)}
+                        </p>
+                      </div>
+                    </div>
+                    {canManageFinance && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRestoreCategory(cat)}
+                        className="rounded-xl text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 border-indigo-200"
+                      >
+                        Reativar
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Category Modal */}
       <CategoryModal
         open={modalOpen}
@@ -502,12 +588,12 @@ export default function CategoriesPage() {
         onOpenChange={setConfirmDeleteOpen}
         title="Excluir Categoria"
         description={
-          catToDelete && (subcategoriesByCategory[catToDelete.id]?.length || 0) > 0
-            ? `Tem certeza que deseja excluir a categoria "${catToDelete?.name}" e todas as suas ${subcategoriesByCategory[catToDelete.id].length} subcategoria(s) vinculada(s)? Esta ação não pode ser desfeita.`
-            : `Tem certeza que deseja excluir a categoria "${catToDelete?.name}"? Esta ação não pode ser desfeita.`
+          catToDelete && (categoryStats[catToDelete.id]?.count || 0) > 0
+            ? `A categoria "${catToDelete?.name}" possui lançamentos vinculados e será desativada para preservar seu histórico e relatórios. Deseja continuar?`
+            : `Tem certeza que deseja excluir a categoria "${catToDelete?.name}"? Se houver lançamentos vinculados, ela será desativada.`
         }
-        confirmText="Sim"
-        cancelText="Não"
+        confirmText="Excluir ou Desativar"
+        cancelText="Cancelar"
         variant="danger"
         onConfirm={confirmDelete}
       />
@@ -517,9 +603,9 @@ export default function CategoriesPage() {
         open={confirmDeleteSubOpen}
         onOpenChange={setConfirmDeleteSubOpen}
         title="Excluir Subcategoria"
-        description={`Tem certeza que deseja excluir a subcategoria "${subToDelete?.name}"?`}
-        confirmText="Sim"
-        cancelText="Não"
+        description={`Tem certeza que deseja excluir a subcategoria "${subToDelete?.name}"? Se houver lançamentos vinculados, ela será desativada para preservar os históricos.`}
+        confirmText="Excluir ou Desativar"
+        cancelText="Cancelar"
         variant="danger"
         onConfirm={confirmDeleteSubcategory}
       />

@@ -81,13 +81,27 @@ export default function AccountsPage() {
     }
   }
 
-  // Ordenação alfabética (A-Z, ignorando acentos)
+  const [showArchived, setShowArchived] = useState(false)
+
+  // Contas ativas e inativas
+  const activeAccounts = useMemo(() => accounts.filter((a) => a.active !== false), [accounts])
+  const archivedAccounts = useMemo(() => accounts.filter((a) => a.active === false), [accounts])
+
+  // Ordenação alfabética (A-Z, ignorando acentos) das ativas
   const sortedAccounts = useMemo(
     () =>
-      [...accounts].sort((a, b) =>
+      [...activeAccounts].sort((a, b) =>
         (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }),
       ),
-    [accounts],
+    [activeAccounts],
+  )
+
+  const sortedArchivedAccounts = useMemo(
+    () =>
+      [...archivedAccounts].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }),
+      ),
+    [archivedAccounts],
   )
 
   const handleSetPrimary = async (acc: Account) => {
@@ -117,11 +131,27 @@ export default function AccountsPage() {
   const confirmDelete = async () => {
     if (!accToDelete) return
     try {
-      await deleteAccount(accToDelete.id)
-      toast.success('Conta financeira excluída com sucesso!')
+      const res = await deleteAccount(accToDelete.id)
+      if (res?.softDeleted) {
+        toast.info(
+          `A conta "${accToDelete.name}" possui lançamentos vinculados e foi desativada. Seus históricos e gráficos permanecem intactos.`,
+          { duration: 6000 },
+        )
+      } else {
+        toast.success('Conta financeira excluída com sucesso!')
+      }
       setAccToDelete(null)
     } catch (err: any) {
       toast.error(err?.message || 'Erro ao excluir conta.')
+    }
+  }
+
+  const handleRestore = async (acc: Account) => {
+    try {
+      await updateAccount(acc.id, { active: true } as any)
+      toast.success(`Conta "${acc.name}" restaurada com sucesso!`)
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao restaurar conta.')
     }
   }
 
@@ -358,6 +388,72 @@ export default function AccountsPage() {
         )}
       </div>
 
+      {/* Seção de Contas Inativas / Desativadas */}
+      {archivedAccounts.length > 0 && (
+        <div className="mt-8 pt-6 border-t border-slate-200">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-700">
+                Contas Desativadas ({archivedAccounts.length})
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Contas que possuem lançamentos no histórico mas não aparecem para novos lançamentos.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowArchived((prev) => !prev)}
+              className="rounded-xl text-xs"
+            >
+              {showArchived ? 'Ocultar Inativas' : 'Mostrar Inativas'}
+            </Button>
+          </div>
+
+          {showArchived && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {sortedArchivedAccounts.map((acc) => {
+                const Icon = getAccountIcon(acc.type)
+                return (
+                  <div
+                    key={acc.id}
+                    className="bg-slate-50 rounded-2xl border border-slate-200 p-4 opacity-75 hover:opacity-100 transition-opacity flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-9 h-9 rounded-xl flex items-center justify-center text-white"
+                        style={{ backgroundColor: acc.color || '#94A3B8' }}
+                      >
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-slate-800 text-sm">{acc.name}</span>
+                          <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-medium">
+                            inativa
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400">{getAccountTypeLabel(acc.type)}</p>
+                      </div>
+                    </div>
+                    {canManageFinance && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRestore(acc)}
+                        className="rounded-xl text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 border-indigo-200"
+                      >
+                        Reativar
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Account Modal */}
       <AccountModal open={modalOpen} onOpenChange={setModalOpen} account={selectedAcc} />
 
@@ -366,8 +462,8 @@ export default function AccountsPage() {
         open={confirmDeleteOpen}
         onOpenChange={setConfirmDeleteOpen}
         title="Excluir Conta Financeira"
-        description={`Tem certeza que deseja excluir a conta "${accToDelete?.name}"? Isso só será permitido se não houver lançamentos vinculados.`}
-        confirmText="Excluir Conta"
+        description={`Tem certeza que deseja excluir a conta "${accToDelete?.name}"? Se houver lançamentos vinculados, ela será desativada para manter seus relatórios e gráficos intactos.`}
+        confirmText="Excluir ou Desativar"
         variant="danger"
         onConfirm={confirmDelete}
       />

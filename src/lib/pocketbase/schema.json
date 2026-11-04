@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-04T14:53:30.961Z",
+  "generatedAt": "2026-11-04T15:21:11.876Z",
   "collections": [
     {
       "name": "users",
@@ -326,6 +326,12 @@
           "type": "number",
           "required": false,
           "system": false
+        },
+        {
+          "name": "active",
+          "type": "bool",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_accounts_control ON accounts (control_id)"]
@@ -469,6 +475,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "active",
+          "type": "bool",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -819,6 +831,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "active",
+          "type": "bool",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

@@ -17,15 +17,9 @@ import {
   deleteTransactionWithPropagation,
   isParentTransaction,
 } from '@/lib/transaction-propagation'
-import {
-  AdaptiveRateLimiter,
-  executeWithRetry,
-  is429Error,
-  runInPool,
-  sleep,
-} from '@/lib/pocketbase/retry'
+import { sleep } from '@/lib/pocketbase/retry'
 import pb from '@/lib/pocketbase/client'
-import { cleanDescription, planNextRecurringTransactionsDetailed } from '@/lib/recurring-generation'
+import { cleanDescription } from '@/lib/recurring-generation'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { formatCurrency, formatDateBR, getTxEffectiveDate } from '@/lib/formatters'
 import { cleanNotesForDisplay } from '@/lib/ai-learning-tracker'
@@ -90,6 +84,7 @@ export default function TransactionsPage() {
     reloadCompanyData,
     loadTransactionsForMonth,
     loadAllTransactions,
+    invalidateTransactionsCache,
     searchTransactionsServer,
   } = useCompany()
   const { user: currentUser } = useAuth()
@@ -673,310 +668,82 @@ export default function TransactionsPage() {
   }
 
   // Gerar ocorrências dos próximos 12 meses EXCLUSIVAMENTE para transações recorrentes
-  // Não gera parcelas de lançamentos parcelados
+  // Não gera parcelas de lançamentos parcelados - Execução Atômica no Backend Skip Cloud
   const executeGenerateNext12Months = async () => {
     if (!currentCompany?.id) {
       toast.error('Nenhum controle selecionado.')
       return
     }
+    if (!canManageTransactions) {
+      toast.error('Você não tem permissão para gerar lançamentos recorrentes.')
+      return
+    }
 
     setIsGeneratingRecurring(true)
-    setGenerationStepLabel('Analisando...')
-    const toastId = toast.loading('Analisando lançamentos recorrentes...')
-
-    // Rate limiter adaptativo dedicado ao fluxo de geração de recorrências:
-    // Concorrência 1 (estritamente serializado), espaçamento preventivo conservador de 450ms inicial,
-    // minIntervalMs de 300ms, maxIntervalMs até 20000ms, pausa mínima de 3s até 20s ao 429 e aceleração progressiva
-    const generationRateLimiter = new AdaptiveRateLimiter({
-      initialIntervalMs: 450,
-      minIntervalMs: 300,
-      maxIntervalMs: 20000,
-      backoffFactor: 2.0,
-      recoveryFactor: 0.9,
-      successThresholdForRecovery: 6,
-    })
+    setGenerationStepLabel('Processando no servidor...')
+    const toastId = toast.loading('Gerando recorrências no servidor...')
 
     try {
-      const now = new Date()
-      const currentYear = now.getFullYear()
-      const currentMonth = now.getMonth() + 1 // 1-12
-      const currentYM = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
-
-      // Buscar a lista COMPLETA e FRESCA do banco para garantir idempotência máxima
-      setGenerationStepLabel('Consultando banco...')
-      let freshCompanyTxs: Transaction[] = []
-      try {
-        const freshRecords = await pb.collection('transactions').getFullList<any>({
-          filter: `control_id = '${currentCompany.id}'`,
-        })
-        freshCompanyTxs = freshRecords.map((r) => ({
-          id: r.id,
-          control_id: r.control_id,
-          user_id: r.user_id,
-          type: r.type,
-          amount: Number(r.amount),
-          description: r.description,
-          category_id: r.category_id,
-          subcategory_id: r.subcategory_id,
-          account_id: r.account_id,
-          credit_card_id: r.credit_card_id,
-          date: r.date,
-          payment_date: r.payment_date,
-          paid: Boolean(r.paid),
-          is_recurring: Boolean(r.is_recurring),
-          recurring: Boolean(r.recurring || r.is_recurring),
-          recurrence_type: r.recurrence_type,
-          recurrence_period: r.recurrence_period,
-          installment_number: r.installment_number ? Number(r.installment_number) : undefined,
-          installment_total: r.installment_total ? Number(r.installment_total) : undefined,
-          installments_total: r.installment_total ? Number(r.installment_total) : undefined,
-          parent_transaction_id: r.parent_transaction_id,
-          notes: r.notes,
-          created_at: r.created,
-        }))
-      } catch (freshErr) {
-        console.warn(
-          '[handleGenerateNext12Months] Falha ao consultar transações frescas do banco, usando estado local:',
-          freshErr,
-        )
-        freshCompanyTxs = transactions.filter((t) => t.control_id === currentCompany.id)
-      }
-
-      // Transações do mês atual (mês corrente do calendário real, com normalização de data)
-      const currentMonthTxs = freshCompanyTxs.filter((t) => {
-        if (!t.date) return false
-        const cleanDateOnly = String(t.date).substring(0, 10).split(/[T\s]/)[0]
-        return cleanDateOnly.startsWith(currentYM)
-      })
-
-      // Identificar se há algum lançamento recorrente efetivo especificamente no MÊS ATUAL
-      // Exclui pais consolidados de parcelamento (installment_number=0 com installment_total > 1)
-      const currentMonthRecurringSeeds = currentMonthTxs.filter((t) => {
-        const isRec = Boolean(
-          t.is_recurring ||
-          t.recurring ||
-          (t.recurrence_type && String(t.recurrence_type).trim() !== '') ||
-          Boolean(
-            (t as any).recurrence_period && String((t as any).recurrence_period).trim() !== '',
-          ),
-        )
-        if (!isRec) return false
-        if (
-          (Number(t.installment_number) === 0 || t.installment_number === undefined) &&
-          Number(t.installments_total || (t as any).installment_total || 0) > 1
-        ) {
-          return false
-        }
-        return true
-      })
-
-      if (currentMonthRecurringSeeds.length === 0) {
-        toast.dismiss(toastId)
-        toast.info('Nenhum lançamento recorrente no mês atual para gerar.', {
-          duration: 6000,
-        })
-        return
-      }
-
-      const currentUserId = pb.authStore.model?.id || currentCompany.owner_id || ''
-
-      // ----------------------------------------------------
-      // PLANEJAMENTO PURO EM MEMÓRIA COM DADOS FRESCOS DO BANCO
-      // Semente EXCLUSIVAMENTE dos lançamentos recorrentes do MÊS ATUAL
-      // Gera as próximas 12 ocorrências mensais a partir do mês seguinte
-      // ----------------------------------------------------
-      const planningResult = planNextRecurringTransactionsDetailed({
-        allTransactions: freshCompanyTxs,
-        currentMonthTransactions: currentMonthRecurringSeeds,
-        existingTransactions: freshCompanyTxs,
-        currentCompanyId: currentCompany.id,
-        currentUserId,
-        currentYear,
-        currentMonth,
-        allowGenericDescription: true,
-      })
-
-      const plannedRecurring = planningResult.planned
-      const totalPlanned = plannedRecurring.length
-      const alreadyExistingCount = planningResult.alreadyExistingCount
-
-      if (totalPlanned === 0) {
-        toast.dismiss(toastId)
-        toast.info('As recorrências futuras já existiam — nada a gerar.', {
-          duration: 6000,
-        })
-        return
-      }
-
-      let createdIncomeCount = 0
-      let createdExpenseCount = 0
-      let recurringRateLimitedCount = 0
-
-      // Helper para mapear registro criado para a tipagem Transaction
-      const mapCreatedRecord = (rec: any, candidate: any): Transaction => ({
-        id: rec.id,
-        control_id: rec.control_id || currentCompany.id,
-        user_id: rec.user_id || currentUserId,
-        type: rec.type,
-        amount: Number(rec.amount),
-        description: rec.description,
-        category_id: rec.category_id || '',
-        subcategory_id: rec.subcategory_id || undefined,
-        account_id: rec.account_id || '',
-        date: rec.date ? String(rec.date).split(/[T\s]/)[0] : candidate.date.split(/[T\s]/)[0],
-        payment_date: rec.payment_date
-          ? String(rec.payment_date).split(/[T\s]/)[0]
-          : rec.date
-            ? String(rec.date).split(/[T\s]/)[0]
-            : candidate.date.split(/[T\s]/)[0],
-        paid: Boolean(rec.paid),
-        is_recurring: Boolean(rec.is_recurring),
-        recurring: Boolean(rec.recurring || rec.is_recurring),
-        recurrence_type: rec.recurrence_type || undefined,
-        installment_number: rec.installment_number ? Number(rec.installment_number) : undefined,
-        installments_total: rec.installment_total
-          ? Number(rec.installment_total)
-          : rec.installments_total
-            ? Number(rec.installments_total)
-            : undefined,
-        parent_transaction_id: rec.parent_transaction_id || undefined,
-        notes: rec.notes || undefined,
-        created_at: rec.created || new Date().toISOString(),
-        account: accounts.find((a) => a.id === rec.account_id),
-        category: categories.find((c) => c.id === rec.category_id),
-      })
-
-      // ====================================================
-      // GERAÇÃO DE RECORRÊNCIAS (Receitas e Despesas)
-      // ====================================================
-      setGenerationStepLabel(`Gerando recorrências (0/${plannedRecurring.length})`)
-      toast.loading(`Gerando recorrências (0/${plannedRecurring.length})...`, {
-        id: toastId,
-      })
-
-      const recurringCreatedList: Transaction[] = []
-
-      await runInPool(
-        plannedRecurring,
-        async (item) => {
-          try {
-            const rec = await executeWithRetry(
-              () => pb.collection('transactions').create(item),
-              7,
-              1000,
-              'GerarRecorrentes',
-              30000,
-              { rateLimiter: generationRateLimiter },
-            )
-
-            if (rec) {
-              const mappedTx = mapCreatedRecord(rec, item)
-              recurringCreatedList.push(mappedTx)
-              if (item.type === 'receita') {
-                createdIncomeCount++
-              } else {
-                createdExpenseCount++
-              }
-            }
-          } catch (err: any) {
-            if (!is429Error(err)) {
-              console.warn(
-                `[handleGenerateNext12Months] Falha ao criar recorrência "${item.description}":`,
-                err?.message || err,
-              )
-            }
-            recurringRateLimitedCount++
-          }
+      const resp = await pb.send('/backend/v1/custom/generate-recurring', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        {
-          concurrency: 1,
-          delayBetweenBatchesMs: 50,
-          maxRetries: 7,
-          baseDelayMs: 1000,
-          maxDelayMs: 20000,
-          rateLimiter: generationRateLimiter,
-          tag: 'GERAR_RECORRENTES_POOL',
-          onProgress: (done, total) => {
-            setGenerationStepLabel(`Gerando recorrências (${done}/${total})`)
-            toast.loading(`Gerando recorrências (${done}/${total})...`, {
-              id: toastId,
-            })
-          },
-        },
-      )
-
-      // Atualização otimista imediata na UI
-      if (recurringCreatedList.length > 0) {
-        applyTransactionsBatchUpdate({ created: recurringCreatedList })
-      }
+        body: JSON.stringify({
+          control_id: currentCompany.id,
+        }),
+      })
 
       toast.dismiss(toastId)
 
-      const totalRecurCreated = createdIncomeCount + createdExpenseCount
-      const totalCreated = totalRecurCreated
-      const totalRateLimited = recurringRateLimitedCount
+      if (!resp || resp.success === false) {
+        throw new Error(resp?.message || 'Falha ao gerar recorrências.')
+      }
 
-      // ====================================================
-      // TOAST FINAL E REPORTES DETALHADOS
-      // ====================================================
+      const totalCreated = Number(resp.totalCreated || 0)
+      const alreadyExistingCount = Number(resp.alreadyExistingCount || 0)
+      const createdIncomeCount = Number(resp.createdIncomeCount || 0)
+      const createdExpenseCount = Number(resp.createdExpenseCount || 0)
+
       if (totalCreated === 0) {
-        if (totalRateLimited > 0) {
-          toast.warning(
-            `Nenhum novo lançamento pôde ser concluído devido ao limite do servidor (${totalRateLimited} recorrência(s) pendente(s)). Clique novamente para continuar — o processo é idempotente.`,
-            { duration: 9000 },
-          )
+        if (resp.message && resp.message.includes('Nenhum')) {
+          toast.info(resp.message, { duration: 6000 })
         } else {
           toast.info('As recorrências futuras já existiam — nada a gerar.', {
             duration: 6000,
           })
         }
       } else {
-        // Mensagem com feedback real e contagens:
-        // - Caso misto: "X geradas, Y meses já existiam" (ou com detalhes receitas/despesas)
-        // - "X recorrências geradas" quando criou e não havia meses já existentes
         const countLabel =
-          totalRecurCreated === 1
-            ? '1 recorrência gerada'
-            : `${totalRecurCreated} recorrências geradas`
+          totalCreated === 1 ? '1 recorrência gerada' : `${totalCreated} recorrências geradas`
         const mixedSummary =
           alreadyExistingCount > 0
-            ? `${totalRecurCreated} geradas, ${alreadyExistingCount} ${alreadyExistingCount === 1 ? 'mês já existia' : 'meses já existiam'}`
+            ? `${totalCreated} geradas, ${alreadyExistingCount} ${
+                alreadyExistingCount === 1 ? 'mês já existia' : 'meses já existiam'
+              }`
             : countLabel
 
-        if (totalRateLimited > 0) {
-          toast.warning(
-            `Geração parcial: ${mixedSummary} (${createdIncomeCount} receita(s), ${createdExpenseCount} despesa(s)). ${totalRateLimited} pendente(s) por limite do servidor.`,
-            { duration: 10000 },
-          )
-        } else {
-          const detailSuffix =
-            alreadyExistingCount > 0
-              ? ` (${createdIncomeCount} receita(s), ${createdExpenseCount} despesa(s))`
-              : ` (${createdIncomeCount} receita(s), ${createdExpenseCount} despesa(s))`
-          toast.success(`${mixedSummary}${detailSuffix}.`, {
-            duration: 7500,
-          })
-        }
-
-        // Consolidação única de saldos das contas em segundo plano ao final
-        reloadCompanyData().catch((reloadErr) => {
-          console.warn(
-            '[handleGenerateNext12Months] Erro não bloqueante ao consolidar dados da empresa pós-geração:',
-            reloadErr,
-          )
+        const detailSuffix = ` (${createdIncomeCount} receita(s), ${createdExpenseCount} despesa(s))`
+        toast.success(`${mixedSummary}${detailSuffix}.`, {
+          duration: 7500,
         })
       }
+
+      // Invalidar o cache e recarregar o mês atual e dados da empresa
+      invalidateTransactionsCache()
+      if (monthFilter !== 'all') {
+        await loadTransactionsForMonth(monthFilter)
+      } else {
+        await loadAllTransactions()
+      }
+      reloadCompanyData().catch((err) => {
+        console.warn('[executeGenerateNext12Months] Erro ao recarregar dados da empresa:', err)
+      })
     } catch (err: any) {
       toast.dismiss(toastId)
-      if (!is429Error(err)) {
-        console.warn(
-          '[handleGenerateNext12Months] Erro capturado no fluxo geral:',
-          err?.message || err,
-        )
-      }
-      toast.error(err?.message || 'Erro ao gerar lançamentos recorrentes.')
+      console.error('[executeGenerateNext12Months] Erro:', err)
+      toast.error(err?.message || 'Erro ao gerar lançamentos recorrentes no servidor.')
     } finally {
-      generationRateLimiter.destroy()
       setIsGeneratingRecurring(false)
       setGenerationStepLabel(null)
     }
@@ -1578,11 +1345,17 @@ export default function TransactionsPage() {
                       >
                         <DynamicIcon name={tx.category?.icon || 'Tag'} className="w-3 h-3" />
                         {tx.category?.name || 'Geral'}
+                        {tx.category?.is_archived && (
+                          <span className="text-[9px] text-slate-400 font-normal">(inativa)</span>
+                        )}
                       </span>
                       {tx.subcategory && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                           <span className="text-slate-400">↳</span>
                           <span>{tx.subcategory.name}</span>
+                          {tx.subcategory.is_archived && (
+                            <span className="text-[9px] text-slate-400 font-normal">(inativa)</span>
+                          )}
                         </span>
                       )}
                     </div>
@@ -1596,6 +1369,9 @@ export default function TransactionsPage() {
                         style={{ backgroundColor: tx.account?.color || '#94a3b8' }}
                       />
                       {tx.account?.name || 'Conta'}
+                      {tx.account?.is_archived && (
+                        <span className="text-[9px] text-slate-400 font-normal">(inativa)</span>
+                      )}
                     </span>
                   </td>
 
