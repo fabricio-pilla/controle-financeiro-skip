@@ -82,10 +82,26 @@ routerAdd(
       userRecord.set('name', newName.trim())
     }
 
-    if (newPassword && typeof newPassword === 'string' && newPassword.length >= 8) {
+    if (newPassword && typeof newPassword === 'string') {
+      if (newPassword.length < 8) {
+        return e.json(400, { message: 'A nova senha deve possuir no mínimo 8 caracteres.' })
+      }
+
+      const currentPassword = body.currentPassword
+      if (!currentPassword || typeof currentPassword !== 'string' || !currentPassword.trim()) {
+        return e.json(400, {
+          message: 'Por segurança, confirme sua senha atual para alterar a senha de acesso.',
+        })
+      }
+
+      // Validar a senha atual do chamador autenticado (admin ou o próprio usuário)
+      if (!authRecord.validatePassword(currentPassword)) {
+        return e.json(400, {
+          message: 'A senha atual informada está incorreta. Verifique e tente novamente.',
+        })
+      }
+
       userRecord.setPassword(newPassword)
-    } else if (newPassword && typeof newPassword === 'string' && newPassword.length < 8) {
-      return e.json(400, { message: 'A nova senha deve possuir no mínimo 8 caracteres.' })
     }
 
     try {

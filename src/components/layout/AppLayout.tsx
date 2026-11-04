@@ -34,7 +34,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { user, logout } = useAuth()
-  const { currentCompany, currentRole } = useCompany()
+  const { currentCompany, currentRole, canManageTransactions } = useCompany()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -88,6 +88,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     owner: 'Proprietário',
     admin: 'Administrador',
     member: 'Membro',
+    viewer: 'Visualizador',
   }[currentRole || 'member']
 
   // Sidebar content (shared by desktop and mobile sheet)
@@ -138,18 +139,20 @@ export function AppLayout({ children }: AppLayoutProps) {
       </nav>
 
       {/* Quick Action Button */}
-      <div className="px-4 py-2">
-        <Button
-          onClick={() => {
-            setAiTxOpen(true)
-            setMobileDrawerOpen(false)
-          }}
-          className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl h-11 font-semibold flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40"
-        >
-          <Sparkles className="w-4 h-4" />
-          <span>Novo Lançamento IA</span>
-        </Button>
-      </div>
+      {canManageTransactions && (
+        <div className="px-4 py-2">
+          <Button
+            onClick={() => {
+              setAiTxOpen(true)
+              setMobileDrawerOpen(false)
+            }}
+            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl h-11 font-semibold flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Novo Lançamento IA</span>
+          </Button>
+        </div>
+      )}
 
       {/* User Footer */}
       <div className="p-3 border-t border-slate-800">

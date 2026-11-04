@@ -1,4 +1,4 @@
-export type UserRole = 'owner' | 'admin' | 'member'
+export type UserRole = 'owner' | 'admin' | 'member' | 'viewer'
 export type MemberStatus = 'active' | 'pending'
 export type AccountType = 'carteira' | 'banco' | 'pix' | 'credito' | 'investimento'
 export type TransactionType = 'receita' | 'despesa'

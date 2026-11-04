@@ -31,6 +31,22 @@ routerAdd('POST', '/backend/v1/custom/backup-generate', (e) => {
     return false
   }
 
+  const checkViewerOrMember = (uid, cid) => {
+    try {
+      const callerMember = $app.findFirstRecordByFilter(
+        'control_members',
+        'control_id = {:cid} && user_id = {:uid} && status = "active"',
+        { cid: cid, uid: uid },
+      )
+      if (callerMember) return true
+    } catch (_) {}
+    try {
+      const ctrl = $app.findRecordById('financial_controls', cid)
+      if (ctrl && ctrl.getString('owner_id') === uid) return true
+    } catch (_) {}
+    return false
+  }
+
   const exportSnapshot = (cid) => {
     let controlData = null
     try {
@@ -368,7 +384,18 @@ routerAdd('POST', '/backend/v1/custom/backup-generate', (e) => {
     const sizeBytes = jsonString.length
     const backupsCol = $app.findCollectionByNameOrId('data_backups')
 
-    // 1. Arquiva backup anual (1 por ano) se ainda não existir
+    // Validação estrita do snapshot antes de gravar no banco
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new Error('Snapshot de backup inválido: formato não é um objeto JSON.')
+    }
+    if (!snapshot.control || !snapshot.control.id) {
+      throw new Error('Snapshot de backup corrompido: dados do controle financeiro ausentes.')
+    }
+    if (!sizeBytes || sizeBytes < 20) {
+      throw new Error('Snapshot de backup vazio ou truncado.')
+    }
+
+    // 1. Arquiva cópia anual intocada (1 por ano) se ainda não existir
     let existingYearly = null
     try {
       existingYearly = $app.findFirstRecordByFilter(
@@ -395,14 +422,25 @@ routerAdd('POST', '/backend/v1/custom/backup-generate', (e) => {
         try {
           const yFile = $filesystem.fileFromBytes(jsonString, 'backup_' + currentYear + '.json')
           yRecord.set('file', yFile)
-        } catch (_) {}
+        } catch (fErr) {
+          console.warn('[backup] Aviso ao anexar arquivo anual: ' + (fErr.message || String(fErr)))
+        }
         $app.save(yRecord)
+        console.log(
+          '[backup] Backup anual ' + currentYear + ' arquivado com sucesso para o controle ' + cid,
+        )
       } catch (yErr) {
-        console.log('[backup] Falha ao criar anual: ' + yErr.message)
+        console.error(
+          '[backup] Erro ao gravar backup anual ' +
+            currentYear +
+            ': ' +
+            (yErr.message || String(yErr)),
+        )
       }
     }
 
-    // 2. Mantém apenas 1 backup corrente (o mais recente)
+    // 2. Retenção rotativa: mantém SOMENTE o último backup do ciclo diário/corrente
+    // Busca registros correntes existentes para atualizar o mais recente e remover duplicados
     const currentRecords = $app.findRecordsByFilter(
       'data_backups',
       'control_id = {:cid} && backup_type = "current"',
@@ -418,7 +456,11 @@ routerAdd('POST', '/backend/v1/custom/backup-generate', (e) => {
       for (let k = 1; k < currentRecords.length; k++) {
         try {
           $app.delete(currentRecords[k])
-        } catch (_) {}
+        } catch (delErr) {
+          console.warn(
+            '[backup] Aviso ao remover cópia obsoleta: ' + (delErr.message || String(delErr)),
+          )
+        }
       }
     } else {
       targetRecord = new Record(backupsCol)
@@ -441,9 +483,21 @@ routerAdd('POST', '/backend/v1/custom/backup-generate', (e) => {
     try {
       const curFile = $filesystem.fileFromBytes(jsonString, 'backup_recente_' + dateStr + '.json')
       targetRecord.set('file', curFile)
-    } catch (_) {}
+    } catch (fErr) {
+      console.warn('[backup] Aviso ao anexar arquivo corrente: ' + (fErr.message || String(fErr)))
+    }
 
     $app.save(targetRecord)
+
+    console.log(
+      '[backup] Backup corrente salvo com sucesso para o controle ' +
+        cid +
+        ' (' +
+        sizeBytes +
+        ' bytes, ' +
+        (snapshot.counts ? JSON.stringify(snapshot.counts) : 'sem contagens') +
+        ')',
+    )
 
     return {
       id: targetRecord.id,
@@ -480,7 +534,6 @@ routerAdd('POST', '/backend/v1/custom/backup-generate', (e) => {
       message: 'Apenas administradores ou proprietários podem gerar backups.',
     })
   }
-
   try {
     const result = runBackup(controlId, authRecord.id)
     return e.json(200, {
@@ -489,10 +542,10 @@ routerAdd('POST', '/backend/v1/custom/backup-generate', (e) => {
       backup: result,
     })
   } catch (err) {
-    console.log('[backup] Erro ao gerar backup: ' + err.message)
+    console.error('[backup:manual] Erro ao gerar backup: ' + (err.message || String(err)))
     return e.json(500, {
       success: false,
-      message: 'Falha ao gerar backup: ' + err.message,
+      message: 'Falha ao gerar backup: ' + (err.message || String(err)),
     })
   }
 })
@@ -1249,9 +1302,21 @@ cronAdd('backup-daily-snapshot', '30 3 * * *', () => {
 
         const jsonString = JSON.stringify(snapshot, null, 2)
         const sizeBytes = jsonString.length
+
+        // Validação estrita do snapshot antes de gravar no banco
+        if (!snapshot || typeof snapshot !== 'object') {
+          throw new Error('Snapshot gerado inválido: não é um objeto JSON.')
+        }
+        if (!snapshot.control || !snapshot.control.id) {
+          throw new Error('Snapshot gerado corrompido: dados de controle ausentes.')
+        }
+        if (!sizeBytes || sizeBytes < 20) {
+          throw new Error('Snapshot de backup vazio ou truncado.')
+        }
+
         const backupsCol = $app.findCollectionByNameOrId('data_backups')
 
-        // Backup anual (se não houver para o ano)
+        // 1. Backup anual (se não houver para o ano corrente)
         let existingYearly = null
         try {
           existingYearly = $app.findFirstRecordByFilter(
@@ -1278,14 +1343,26 @@ cronAdd('backup-daily-snapshot', '30 3 * * *', () => {
             try {
               const yFile = $filesystem.fileFromBytes(jsonString, 'backup_' + currentYear + '.json')
               yRecord.set('file', yFile)
-            } catch (_) {}
+            } catch (fErr) {
+              console.warn(
+                '[cron:backup] Aviso ao anexar arquivo anual: ' + (fErr.message || String(fErr)),
+              )
+            }
             $app.save(yRecord)
+            console.log(
+              '[cron:backup] Backup anual ' + currentYear + ' arquivado para o controle ' + cid,
+            )
           } catch (yErr) {
-            console.log('[cron:backup] Falha ao criar anual: ' + yErr.message)
+            console.error(
+              '[cron:backup] Erro ao gravar backup anual ' +
+                currentYear +
+                ': ' +
+                (yErr.message || String(yErr)),
+            )
           }
         }
 
-        // Backup corrente (substitui/mantém apenas 1)
+        // 2. Backup corrente (substitui/mantém apenas 1 do ciclo diário)
         const currentRecords = $app.findRecordsByFilter(
           'data_backups',
           'control_id = {:cid} && backup_type = "current"',
@@ -1301,7 +1378,12 @@ cronAdd('backup-daily-snapshot', '30 3 * * *', () => {
           for (let k = 1; k < currentRecords.length; k++) {
             try {
               $app.delete(currentRecords[k])
-            } catch (_) {}
+            } catch (delErr) {
+              console.warn(
+                '[cron:backup] Aviso ao remover cópia obsoleta: ' +
+                  (delErr.message || String(delErr)),
+              )
+            }
           }
         } else {
           targetRecord = new Record(backupsCol)
@@ -1327,16 +1409,30 @@ cronAdd('backup-daily-snapshot', '30 3 * * *', () => {
             'backup_recente_' + dateStr + '.json',
           )
           targetRecord.set('file', curFile)
-        } catch (_) {}
+        } catch (fErr) {
+          console.warn(
+            '[cron:backup] Aviso ao anexar arquivo corrente: ' + (fErr.message || String(fErr)),
+          )
+        }
 
         $app.save(targetRecord)
-        console.log('[cron:backup] Backup realizado com sucesso para controle: ' + cid)
+        console.log(
+          '[cron:backup] Backup realizado com sucesso para controle ' +
+            cid +
+            ' (' +
+            sizeBytes +
+            ' bytes, ' +
+            JSON.stringify(snapshot.counts) +
+            ')',
+        )
       } catch (cErr) {
-        console.log('[cron:backup] Erro no controle ' + cid + ': ' + cErr.message)
+        console.error(
+          '[cron:backup] Erro no controle ' + cid + ': ' + (cErr.message || String(cErr)),
+        )
       }
     }
     console.log('[cron:backup] Rotina diária de backup finalizada.')
   } catch (err) {
-    console.log('[cron:backup] Erro geral: ' + err.message)
+    console.error('[cron:backup] Erro geral na rotina diária: ' + (err.message || String(err)))
   }
 })

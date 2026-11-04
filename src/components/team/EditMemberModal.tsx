@@ -30,6 +30,7 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
   const [name, setName] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [currentPassword, setCurrentPassword] = useState('')
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -46,6 +47,7 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
       setSelectedFile(null)
       setNewPassword('')
       setConfirmPassword('')
+      setCurrentPassword('')
     }
   }, [member, open])
 
@@ -99,6 +101,10 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
         toast.error('As senhas digitadas não conferem.')
         return
       }
+      if (!currentPassword.trim()) {
+        toast.error('Por segurança, digite a sua senha atual para confirmar a alteração.')
+        return
+      }
     }
 
     setIsSubmitting(true)
@@ -106,6 +112,7 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
       await updateMemberProfile(targetUserId, {
         name: name.trim(),
         password: newPassword ? newPassword : undefined,
+        currentPassword: newPassword ? currentPassword.trim() : undefined,
         avatarFile: selectedFile,
       })
 
@@ -255,37 +262,67 @@ export function EditMemberModal({ open, onOpenChange, member }: EditMemberModalP
                 <span className="text-xs font-bold text-slate-900">Alterar ou Resetar Senha</span>
               </div>
               <p className="text-[11px] text-slate-500">
-                Deixe em branco se não quiser alterar a senha atual do colaborador.
+                Deixe em branco se não quiser alterar a senha do colaborador. Por segurança, alterar
+                a senha exige a sua senha atual como confirmação.
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-pwd" className="text-xs font-medium text-slate-700">
-                    Nova Senha
-                  </Label>
-                  <Input
-                    id="edit-pwd"
-                    type="password"
-                    placeholder="Mínimo 8 caracteres"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="rounded-xl h-10 text-xs"
-                  />
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-pwd" className="text-xs font-medium text-slate-700">
+                      Nova Senha
+                    </Label>
+                    <Input
+                      id="edit-pwd"
+                      type="password"
+                      placeholder="Mínimo 8 caracteres"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="rounded-xl h-10 text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label
+                      htmlFor="edit-confirm-pwd"
+                      className="text-xs font-medium text-slate-700"
+                    >
+                      Confirmar Nova Senha
+                    </Label>
+                    <Input
+                      id="edit-confirm-pwd"
+                      type="password"
+                      placeholder="Repita a senha"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="rounded-xl h-10 text-xs"
+                    />
+                  </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-confirm-pwd" className="text-xs font-medium text-slate-700">
-                    Confirmar Nova Senha
-                  </Label>
-                  <Input
-                    id="edit-confirm-pwd"
-                    type="password"
-                    placeholder="Repita a senha"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="rounded-xl h-10 text-xs"
-                  />
-                </div>
+                {newPassword && (
+                  <div className="p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-1.5 animate-in fade-in">
+                    <Label
+                      htmlFor="edit-current-pwd"
+                      className="text-xs font-semibold text-amber-900 flex items-center gap-1.5"
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Sua Senha Atual (Confirmação de Segurança) *</span>
+                    </Label>
+                    <Input
+                      id="edit-current-pwd"
+                      type="password"
+                      placeholder="Digite sua senha de login atual"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      className="rounded-xl h-10 text-xs bg-white border-amber-300 focus-visible:ring-amber-500"
+                      required={Boolean(newPassword)}
+                    />
+                    <p className="text-[10px] text-amber-700">
+                      Necessário confirmar sua própria senha para autorizar a redefinição.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -991,6 +991,7 @@ class SkipCloudService {
     data: {
       name?: string
       password?: string
+      currentPassword?: string
       avatarFile?: File | null
     },
   ): Promise<User> {
@@ -1041,6 +1042,7 @@ class SkipCloudService {
             userId: realUserId,
             name: data.name,
             password: data.password,
+            currentPassword: data.currentPassword,
           },
         })
       } else if (isSelf && data.name) {

@@ -36,10 +36,11 @@ interface CompanyContextType {
   // Permissions helpers
   isOwner: boolean
   isAdmin: boolean
+  isViewer: boolean
   canManageTeam: boolean
   canManageSettings: boolean
   canManageFinance: boolean // accounts, categories
-  canManageTransactions: boolean // members, admins, owners
+  canManageTransactions: boolean // members, admins, owners (not viewers)
 
   // Actions
   selectCompany: (companyId?: string) => Promise<boolean>
@@ -149,6 +150,7 @@ interface CompanyContextType {
     data: {
       name?: string
       password?: string
+      currentPassword?: string
       avatarFile?: File | null
     },
   ) => Promise<User>
@@ -670,6 +672,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       data: {
         name?: string
         password?: string
+        currentPassword?: string
         avatarFile?: File | null
       },
     ) => {
@@ -692,10 +695,11 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   // Permission calculation
   const isOwner = currentRole === 'owner'
   const isAdmin = currentRole === 'admin'
+  const isViewer = currentRole === 'viewer'
   const canManageTeam = isOwner || isAdmin
   const canManageSettings = isOwner || isAdmin
   const canManageFinance = isOwner || isAdmin
-  const canManageTransactions = Boolean(currentRole) // All active members
+  const canManageTransactions = Boolean(currentRole) && !isViewer // Viewers cannot create/edit/delete
 
   return (
     <CompanyContext.Provider
@@ -712,6 +716,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         isCompanyLoading,
         isOwner,
         isAdmin,
+        isViewer,
         canManageTeam,
         canManageSettings,
         canManageFinance,

@@ -1,6 +1,7 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useCompany } from '@/contexts/CompanyContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
 import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -82,9 +83,24 @@ export default function TransactionsPage() {
     deleteTransaction,
     setTransactionsPaidStatus,
     applyTransactionsBatchUpdate,
+    isOwner,
+    isAdmin,
+    isViewer,
     canManageTransactions,
     reloadCompanyData,
   } = useCompany()
+  const { user: currentUser } = useAuth()
+
+  const canManageSingleTx = useCallback(
+    (tx: Transaction) => {
+      if (isViewer) return false
+      if (isOwner || isAdmin) return true
+      if (currentUser?.id && tx.user_id && tx.user_id === currentUser.id) return true
+      // Se não tem user_id vinculado ou o usuário for membro regular, restringe
+      return false
+    },
+    [isViewer, isOwner, isAdmin, currentUser],
+  )
 
   // State
   const [searchTerm, setSearchTerm] = useState('')
@@ -430,6 +446,10 @@ export default function TransactionsPage() {
   // Toggle single item paid status
   const handleTogglePaid = async (tx: Transaction, e?: React.MouseEvent) => {
     e?.stopPropagation()
+    if (!canManageSingleTx(tx)) {
+      toast.error('Você não tem permissão para alterar o status deste lançamento.')
+      return
+    }
     const newStatus = !(tx.paid !== false)
     try {
       await setTransactionsPaidStatus([tx.id], newStatus)
@@ -450,7 +470,19 @@ export default function TransactionsPage() {
   // Bulk toggle status
   const handleBulkStatusChange = async (newPaidStatus: boolean) => {
     if (selectedIds.length === 0) return
-    const idsToUpdate = [...selectedIds]
+    if (isViewer) {
+      toast.error('Visualizadores não têm permissão para alterar lançamentos.')
+      return
+    }
+    // Filtrar apenas lançamentos que o usuário tem permissão para alterar
+    const permittedTxs = transactions.filter(
+      (t) => selectedIds.includes(t.id) && canManageSingleTx(t),
+    )
+    if (permittedTxs.length === 0) {
+      toast.error('Você não tem permissão para alterar os lançamentos selecionados.')
+      return
+    }
+    const idsToUpdate = permittedTxs.map((t) => t.id)
     const count = idsToUpdate.length
     setIsBulkUpdating(true)
     setSelectedIds([]) // deselect immediately for fluid UI
@@ -1506,24 +1538,39 @@ export default function TransactionsPage() {
                   {/* Actions */}
                   <td className="py-3.5 px-4 text-center">
                     <div className="flex items-center justify-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleEdit(tx)}
-                        className="h-8 w-8 text-slate-500 hover:text-indigo-600 rounded-lg"
-                        title="Editar lançamento"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDeletePrompt(tx)}
-                        className="h-8 w-8 text-slate-500 hover:text-rose-600 rounded-lg"
-                        title="Excluir lançamento"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      {canManageSingleTx(tx) ? (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEdit(tx)}
+                            className="h-8 w-8 text-slate-500 hover:text-indigo-600 rounded-lg"
+                            title="Editar lançamento"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeletePrompt(tx)}
+                            className="h-8 w-8 text-slate-500 hover:text-rose-600 rounded-lg"
+                            title="Excluir lançamento"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </>
+                      ) : (
+                        <span
+                          className="text-[11px] text-slate-400 italic px-2 py-1 select-none"
+                          title={
+                            isViewer
+                              ? 'Visualizadores não podem editar ou excluir lançamentos.'
+                              : 'Você só pode editar ou excluir lançamentos criados por você mesmo.'
+                          }
+                        >
+                          Apenas leitura
+                        </span>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1641,20 +1688,26 @@ export default function TransactionsPage() {
                     {formatCurrency(tx.amount)}
                   </p>
                   <div className="flex items-center justify-end gap-1 mt-1.5">
-                    <button
-                      onClick={() => handleEdit(tx)}
-                      className="p-1 text-slate-400 hover:text-indigo-600"
-                      title="Editar"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDeletePrompt(tx)}
-                      className="p-1 text-slate-400 hover:text-rose-600"
-                      title="Excluir"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {canManageSingleTx(tx) ? (
+                      <>
+                        <button
+                          onClick={() => handleEdit(tx)}
+                          className="p-1 text-slate-400 hover:text-indigo-600"
+                          title="Editar"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeletePrompt(tx)}
+                          className="p-1 text-slate-400 hover:text-rose-600"
+                          title="Excluir"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 italic">Leitura</span>
+                    )}
                   </div>
                 </div>
               </div>
