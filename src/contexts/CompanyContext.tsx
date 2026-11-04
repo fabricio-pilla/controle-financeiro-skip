@@ -32,6 +32,17 @@ interface CompanyContextType {
   transactions: Transaction[]
   isLoading: boolean
   isCompanyLoading: boolean
+  isTransactionsLoading: boolean
+
+  // Month-based transaction loading & cache
+  loadTransactionsForMonth: (
+    monthStr: string,
+    options?: { force?: boolean },
+  ) => Promise<Transaction[]>
+  loadTransactionsForMonths: (months: string[]) => Promise<Transaction[]>
+  loadAllTransactions: (options?: { force?: boolean }) => Promise<Transaction[]>
+  searchTransactionsServer: (term: string) => Promise<Transaction[]>
+  invalidateTransactionsCache: () => void
 
   // Permissions helpers
   isOwner: boolean
@@ -175,10 +186,221 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCompanyLoading, setIsCompanyLoading] = useState(false)
+  const [isTransactionsLoading, setIsTransactionsLoading] = useState(false)
+
+  // Cache em memória de transações por mês: Record<"YYYY-MM", Transaction[]>
+  // e flag para checar se todos os meses já foram carregados
+  const monthCacheRef = useRef<Map<string, Transaction[]>>(new Map())
+  const allLoadedRef = useRef<boolean>(false)
+  // Cache de metadados prontos para evitar requisições repetidas ao buscar transações
+  const metadataCacheRef = useRef<{
+    accounts: Record<string, Account>
+    categories: Record<string, Category>
+    subcategories: Record<string, Subcategory>
+    users: Record<string, User>
+  }>({
+    accounts: {},
+    categories: {},
+    subcategories: {},
+    users: {},
+  })
+
+  // Sincroniza metadataCacheRef sempre que contas/categorias/membros mudarem
+  useEffect(() => {
+    const accMap: Record<string, Account> = {}
+    accounts.forEach((a) => {
+      accMap[a.id] = a
+    })
+    const catMap: Record<string, Category> = {}
+    categories.forEach((c) => {
+      catMap[c.id] = c
+    })
+    const subMap: Record<string, Subcategory> = {}
+    subcategories.forEach((s) => {
+      subMap[s.id] = s
+    })
+    const userMap: Record<string, User> = {}
+    members.forEach((m) => {
+      if (m.user?.id) {
+        userMap[m.user.id] = m.user
+      } else if (m.user_id) {
+        userMap[m.user_id] = {
+          id: m.user_id,
+          email: m.email || m.invited_email || '',
+          name: m.email || '',
+          created_at: m.created_at,
+        }
+      }
+    })
+    metadataCacheRef.current = {
+      accounts: accMap,
+      categories: catMap,
+      subcategories: subMap,
+      users: userMap,
+    }
+  }, [accounts, categories, subcategories, members])
 
   const activeCompanyId = currentCompany?.id
 
   const ACTIVE_CONTROL_KEY = 'cf_active_control_id'
+
+  const invalidateTransactionsCache = useCallback(() => {
+    monthCacheRef.current.clear()
+    allLoadedRef.current = false
+  }, [])
+
+  // Helper para mesclar transações novas na lista do estado sem duplicatas
+  const mergeTransactionsIntoState = useCallback((newTxs: Transaction[]) => {
+    setTransactions((prev) => {
+      const map = new Map<string, Transaction>()
+      // Coloca existentes
+      prev.forEach((t) => map.set(t.id, t))
+      // Atualiza / insere novos
+      newTxs.forEach((t) => map.set(t.id, t))
+      const combined = Array.from(map.values())
+      // Ordenação decrescente por data/criação como padrão da lista de dados
+      combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      return combined
+    })
+  }, [])
+
+  // Carrega transações de um mês específico ("YYYY-MM") usando cache
+  const loadTransactionsForMonth = useCallback(
+    async (monthStr: string, options?: { force?: boolean }): Promise<Transaction[]> => {
+      if (!activeCompanyId) return []
+      if (!options?.force && monthCacheRef.current.has(monthStr)) {
+        return monthCacheRef.current.get(monthStr)!
+      }
+
+      setIsTransactionsLoading(true)
+      try {
+        const txs = await skipCloud.getTransactions(activeCompanyId, {
+          month: monthStr,
+          caches: metadataCacheRef.current,
+        })
+        monthCacheRef.current.set(monthStr, txs)
+        mergeTransactionsIntoState(txs)
+        return txs
+      } catch (err) {
+        console.warn(`[CompanyContext] Falha ao carregar mês ${monthStr}:`, err)
+        return []
+      } finally {
+        setIsTransactionsLoading(false)
+      }
+    },
+    [activeCompanyId, mergeTransactionsIntoState],
+  )
+
+  // Carrega transações de múltiplos meses em paralelo
+  const loadTransactionsForMonths = useCallback(
+    async (months: string[]): Promise<Transaction[]> => {
+      if (!activeCompanyId || months.length === 0) return []
+      const uncached = months.filter((m) => !monthCacheRef.current.has(m))
+      if (uncached.length === 0) {
+        const all: Transaction[] = []
+        months.forEach((m) => {
+          const cached = monthCacheRef.current.get(m)
+          if (cached) all.push(...cached)
+        })
+        return all
+      }
+
+      setIsTransactionsLoading(true)
+      try {
+        const results = await Promise.all(
+          uncached.map((m) =>
+            skipCloud
+              .getTransactions(activeCompanyId, {
+                month: m,
+                caches: metadataCacheRef.current,
+              })
+              .then((txs) => {
+                monthCacheRef.current.set(m, txs)
+                return txs
+              })
+              .catch(() => [] as Transaction[]),
+          ),
+        )
+        const flattened = results.flat()
+        mergeTransactionsIntoState(flattened)
+
+        const all: Transaction[] = []
+        months.forEach((m) => {
+          const cached = monthCacheRef.current.get(m)
+          if (cached) all.push(...cached)
+        })
+        return all
+      } finally {
+        setIsTransactionsLoading(false)
+      }
+    },
+    [activeCompanyId, mergeTransactionsIntoState],
+  )
+
+  // Carrega todos os lançamentos (quando o usuário escolhe "Todos os Meses" ou exportação)
+  const loadAllTransactions = useCallback(
+    async (options?: { force?: boolean }): Promise<Transaction[]> => {
+      if (!activeCompanyId) return []
+      if (!options?.force && allLoadedRef.current) {
+        return transactions
+      }
+
+      setIsTransactionsLoading(true)
+      try {
+        const txs = await skipCloud.getTransactions(activeCompanyId, {
+          all: true,
+          caches: metadataCacheRef.current,
+        })
+        allLoadedRef.current = true
+        // Popula cache de meses com os dados recebidos
+        const byMonth = new Map<string, Transaction[]>()
+        txs.forEach((tx) => {
+          const eff = tx.payment_date || tx.date
+          if (eff && eff.length >= 7) {
+            const ym = eff.substring(0, 7)
+            if (/^\d{4}-\d{2}$/.test(ym)) {
+              if (!byMonth.has(ym)) byMonth.set(ym, [])
+              byMonth.get(ym)!.push(tx)
+            }
+          }
+        })
+        byMonth.forEach((list, ym) => {
+          monthCacheRef.current.set(ym, list)
+        })
+
+        setTransactions(txs)
+        return txs
+      } catch (err) {
+        console.warn('[CompanyContext] Falha ao carregar todos os lançamentos:', err)
+        return transactions
+      } finally {
+        setIsTransactionsLoading(false)
+      }
+    },
+    [activeCompanyId, transactions],
+  )
+
+  // Busca remota de lançamentos por descrição ou anotações (server-side)
+  const searchTransactionsServer = useCallback(
+    async (term: string): Promise<Transaction[]> => {
+      if (!activeCompanyId || !term.trim()) return []
+      setIsTransactionsLoading(true)
+      try {
+        const txs = await skipCloud.getTransactions(activeCompanyId, {
+          search: term.trim(),
+          caches: metadataCacheRef.current,
+        })
+        mergeTransactionsIntoState(txs)
+        return txs
+      } catch (err) {
+        console.warn('[CompanyContext] Falha ao buscar transações no servidor:', err)
+        return []
+      } finally {
+        setIsTransactionsLoading(false)
+      }
+    },
+    [activeCompanyId, mergeTransactionsIntoState],
+  )
 
   // Carrega sempre o controle único principal da aplicação
   const reloadUserCompanies = useCallback(async () => {
@@ -191,6 +413,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setCategories([])
       setSubcategories([])
       setTransactions([])
+      invalidateTransactionsCache()
       setIsLoading(false)
       return
     }
@@ -243,15 +466,24 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setUserCompanies([targetComp])
         setCurrentCompany(targetComp)
 
-        // Carrega papel e dados do controle único com resiliência: cada consulta
-        // tem fallback isolado para nunca travar a inicialização do app
-        const [role, mems, accs, cats, subcats, txs] = await Promise.all([
+        // Limpa cache se mudou de controle
+        invalidateTransactionsCache()
+
+        // Determina o mês corrente no boot ("YYYY-MM")
+        const now = new Date()
+        const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+
+        // Carrega papel e metadados do controle uma única vez em paralelo,
+        // buscando transações apenas do mês corrente no boot
+        const [role, mems, accs, cats, subcats, currentMonthTxs] = await Promise.all([
           skipCloud.getUserRoleInCompany(targetComp.id, userId).catch(() => 'owner' as UserRole),
           skipCloud.getCompanyMembers(targetComp.id).catch(() => [] as CompanyMember[]),
           skipCloud.getAccounts(targetComp.id).catch(() => [] as Account[]),
           skipCloud.getCategories(targetComp.id).catch(() => [] as Category[]),
           skipCloud.getSubcategories(targetComp.id).catch(() => [] as Subcategory[]),
-          skipCloud.getTransactions(targetComp.id).catch(() => [] as Transaction[]),
+          skipCloud
+            .getTransactions(targetComp.id, { month: currentYm })
+            .catch(() => [] as Transaction[]),
         ])
 
         setCurrentRole(role || 'owner')
@@ -259,7 +491,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setAccounts(accs || [])
         setCategories(cats || [])
         setSubcategories(subcats || [])
-        setTransactions(txs || [])
+        setTransactions(currentMonthTxs || [])
+        monthCacheRef.current.set(currentYm, currentMonthTxs || [])
       } else {
         setUserCompanies([])
         setCurrentCompany(null)
@@ -271,7 +504,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [userId])
+  }, [userId, invalidateTransactionsCache])
 
   useEffect(() => {
     reloadUserCompanies()
@@ -308,13 +541,19 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         // Fallback silencioso
       }
 
+      invalidateTransactionsCache()
+      const now = new Date()
+      const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+
       const [role, mems, accs, cats, subcats, txs] = await Promise.all([
         skipCloud.getUserRoleInCompany(finalControlId, userId).catch(() => null),
         skipCloud.getCompanyMembers(finalControlId).catch(() => [] as CompanyMember[]),
         skipCloud.getAccounts(finalControlId).catch(() => [] as Account[]),
         skipCloud.getCategories(finalControlId).catch(() => [] as Category[]),
         skipCloud.getSubcategories(finalControlId).catch(() => [] as Subcategory[]),
-        skipCloud.getTransactions(finalControlId).catch(() => [] as Transaction[]),
+        skipCloud
+          .getTransactions(finalControlId, { month: currentYm })
+          .catch(() => [] as Transaction[]),
       ])
 
       setCurrentCompany(resolvedComp)
@@ -325,12 +564,13 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setCategories(cats || [])
       setSubcategories(subcats || [])
       setTransactions(txs || [])
+      monthCacheRef.current.set(currentYm, txs || [])
     } catch {
       // Falha silenciosa sem expor 404/erros no console
     } finally {
       setIsCompanyLoading(false)
     }
-  }, [activeCompanyId, currentCompany?.id, userId])
+  }, [activeCompanyId, currentCompany?.id, userId, invalidateTransactionsCache])
 
   const selectCompany = useCallback(
     async (companyId?: string): Promise<boolean> => {
@@ -369,19 +609,24 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setCurrentCompany(comp)
         setUserCompanies([comp])
         setCurrentRole(role || 'owner')
+        invalidateTransactionsCache()
+
+        const now = new Date()
+        const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
         const [mems, accs, cats, subcats, txs] = await Promise.all([
           skipCloud.getCompanyMembers(comp.id).catch(() => [] as CompanyMember[]),
           skipCloud.getAccounts(comp.id).catch(() => [] as Account[]),
           skipCloud.getCategories(comp.id).catch(() => [] as Category[]),
           skipCloud.getSubcategories(comp.id).catch(() => [] as Subcategory[]),
-          skipCloud.getTransactions(comp.id).catch(() => [] as Transaction[]),
+          skipCloud.getTransactions(comp.id, { month: currentYm }).catch(() => [] as Transaction[]),
         ])
         setMembers(mems || [])
         setAccounts(accs || [])
         setCategories(cats || [])
         setSubcategories(subcats || [])
         setTransactions(txs || [])
+        monthCacheRef.current.set(currentYm, txs || [])
         return true
       } catch {
         return false
@@ -389,7 +634,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         setIsCompanyLoading(false)
       }
     },
-    [userId, currentCompany?.id],
+    [userId, currentCompany?.id, invalidateTransactionsCache],
   )
 
   const createCompany = useCallback(

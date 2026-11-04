@@ -1410,54 +1410,121 @@ class SkipCloudService {
   }
 
   // --- TRANSACTIONS ---
-  async getTransactions(companyId: string): Promise<Transaction[]> {
+  async getTransactions(
+    companyId: string,
+    options?: {
+      month?: string // "YYYY-MM"
+      startDate?: string // "YYYY-MM-DD"
+      endDate?: string // "YYYY-MM-DD"
+      search?: string
+      all?: boolean
+      caches?: {
+        accounts?: Record<string, Account>
+        categories?: Record<string, Category>
+        subcategories?: Record<string, Subcategory>
+        users?: Record<string, User>
+      }
+    },
+  ): Promise<Transaction[]> {
     try {
-      // Busca paralela otimizada:
-      // - batch: 2000 em getFullList para carregar tudo em uma só requisição sem múltiplas páginas pequenas
-      // - fields enxutos selecionando apenas as colunas necessárias para reduzir payload de rede
-      const [recs, accs, cats, mems, subcats] = await Promise.all([
-        pb.collection('transactions').getFullList({
-          batch: 2000,
-          filter: `control_id="${companyId}"`,
-          sort: '-date,-created',
-          fields:
-            'id,control_id,account_id,category_id,subcategory_id,user_id,description,amount,type,date,payment_date,paid,is_recurring,recurring,recurrence_type,recurrence_period,installment_total,installments_total,installment_number,parent_transaction_id,notes,created,expand.account_id.*,expand.category_id.*,expand.subcategory_id.*,expand.user_id.*',
-          expand: 'account_id,category_id,subcategory_id,user_id',
-        }),
-        pb.collection('accounts').getFullList({
-          batch: 500,
-          filter: `control_id="${companyId}"`,
-          fields:
-            'id,control_id,name,type,balance,limit,color,bank,due_day,closing_day,is_primary,created',
-        }),
-        pb.collection('categories').getFullList({
-          batch: 500,
-          filter: `control_id="${companyId}"`,
-          fields: 'id,control_id,name,type,color,icon,is_default,created',
-        }),
-        pb.collection('control_members').getFullList({
-          batch: 500,
-          filter: `control_id="${companyId}"`,
-          fields: 'id,control_id,user_id,email,role,status,invited_email,created,expand.user_id.*',
-          expand: 'user_id',
-        }),
-        pb.collection('subcategories').getFullList({
-          batch: 500,
-          filter: `control_id="${companyId}"`,
-          fields: 'id,control_id,category_id,name,color,icon,created,expand.category_id.*',
-        }),
-      ])
-      const accountsCache: Record<string, Account> = {}
-      accs.forEach((a: any) => (accountsCache[a.id] = mapAccount(a)))
-      const categoriesCache: Record<string, Category> = {}
-      cats.forEach((c: any) => (categoriesCache[c.id] = mapCategory(c)))
-      const subcategoriesCache: Record<string, Subcategory> = {}
-      subcats.forEach((s: any) => (subcategoriesCache[s.id] = mapSubcategory(s, categoriesCache)))
-      const usersCache: Record<string, User> = {}
-      mems.forEach((m: any) => {
-        if (m.user_id)
-          usersCache[m.user_id] = mapMember(m).user || mapUser({ id: m.user_id, email: m.email })
+      const filters: string[] = [`control_id="${companyId}"`]
+
+      if (options?.month && /^\d{4}-\d{2}$/.test(options.month)) {
+        const [yearStr, monthStr] = options.month.split('-')
+        const y = parseInt(yearStr, 10)
+        const m = parseInt(monthStr, 10)
+        const lastDay = new Date(y, m, 0).getDate()
+        const start = `${options.month}-01 00:00:00`
+        const end = `${options.month}-${String(lastDay).padStart(2, '0')} 23:59:59`
+        // Considera data de pagamento (payment_date com fallback para date)
+        filters.push(
+          `((payment_date >= "${start}" && payment_date <= "${end}") || (payment_date = "" && date >= "${start}" && date <= "${end}"))`,
+        )
+      } else if (options?.startDate && options?.endDate) {
+        const start = `${options.startDate} 00:00:00`
+        const end = `${options.endDate} 23:59:59`
+        filters.push(
+          `((payment_date >= "${start}" && payment_date <= "${end}") || (payment_date = "" && date >= "${start}" && date <= "${end}"))`,
+        )
+      }
+
+      if (options?.search && options.search.trim()) {
+        const cleanTerm = options.search.trim().replace(/["\\]/g, '\\$&')
+        filters.push(`(description ~ "${cleanTerm}" || notes ~ "${cleanTerm}")`)
+      }
+
+      const txFilter = filters.join(' && ')
+
+      // Reutiliza caches existentes se fornecidos para não duplicar requisições
+      const hasCaches =
+        options?.caches &&
+        options.caches.accounts &&
+        options.caches.categories &&
+        options.caches.subcategories &&
+        options.caches.users
+
+      const txPromise = pb.collection('transactions').getFullList({
+        batch: 2000,
+        filter: txFilter,
+        sort: '-date,-created',
+        fields:
+          'id,control_id,account_id,category_id,subcategory_id,user_id,description,amount,type,date,payment_date,paid,is_recurring,recurring,recurrence_type,recurrence_period,installment_total,installments_total,installment_number,parent_transaction_id,notes,created,expand.account_id.*,expand.category_id.*,expand.subcategory_id.*,expand.user_id.*',
+        expand: 'account_id,category_id,subcategory_id,user_id',
       })
+
+      let recs: any[]
+      let accountsCache: Record<string, Account>
+      let categoriesCache: Record<string, Category>
+      let subcategoriesCache: Record<string, Subcategory>
+      let usersCache: Record<string, User>
+
+      if (hasCaches && options?.caches) {
+        recs = await txPromise
+        accountsCache = options.caches.accounts || {}
+        categoriesCache = options.caches.categories || {}
+        subcategoriesCache = options.caches.subcategories || {}
+        usersCache = options.caches.users || {}
+      } else {
+        const [txList, accs, cats, mems, subcats] = await Promise.all([
+          txPromise,
+          pb.collection('accounts').getFullList({
+            batch: 500,
+            filter: `control_id="${companyId}"`,
+            fields:
+              'id,control_id,name,type,balance,limit,color,bank,due_day,closing_day,is_primary,created',
+          }),
+          pb.collection('categories').getFullList({
+            batch: 500,
+            filter: `control_id="${companyId}"`,
+            fields: 'id,control_id,name,type,color,icon,is_default,created',
+          }),
+          pb.collection('control_members').getFullList({
+            batch: 500,
+            filter: `control_id="${companyId}"`,
+            fields:
+              'id,control_id,user_id,email,role,status,invited_email,created,expand.user_id.*',
+            expand: 'user_id',
+          }),
+          pb.collection('subcategories').getFullList({
+            batch: 500,
+            filter: `control_id="${companyId}"`,
+            fields: 'id,control_id,category_id,name,color,icon,created,expand.category_id.*',
+          }),
+        ])
+        recs = txList
+        accountsCache = {}
+        accs.forEach((a: any) => (accountsCache[a.id] = mapAccount(a)))
+        categoriesCache = {}
+        cats.forEach((c: any) => (categoriesCache[c.id] = mapCategory(c)))
+        subcategoriesCache = {}
+        subcats.forEach((s: any) => (subcategoriesCache[s.id] = mapSubcategory(s, categoriesCache)))
+        usersCache = {}
+        mems.forEach((m: any) => {
+          if (m.user_id)
+            usersCache[m.user_id] = mapMember(m).user || mapUser({ id: m.user_id, email: m.email })
+        })
+      }
+
       const txs = recs.map((r: any) =>
         mapTransaction(r, accountsCache, categoriesCache, usersCache, subcategoriesCache),
       )
