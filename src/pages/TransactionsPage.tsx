@@ -170,7 +170,7 @@ export default function TransactionsPage() {
   const [closeMonthOpen, setCloseMonthOpen] = useState(false)
 
   // Modals state com callbacks estáveis
-  const [createOpen, setCreateOpen] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
   const [aiModalOpen, setAiModalOpen] = useState(false)
   const handleOpenAiModal = React.useCallback(() => {
     setAiModalOpen(true)
