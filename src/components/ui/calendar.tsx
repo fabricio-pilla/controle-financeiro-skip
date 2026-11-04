@@ -1,7 +1,8 @@
-/* Calendar Component primitives - A component that displays a calendar - from shadcn/ui (exposes Calendar, CalendarProps) */
+/* Calendar Component primitives - configured for Brazilian standard (pt-BR, week starts on Sunday) */
 import * as React from 'react'
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import { DayButton, DayPicker, getDefaultClassNames } from 'react-day-picker'
+import { ptBR } from 'date-fns/locale'
 
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -14,6 +15,7 @@ function Calendar({
   buttonVariant = 'ghost',
   formatters,
   components,
+  locale = ptBR,
   ...props
 }: React.ComponentProps<typeof DayPicker> & {
   buttonVariant?: React.ComponentProps<typeof Button>['variant']
@@ -22,6 +24,7 @@ function Calendar({
 
   return (
     <DayPicker
+      locale={locale}
       showOutsideDays={showOutsideDays}
       className={cn(
         'bg-background group/calendar p-3 [--cell-size:2rem] [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent',
@@ -31,7 +34,8 @@ function Calendar({
       )}
       captionLayout={captionLayout}
       formatters={{
-        formatMonthDropdown: (date) => date.toLocaleString('default', { month: 'short' }),
+        formatMonthDropdown: (date) =>
+          date.toLocaleString('pt-BR', { month: 'short' }).replace('.', ''),
         ...formatters,
       }}
       classNames={{
@@ -53,7 +57,7 @@ function Calendar({
           defaultClassNames.button_next,
         ),
         month_caption: cn(
-          'flex h-[--cell-size] w-full items-center justify-center px-[--cell-size]',
+          'flex h-[--cell-size] w-full items-center justify-center px-[--cell-size] capitalize',
           defaultClassNames.month_caption,
         ),
         dropdowns: cn(
@@ -66,7 +70,7 @@ function Calendar({
         ),
         dropdown: cn('absolute inset-0 opacity-0', defaultClassNames.dropdown),
         caption_label: cn(
-          'select-none font-medium',
+          'select-none font-medium capitalize',
           captionLayout === 'label'
             ? 'text-sm'
             : '[&>svg]:text-muted-foreground flex h-8 items-center gap-1 rounded-md pl-2 pr-1 text-sm [&>svg]:size-3.5',
@@ -75,7 +79,7 @@ function Calendar({
         table: 'w-full border-collapse',
         weekdays: cn('flex', defaultClassNames.weekdays),
         weekday: cn(
-          'text-muted-foreground flex-1 select-none rounded-md text-[0.8rem] font-normal',
+          'text-muted-foreground flex-1 select-none rounded-md text-[0.8rem] font-normal capitalize',
           defaultClassNames.weekday,
         ),
         week: cn('mt-2 flex w-full', defaultClassNames.week),
@@ -92,7 +96,7 @@ function Calendar({
         range_middle: cn('rounded-full', defaultClassNames.range_middle),
         range_end: cn('bg-accent rounded-full', defaultClassNames.range_end),
         today: cn(
-          'bg-accent text-accent-foreground rounded-full data-[selected=true]:rounded-full',
+          'bg-accent text-accent-foreground rounded-full data-[selected=true]:rounded-full font-bold',
           defaultClassNames.today,
         ),
         outside: cn(
@@ -104,24 +108,24 @@ function Calendar({
         ...classNames,
       }}
       components={{
-        Root: ({ className, rootRef, ...props }) => {
-          return <div data-slot="calendar" ref={rootRef} className={cn(className)} {...props} />
+        Root: ({ className, rootRef, ...rootProps }) => {
+          return <div data-slot="calendar" ref={rootRef} className={cn(className)} {...rootProps} />
         },
-        Chevron: ({ className, orientation, ...props }) => {
+        Chevron: ({ className, orientation, ...chevronProps }) => {
           if (orientation === 'left') {
-            return <ChevronLeftIcon className={cn('size-4', className)} {...props} />
+            return <ChevronLeftIcon className={cn('size-4', className)} {...chevronProps} />
           }
 
           if (orientation === 'right') {
-            return <ChevronRightIcon className={cn('size-4', className)} {...props} />
+            return <ChevronRightIcon className={cn('size-4', className)} {...chevronProps} />
           }
 
-          return <ChevronDownIcon className={cn('size-4', className)} {...props} />
+          return <ChevronDownIcon className={cn('size-4', className)} {...chevronProps} />
         },
         DayButton: CalendarDayButton,
-        WeekNumber: ({ children, ...props }) => {
+        WeekNumber: ({ children, ...weekProps }) => {
           return (
-            <td {...props}>
+            <td {...weekProps}>
               <div className="flex size-[--cell-size] items-center justify-center text-center">
                 {children}
               </div>
@@ -153,7 +157,7 @@ function CalendarDayButton({
       ref={ref}
       variant="ghost"
       size="icon"
-      data-day={day.date.toLocaleDateString()}
+      data-day={day.date.toLocaleDateString('pt-BR')}
       data-selected-single={
         modifiers.selected &&
         !modifiers.range_start &&

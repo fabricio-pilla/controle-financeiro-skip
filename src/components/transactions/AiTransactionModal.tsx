@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { DatePicker } from '@/components/common/DatePicker'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
@@ -726,12 +727,10 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
                     <Calendar className="w-3.5 h-3.5 text-slate-500" />
                     Data da Compra *
                   </Label>
-                  <Input
+                  <DatePicker
                     id="ai-date"
-                    type="date"
                     value={date}
-                    onChange={(e) => {
-                      const newDate = e.target.value
+                    onChange={(newDate) => {
                       setDate(newDate)
                       const acc = accounts.find((a) => a.id === accountId) || null
                       if (acc && acc.type === 'credito') {
@@ -740,7 +739,6 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
                         setPaymentDate(newDate)
                       }
                     }}
-                    className="rounded-xl h-11"
                     required
                   />
                 </div>
@@ -753,12 +751,10 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
                     <Calendar className="w-3.5 h-3.5 text-slate-500" />
                     Data de Pagamento *
                   </Label>
-                  <Input
+                  <DatePicker
                     id="ai-payment-date"
-                    type="date"
                     value={paymentDate}
-                    onChange={(e) => setPaymentDate(e.target.value)}
-                    className="rounded-xl h-11"
+                    onChange={(newPayDate) => setPaymentDate(newPayDate)}
                     required
                   />
                 </div>

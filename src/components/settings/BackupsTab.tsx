@@ -383,8 +383,20 @@ export function BackupsTab({ controlId, isAdmin }: BackupsTabProps) {
                 <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
                   <span className="flex items-center gap-1">
                     <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                    {new Date(currentBackup.updated || currentBackup.created).toLocaleString(
+                    {new Date(currentBackup.updated || currentBackup.created).toLocaleDateString(
                       'pt-BR',
+                      {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      },
+                    )}{' '}
+                    {new Date(currentBackup.updated || currentBackup.created).toLocaleTimeString(
+                      'pt-BR',
+                      {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      },
                     )}
                   </span>
                   <span>•</span>
@@ -489,7 +501,13 @@ export function BackupsTab({ controlId, isAdmin }: BackupsTabProps) {
                       )}
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                      <span>{new Date(b.created).toLocaleDateString('pt-BR')}</span>
+                      <span>
+                        {new Date(b.created).toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                        })}
+                      </span>
                       <span>•</span>
                       <span>{formatBytes(b.size_bytes)}</span>
                       {b.metadata?.counts?.transactions !== undefined && (

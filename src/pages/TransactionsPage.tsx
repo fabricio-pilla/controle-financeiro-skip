@@ -49,6 +49,7 @@ import {
   RefreshCw,
   Loader2,
 } from 'lucide-react'
+import { MonthNavigator } from '@/components/common/MonthNavigator'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -902,32 +903,17 @@ export default function TransactionsPage() {
         </div>
 
         {/* Advanced Filter Row (Month and Status) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-          {/* Month Selector Filter */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 pt-2 border-t border-slate-100 items-center">
+          {/* Month Calendar Navigation */}
           <div className="flex items-center gap-2">
-            {isLoadingMonth ? (
-              <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
-            ) : (
-              <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
-            )}
-            <Select
+            <MonthNavigator
               value={monthFilter}
-              onValueChange={(v) => {
-                setMonthFilter(v)
+              onChange={(nextMonth) => {
+                setMonthFilter(nextMonth)
               }}
-            >
-              <SelectTrigger className="rounded-xl h-10 text-sm">
-                <SelectValue placeholder="Filtrar por Mês" />
-              </SelectTrigger>
-              <SelectContent className="rounded-xl max-h-64">
-                <SelectItem value="all">Todos os Meses</SelectItem>
-                {availableMonths.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              isLoading={isLoadingMonth}
+              className="w-full justify-between"
+            />
           </div>
 
           {/* Status Filter (Pago / Recebido / Pendente) */}

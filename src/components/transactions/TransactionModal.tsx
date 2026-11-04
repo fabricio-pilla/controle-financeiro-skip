@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { DatePicker } from '@/components/common/DatePicker'
 import {
   Select,
   SelectContent,
@@ -610,12 +611,10 @@ export function TransactionModal({
               <Label htmlFor="tx-date" className="text-sm font-medium text-slate-700">
                 Data da Compra *
               </Label>
-              <Input
+              <DatePicker
                 id="tx-date"
-                type="date"
                 value={date}
-                onChange={(e) => {
-                  const newDate = e.target.value
+                onChange={(newDate) => {
                   setDate(newDate)
                   const acc = accounts.find((a) => a.id === accountId) || null
                   if (acc && acc.type === 'credito') {
@@ -624,7 +623,6 @@ export function TransactionModal({
                     setPaymentDate(newDate)
                   }
                 }}
-                className="rounded-xl h-11"
                 required
               />
             </div>
@@ -633,12 +631,10 @@ export function TransactionModal({
               <Label htmlFor="tx-payment-date" className="text-sm font-medium text-slate-700">
                 Data de Pagamento *
               </Label>
-              <Input
+              <DatePicker
                 id="tx-payment-date"
-                type="date"
                 value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
-                className="rounded-xl h-11"
+                onChange={(newPayDate) => setPaymentDate(newPayDate)}
                 required
               />
             </div>
