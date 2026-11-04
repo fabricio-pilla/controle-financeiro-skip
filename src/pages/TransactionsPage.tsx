@@ -9,6 +9,7 @@ import {
   RecurrencePropagationModal,
   PropagationChoice,
 } from '@/components/transactions/RecurrencePropagationModal'
+import { CloseMonthModal } from '@/components/dashboard/CloseMonthModal'
 import {
   isInstallmentTransaction,
   isRecurringTransaction,
@@ -165,10 +166,12 @@ export default function TransactionsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [isBulkUpdating, setIsBulkUpdating] = useState(false)
 
-  // Modals state com callbacks estáveis
-  const [modalOpen, setModalOpen] = useState(false)
-  const [aiModalOpen, setAiModalOpen] = useState(false)
+  // Close Month Modal state
+  const [closeMonthOpen, setCloseMonthOpen] = useState(false)
 
+  // Modals state com callbacks estáveis
+  const [createOpen, setCreateOpen] = useState(false)
+  const [aiModalOpen, setAiModalOpen] = useState(false)
   const handleOpenAiModal = React.useCallback(() => {
     setAiModalOpen(true)
   }, [])
@@ -765,6 +768,16 @@ export default function TransactionsPage() {
 
         {canManageTransactions && (
           <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              onClick={() => setCloseMonthOpen(true)}
+              variant="outline"
+              title="Revisar pendências e quitar mês anterior em lote"
+              className="rounded-xl h-11 px-3.5 font-semibold border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/50 flex items-center gap-2 transition-colors"
+            >
+              <Calendar className="w-4 h-4 text-indigo-500" />
+              <span className="hidden lg:inline">Fechar Mês</span>
+              <span className="lg:hidden">Fechar</span>
+            </Button>
             <Button
               onClick={handleOpenGenerateConfirm}
               disabled={isGeneratingRecurring}
@@ -1713,6 +1726,50 @@ export default function TransactionsPage() {
           isSubmitting={isDeleting}
         />
       )}
+
+      {/* Modal Fechar o Mês */}
+      <CloseMonthModal
+        open={closeMonthOpen}
+        onOpenChange={setCloseMonthOpen}
+        transactions={transactions}
+        targetMonthYm={(() => {
+          const d = new Date()
+          const yr = d.getFullYear()
+          const mo = d.getMonth()
+          const pYr = mo === 0 ? yr - 1 : yr
+          const pMo = mo === 0 ? 12 : mo
+          return `${pYr}-${String(pMo).padStart(2, '0')}`
+        })()}
+        targetMonthLabel={(() => {
+          const monthNames = [
+            'Janeiro',
+            'Fevereiro',
+            'Março',
+            'Abril',
+            'Maio',
+            'Junho',
+            'Julho',
+            'Agosto',
+            'Setembro',
+            'Outubro',
+            'Novembro',
+            'Dezembro',
+          ]
+          const d = new Date()
+          const yr = d.getFullYear()
+          const mo = d.getMonth()
+          const pYr = mo === 0 ? yr - 1 : yr
+          const pMo = mo === 0 ? 12 : mo
+          return `${monthNames[pMo - 1]} de ${pYr}`
+        })()}
+        canManageTransactions={canManageTransactions}
+        onBatchMarkPaid={async (ids) => {
+          await setTransactionsPaidStatus(ids, true)
+        }}
+        onSingleMarkPaid={async (id) => {
+          await setTransactionsPaidStatus([id], true)
+        }}
+      />
     </div>
   )
 }

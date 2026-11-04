@@ -6,6 +6,10 @@ import { AnimatedCounter } from '@/components/common/AnimatedCounter'
 import { DynamicIcon } from '@/components/common/DynamicIcon'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
 import { AiTransactionModal } from '@/components/transactions/AiTransactionModal'
+import { DueAlertsBanner } from '@/components/dashboard/DueAlertsBanner'
+import { CategoryComparison } from '@/components/dashboard/CategoryComparison'
+import { ProjectedBalanceCard } from '@/components/dashboard/ProjectedBalanceCard'
+import { CloseMonthModal } from '@/components/dashboard/CloseMonthModal'
 import { formatCurrency, formatDateBR, getGreeting, getTxEffectiveDate } from '@/lib/formatters'
 import { isParentTransaction } from '@/lib/transaction-propagation'
 import { Transaction } from '@/types/database'
@@ -77,9 +81,12 @@ export default function Dashboard() {
     categories,
     transactions,
     canManageTransactions,
+    setTransactionsPaidStatus,
     loadTransactionsForMonths,
     loadAllTransactions,
   } = useCompany()
+
+  const [closeMonthOpen, setCloseMonthOpen] = useState(false)
   const navigate = useNavigate()
 
   // Período selecionado
@@ -155,9 +162,12 @@ export default function Dashboard() {
     const loadData = async () => {
       setIsLoadingPeriod(true)
       try {
+        // Garante sempre o mês atual e anterior no cache para alimentar alertas e fechamento de mês
+        const baseMonths = [curYm, prevYm]
+
         if (period === 'this_month') {
           // Garante os últimos 6 meses para o gráfico + mês atual e anterior para comparações
-          const monthsToEnsure = Array.from(new Set([...last6Months, curYm, prevYm]))
+          const monthsToEnsure = Array.from(new Set([...last6Months, ...baseMonths]))
           await loadTransactionsForMonths(monthsToEnsure)
         } else if (period === 'last_month') {
           // Mês passado + mês anterior a ele (2 meses atrás) + 6 meses do gráfico
@@ -693,6 +703,17 @@ export default function Dashboard() {
             </Select>
           </div>
 
+          <Button
+            variant="outline"
+            onClick={() => setCloseMonthOpen(true)}
+            className="rounded-xl h-10 px-3.5 text-xs font-semibold border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 shadow-xs"
+            title="Revisar pendências e fechar o mês anterior"
+          >
+            <Calendar className="w-4 h-4 text-indigo-600" />
+            <span className="hidden sm:inline">Fechar Mês</span>
+            <span className="sm:hidden">Fechar</span>
+          </Button>
+
           {canManageTransactions && (
             <Button
               onClick={handleOpenAiModal}
@@ -706,12 +727,21 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 4 Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Banner de Alertas de Vencimentos Próximos (Vencidos e próximos 7 dias) */}
+      <DueAlertsBanner
+        transactions={transactions}
+        canManageTransactions={canManageTransactions}
+        onMarkPaid={async (txId) => {
+          await setTransactionsPaidStatus([txId], true)
+        }}
+      />
+
+      {/* 5 Summary Cards: Saldo Total, Saldo Projetado, Receitas, Despesas, Economia */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Card 1: Saldo Total */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-slate-500">Saldo Total em Contas</span>
+            <span className="text-xs font-medium text-slate-500">Saldo Atual em Contas</span>
             <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
               <Wallet className="w-5 h-5" />
             </div>
@@ -727,7 +757,10 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Card 2: Receitas do Período (com realizado vs previsto e variação) */}
+        {/* Card 2: Saldo Projetado (Saldo Atual + Pendências Futuras Criadas) */}
+        <ProjectedBalanceCard currentBalance={totalBalance} transactions={transactions} />
+
+        {/* Card 3: Receitas do Período (com realizado vs previsto e variação) */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-slate-500">Receitas do Período</span>
@@ -937,6 +970,23 @@ export default function Dashboard() {
           </Link>
         </div>
       </div>
+
+      {/* Comparativo Mês a Mês por Categoria (Item 2) */}
+      <CategoryComparison
+        categories={categories}
+        transactions={transactions}
+        curYm={period === 'last_month' ? prevYm : curYm}
+        prevYm={
+          period === 'last_month'
+            ? (() => {
+                const d = new Date(prevMonthYear, prevMonthNum - 1 - 1, 1)
+                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+              })()
+            : prevYm
+        }
+        curPeriodLabel={period === 'last_month' ? 'Mês Passado' : 'Este Mês'}
+        prevPeriodLabel={period === 'last_month' ? '2 Meses Atrás' : 'Mês Anterior'}
+      />
 
       {/* Charts Section: 2/3 Evolution Chart + 1/3 Donut Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1542,6 +1592,38 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Modal Fechar o Mês */}
+      <CloseMonthModal
+        open={closeMonthOpen}
+        onOpenChange={setCloseMonthOpen}
+        transactions={transactions}
+        targetMonthYm={prevYm}
+        targetMonthLabel={(() => {
+          const monthNames = [
+            'Janeiro',
+            'Fevereiro',
+            'Março',
+            'Abril',
+            'Maio',
+            'Junho',
+            'Julho',
+            'Agosto',
+            'Setembro',
+            'Outubro',
+            'Novembro',
+            'Dezembro',
+          ]
+          return `${monthNames[prevMonthNum - 1]} de ${prevMonthYear}`
+        })()}
+        canManageTransactions={canManageTransactions}
+        onBatchMarkPaid={async (ids) => {
+          await setTransactionsPaidStatus(ids, true)
+        }}
+        onSingleMarkPaid={async (id) => {
+          await setTransactionsPaidStatus([id], true)
+        }}
+      />
 
       {/* Transaction Modals */}
       <TransactionModal open={newTxOpen} onOpenChange={setNewTxOpen} />
