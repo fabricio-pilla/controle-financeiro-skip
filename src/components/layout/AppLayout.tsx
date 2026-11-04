@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useRef, useEffect, type ReactNode } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -15,7 +15,13 @@ import {
   Menu,
   Sparkles,
   Wallet,
+  Search,
+  Loader2,
+  ArrowRight,
 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { formatCurrency, formatDateBR, getTxEffectiveDate } from '@/lib/formatters'
+import type { Transaction } from '@/types/database'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,12 +40,65 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { user, logout } = useAuth()
-  const { currentCompany, currentRole, canManageTransactions } = useCompany()
+  const { currentCompany, currentRole, canManageTransactions, searchTransactionsServer } =
+    useCompany()
   const navigate = useNavigate()
   const location = useLocation()
 
   const [aiTxOpen, setAiTxOpen] = useState(false)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+
+  // Topbar global search
+  const [globalSearchTerm, setGlobalSearchTerm] = useState('')
+  const [isSearchingGlobal, setIsSearchingGlobal] = useState(false)
+  const [searchResults, setSearchResults] = useState<Transaction[]>([])
+  const [searchDropdownOpen, setSearchDropdownOpen] = useState(false)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const term = globalSearchTerm.trim()
+    if (!term || term.length < 2) {
+      setSearchResults([])
+      setSearchDropdownOpen(false)
+      return
+    }
+
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setIsSearchingGlobal(true)
+      try {
+        const res = await searchTransactionsServer(term)
+        if (!cancelled) {
+          setSearchResults(res.slice(0, 8))
+          setSearchDropdownOpen(true)
+        }
+      } catch (err) {
+        console.warn('[AppLayout] Erro na busca global:', err)
+      } finally {
+        if (!cancelled) {
+          setIsSearchingGlobal(false)
+        }
+      }
+    }, 400)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [globalSearchTerm, searchTransactionsServer])
+
+  // Fecha dropdown ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setSearchDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
 
   const navItems = [
     {
@@ -246,6 +305,82 @@ export function AppLayout({ children }: AppLayoutProps) {
 
       {/* Main Content Area */}
       <main className="flex-1 md:pl-[260px] flex flex-col min-h-screen pb-20 md:pb-6">
+        {/* Desktop Topbar com Busca Global */}
+        <div className="hidden md:flex items-center justify-between px-8 py-3.5 bg-white/80 backdrop-blur-sm border-b border-slate-200/80 sticky top-0 z-20">
+          <div ref={searchContainerRef} className="relative w-full max-w-md">
+            <div className="relative">
+              {isSearchingGlobal ? (
+                <Loader2 className="w-4 h-4 text-indigo-500 animate-spin absolute left-3 top-1/2 -translate-y-1/2" />
+              ) : (
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              )}
+              <Input
+                placeholder="Buscar lançamento em qualquer mês..."
+                value={globalSearchTerm}
+                onChange={(e) => setGlobalSearchTerm(e.target.value)}
+                onFocus={() => {
+                  if (searchResults.length > 0) setSearchDropdownOpen(true)
+                }}
+                className="pl-9 pr-4 h-9 rounded-xl text-xs bg-slate-50/80 border-slate-200 focus:bg-white transition-colors"
+              />
+            </div>
+
+            {/* Dropdown de resultados da busca remota */}
+            {searchDropdownOpen && searchResults.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden z-50 max-h-80 overflow-y-auto divide-y divide-slate-100">
+                <div className="px-3 py-1.5 bg-slate-50 text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                  <span>Lançamentos encontrados no servidor</span>
+                  <span>{searchResults.length} resultados</span>
+                </div>
+                {searchResults.map((tx) => {
+                  const effDate = getTxEffectiveDate(tx)
+                  return (
+                    <button
+                      key={tx.id}
+                      onClick={() => {
+                        setSearchDropdownOpen(false)
+                        setGlobalSearchTerm('')
+                        const ym = effDate ? effDate.substring(0, 7) : 'all'
+                        navigate(
+                          `/lancamentos?month=${ym}&search=${encodeURIComponent(tx.description)}`,
+                        )
+                      }}
+                      className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center justify-between gap-3 text-xs transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800 truncate">{tx.description}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {formatDateBR(effDate)} · {tx.category?.name || 'Sem categoria'}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p
+                          className={`font-bold tabular-nums ${
+                            tx.type === 'receita' ? 'text-emerald-600' : 'text-slate-700'
+                          }`}
+                        >
+                          {tx.type === 'despesa' ? '-' : '+'}
+                          {formatCurrency(tx.amount)}
+                        </p>
+                        <span className="text-[10px] text-indigo-500 font-medium flex items-center gap-0.5 justify-end">
+                          Ver extrato <ArrowRight className="w-2.5 h-2.5" />
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">
+              Controle:{' '}
+              <strong className="text-slate-800 font-semibold">{currentCompany?.name}</strong>
+            </span>
+          </div>
+        </div>
+
         <div className="flex-1 p-4 md:p-8 max-w-7xl w-full mx-auto animate-fade-in">{children}</div>
       </main>
 

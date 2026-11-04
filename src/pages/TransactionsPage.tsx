@@ -88,6 +88,9 @@ export default function TransactionsPage() {
     isViewer,
     canManageTransactions,
     reloadCompanyData,
+    loadTransactionsForMonth,
+    loadAllTransactions,
+    searchTransactionsServer,
   } = useCompany()
   const { user: currentUser } = useAuth()
 
@@ -150,6 +153,10 @@ export default function TransactionsPage() {
     if (type === 'receita' || type === 'despesa' || type === 'all') {
       setTypeFilter(type)
     }
+    const q = searchParams.get('search')
+    if (q) {
+      setSearchTerm(q)
+    }
   }, [searchParams])
 
   // Sorting state (padrão: crescente por Data da menor para a maior)
@@ -181,13 +188,90 @@ export default function TransactionsPage() {
   const [isGeneratingRecurring, setIsGeneratingRecurring] = useState(false)
   const [generationStepLabel, setGenerationStepLabel] = useState<string | null>(null)
   const [confirmGenerateOpen, setConfirmGenerateOpen] = useState(false)
+  const [isLoadingMonth, setIsLoadingMonth] = useState(false)
+  const [isSearchingServer, setIsSearchingServer] = useState(false)
 
-  // Available unique month/year options from all transactions (including current month)
+  // Efeito 1: Carrega dados do mês selecionado (ou todos) no servidor via CompanyContext (com cache)
+  useEffect(() => {
+    let cancelled = false
+    const fetchMonth = async () => {
+      setIsLoadingMonth(true)
+      try {
+        if (monthFilter === 'all') {
+          await loadAllTransactions()
+        } else if (/^\d{4}-\d{2}$/.test(monthFilter)) {
+          await loadTransactionsForMonth(monthFilter)
+        }
+      } catch (err) {
+        console.warn('[TransactionsPage] Erro ao carregar mês selecionado:', err)
+      } finally {
+        if (!cancelled) {
+          setIsLoadingMonth(false)
+        }
+      }
+    }
+
+    fetchMonth()
+    return () => {
+      cancelled = true
+    }
+  }, [monthFilter, loadTransactionsForMonth, loadAllTransactions])
+
+  // Efeito 2: Busca no servidor por descrição caso o usuário digite um termo de busca
+  // e o termo não seja vazio (debounce de 400ms). Se houver resultados de outros meses,
+  // eles são mesclados no CompanyContext por searchTransactionsServer.
+  // Se o usuário está buscando e o filtro de mês estiver ativo, mudamos temporariamente para 'all'
+  // se houver resultados de outros meses para que o usuário veja tudo que o servidor encontrou.
+  useEffect(() => {
+    const trimmed = searchTerm.trim()
+    if (!trimmed || trimmed.length < 2) return
+
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setIsSearchingServer(true)
+      try {
+        const results = await searchTransactionsServer(trimmed)
+        if (!cancelled && results.length > 0 && monthFilter !== 'all') {
+          // Se encontrou transações fora do mês selecionado, expande automaticamente para 'all'
+          const hasOutOfMonth = results.some((r) => {
+            const eff = getTxEffectiveDate(r)
+            return !eff || !eff.startsWith(monthFilter)
+          })
+          if (hasOutOfMonth) {
+            setMonthFilter('all')
+          }
+        }
+      } catch (err) {
+        console.warn('[TransactionsPage] Erro na busca remota:', err)
+      } finally {
+        if (!cancelled) {
+          setIsSearchingServer(false)
+        }
+      }
+    }, 400)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [searchTerm, monthFilter, searchTransactionsServer])
+
+  // Available unique month/year options (garante pelo menos os últimos 12 meses + próximos 12 meses + meses com transações)
   // Baseado na data efetiva de pagamento (payment_date com fallback para date)
   const availableMonths = useMemo(() => {
     const monthSet = new Set<string>()
-    // Ensure current month is always present in the options
     monthSet.add(currentMonthStr)
+
+    // Gera janela padrão de 12 meses atrás até 12 meses à frente para o usuário navegar livremente
+    const today = new Date()
+    const curYear = today.getFullYear()
+    const curMonth = today.getMonth() // 0-11
+    for (let offset = -12; offset <= 12; offset++) {
+      const d = new Date(curYear, curMonth + offset, 1)
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      monthSet.add(ym)
+    }
+
     transactions.forEach((tx) => {
       // Ignorar registros pai na lista de meses disponíveis
       if (isParentTransaction(tx)) return
@@ -959,7 +1043,11 @@ export default function TransactionsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {/* Search */}
           <div className="relative sm:col-span-2 lg:col-span-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            {isSearchingServer ? (
+              <Loader2 className="w-4 h-4 text-indigo-500 animate-spin absolute left-3 top-1/2 -translate-y-1/2" />
+            ) : (
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            )}
             <Input
               placeholder="Buscar descrição ou categoria..."
               value={searchTerm}
@@ -1050,7 +1138,11 @@ export default function TransactionsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
           {/* Month Selector Filter */}
           <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+            {isLoadingMonth ? (
+              <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
+            ) : (
+              <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+            )}
             <Select
               value={monthFilter}
               onValueChange={(v) => {

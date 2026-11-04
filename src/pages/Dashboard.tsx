@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -33,6 +33,7 @@ import {
   ArrowUp,
   ArrowDown,
   Minus,
+  Loader2,
 } from 'lucide-react'
 import {
   AreaChart,
@@ -70,13 +71,22 @@ const DONUT_COLORS = [
 
 export default function Dashboard() {
   const { user } = useAuth()
-  const { currentCompany, accounts, categories, transactions, canManageTransactions } = useCompany()
+  const {
+    currentCompany,
+    accounts,
+    categories,
+    transactions,
+    canManageTransactions,
+    loadTransactionsForMonths,
+    loadAllTransactions,
+  } = useCompany()
   const navigate = useNavigate()
 
   // Período selecionado
   const [period, setPeriod] = useState<'this_month' | 'last_month' | 'this_year' | 'all'>(
     'this_month',
   )
+  const [isLoadingPeriod, setIsLoadingPeriod] = useState(false)
 
   // Gráfico: tipo de visualização (area / bar) e toggle de meses (6 / 12)
   const [chartViewType, setChartViewType] = useState<'area' | 'bar'>('area')
@@ -107,6 +117,7 @@ export default function Dashboard() {
     prevYm,
     prevYearPrefix,
     curYearPrefix,
+    last6Months,
   } = useMemo(() => {
     const d = new Date()
     const yr = d.getFullYear()
@@ -115,6 +126,15 @@ export default function Dashboard() {
     const pMonthNum = mo === 0 ? 12 : mo
     const pMonthYear = mo === 0 ? yr - 1 : yr
     const pYm = `${pMonthYear}-${String(pMonthNum).padStart(2, '0')}`
+
+    // Últimos 6 meses (do mês atual retrocedendo 5 meses)
+    const l6: string[] = []
+    for (let i = 5; i >= 0; i--) {
+      const targetDate = new Date(yr, mo - i, 1)
+      const targetYm = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`
+      l6.push(targetYm)
+    }
+
     return {
       now: d,
       currentYear: yr,
@@ -125,8 +145,61 @@ export default function Dashboard() {
       prevYm: pYm,
       prevYearPrefix: `${yr - 1}-`,
       curYearPrefix: `${yr}-`,
+      last6Months: l6,
     }
   }, [])
+
+  // Carregamento sob demanda dos dados necessários para o período e para o gráfico do Dashboard
+  useEffect(() => {
+    let cancelled = false
+    const loadData = async () => {
+      setIsLoadingPeriod(true)
+      try {
+        if (period === 'this_month') {
+          // Garante os últimos 6 meses para o gráfico + mês atual e anterior para comparações
+          const monthsToEnsure = Array.from(new Set([...last6Months, curYm, prevYm]))
+          await loadTransactionsForMonths(monthsToEnsure)
+        } else if (period === 'last_month') {
+          // Mês passado + mês anterior a ele (2 meses atrás) + 6 meses do gráfico
+          const d2 = new Date(prevMonthYear, prevMonthNum - 1 - 1, 1)
+          const ym2 = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}`
+          const monthsToEnsure = Array.from(new Set([...last6Months, prevYm, ym2]))
+          await loadTransactionsForMonths(monthsToEnsure)
+        } else if (period === 'this_year') {
+          // 12 meses do ano atual
+          const yearMonths: string[] = []
+          for (let m = 1; m <= 12; m++) {
+            yearMonths.push(`${currentYear}-${String(m).padStart(2, '0')}`)
+          }
+          await loadTransactionsForMonths(yearMonths)
+        } else if (period === 'all') {
+          // Carregamento completo sob demanda
+          await loadAllTransactions()
+        }
+      } catch (err) {
+        console.warn('[Dashboard] Erro ao carregar meses do período:', err)
+      } finally {
+        if (!cancelled) {
+          setIsLoadingPeriod(false)
+        }
+      }
+    }
+
+    loadData()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    period,
+    curYm,
+    prevYm,
+    last6Months,
+    prevMonthYear,
+    prevMonthNum,
+    currentYear,
+    loadTransactionsForMonths,
+    loadAllTransactions,
+  ])
 
   // -------------------------------------------------------------
   // Filtro de transações do período selecionado
@@ -602,7 +675,11 @@ export default function Dashboard() {
         <div className="flex items-center gap-2.5">
           {/* Period filter dropdown */}
           <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2 py-1 shadow-sm">
-            <Calendar className="w-4 h-4 text-slate-400" />
+            {isLoadingPeriod ? (
+              <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />
+            ) : (
+              <Calendar className="w-4 h-4 text-slate-400" />
+            )}
             <Select value={period} onValueChange={(v: any) => setPeriod(v)}>
               <SelectTrigger className="border-none shadow-none text-xs font-semibold h-8 w-[140px] focus:ring-0">
                 <SelectValue />

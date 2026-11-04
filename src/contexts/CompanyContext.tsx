@@ -3,6 +3,7 @@ import React, {
   useContext,
   useState,
   useEffect,
+  useRef,
   ReactNode,
   useCallback,
 } from 'react'
@@ -795,6 +796,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     ) => {
       if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const tx = await skipCloud.createTransaction(currentCompany.id, data)
+      // Invalida cache de meses pois nova transação foi persistida
+      invalidateTransactionsCache()
       // Instant insertion in local state so UI updates immediately without waiting for reload
       setTransactions((prev) => {
         const next = [tx, ...prev.filter((t) => t.id !== tx.id)]
@@ -809,11 +812,12 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
       return tx
     },
-    [currentCompany, reloadCompanyData],
+    [currentCompany, invalidateTransactionsCache, reloadCompanyData],
   )
 
   const applyTransactionsBatchUpdate = useCallback(
     (mutation: { updated?: Transaction[]; created?: Transaction[]; deletedIds?: string[] }) => {
+      invalidateTransactionsCache()
       setTransactions((prev) => {
         const deletedSet = new Set(mutation.deletedIds || [])
         const updatedMap = new Map((mutation.updated || []).map((t) => [t.id, t]))
@@ -829,7 +833,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         return list
       })
     },
-    [],
+    [invalidateTransactionsCache],
   )
 
   const updateTransaction = useCallback(
@@ -838,6 +842,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       data: Partial<Omit<Transaction, 'id' | 'control_id' | 'created_at' | 'user_id'>>,
       options?: { skipReload?: boolean },
     ) => {
+      invalidateTransactionsCache()
       // Optimistic update in local state for instantaneous UI response
       setTransactions((prev) => prev.map((t) => (t.id === transactionId ? { ...t, ...data } : t)))
       const tx = await skipCloud.updateTransaction(transactionId, data)
@@ -850,11 +855,12 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
       return tx
     },
-    [reloadCompanyData],
+    [invalidateTransactionsCache, reloadCompanyData],
   )
 
   const deleteTransaction = useCallback(
     async (transactionId: string, options?: { skipReload?: boolean }) => {
+      invalidateTransactionsCache()
       // Optimistic local deletion
       setTransactions((prev) => prev.filter((t) => t.id !== transactionId))
       await skipCloud.deleteTransaction(transactionId)
@@ -864,11 +870,12 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [reloadCompanyData],
+    [invalidateTransactionsCache, reloadCompanyData],
   )
 
   const setTransactionsPaidStatus = useCallback(
     async (transactionIds: string[], paid: boolean, options?: { skipReload?: boolean }) => {
+      invalidateTransactionsCache()
       const idSet = new Set(transactionIds)
       // Instant optimistic update
       setTransactions((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, paid } : t)))
@@ -888,7 +895,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
       return updated
     },
-    [reloadCompanyData],
+    [invalidateTransactionsCache, reloadCompanyData],
   )
 
   // Team operations
@@ -962,6 +969,12 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         isOwner,
         isAdmin,
         isViewer,
+        isTransactionsLoading,
+        loadTransactionsForMonth,
+        loadTransactionsForMonths,
+        loadAllTransactions,
+        searchTransactionsServer,
+        invalidateTransactionsCache,
         canManageTeam,
         canManageSettings,
         canManageFinance,
