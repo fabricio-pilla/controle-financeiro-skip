@@ -53,12 +53,14 @@ onRecordUpdate((e) => {
   }
 
   if (role === 'owner' || role === 'admin') {
+    e.next()
     return
   }
 
   if (txUserId && txUserId !== callerId) {
     throw new ForbiddenError('Você só pode editar lançamentos criados por você mesmo.')
   }
+  e.next()
 }, 'transactions')
 
 // Hook BEFORE deleting a transaction
@@ -107,12 +109,14 @@ onRecordDelete((e) => {
   }
 
   if (role === 'owner' || role === 'admin') {
+    e.next()
     return
   }
 
   if (txUserId && txUserId !== callerId) {
     throw new ForbiddenError('Você só pode excluir lançamentos criados por você mesmo.')
   }
+  e.next()
 }, 'transactions')
 
 // Hook BEFORE creating a transaction
@@ -158,4 +162,5 @@ onRecordCreate((e) => {
       'Usuários com perfil de visualizador não têm permissão para criar lançamentos.',
     )
   }
+  e.next()
 }, 'transactions')
