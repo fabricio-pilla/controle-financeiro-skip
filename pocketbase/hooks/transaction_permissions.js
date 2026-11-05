@@ -10,6 +10,7 @@
 onRecordUpdate((e) => {
   const authRecord = e.auth
   if (!authRecord) {
+    e.next()
     return
   }
 
@@ -67,6 +68,7 @@ onRecordUpdate((e) => {
 onRecordDelete((e) => {
   const authRecord = e.auth
   if (!authRecord) {
+    e.next()
     return
   }
 
@@ -123,6 +125,7 @@ onRecordDelete((e) => {
 onRecordCreate((e) => {
   const authRecord = e.auth
   if (!authRecord) {
+    e.next()
     return
   }
 
@@ -162,5 +165,21 @@ onRecordCreate((e) => {
       'Usuários com perfil de visualizador não têm permissão para criar lançamentos.',
     )
   }
+
+  // Prevenção de duplicatas/séries paralelas espúrias geradas automaticamente com descrição vazia ou "Sem descrição"
+  const desc = String(record.getString('description') || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+  const isRec = record.getBool('is_recurring') || record.getBool('recurring')
+  const notesStr = String(record.getString('notes') || '')
+  if (
+    (isRec || notesStr.indexOf('Gerado automaticamente') !== -1) &&
+    (!desc || desc === 'sem descricao' || desc === 'sem descricao')
+  ) {
+    throw new BadRequestError('Transações recorrentes devem ter uma descrição válida.')
+  }
+
   e.next()
 }, 'transactions')
