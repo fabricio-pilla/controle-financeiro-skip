@@ -217,10 +217,10 @@ export default function TransactionsPage() {
   }, [monthFilter, loadTransactionsForMonth, loadAllTransactions])
 
   // Efeito 2: Busca no servidor por descrição caso o usuário digite um termo de busca
-  // e o termo não seja vazio (debounce de 400ms). Se houver resultados de outros meses,
-  // eles são mesclados no CompanyContext por searchTransactionsServer.
-  // Se o usuário está buscando e o filtro de mês estiver ativo, mudamos temporariamente para 'all'
-  // se houver resultados de outros meses para que o usuário veja tudo que o servidor encontrou.
+  // e o termo não seja vazio (debounce de 400ms). Os resultados são mesclados no
+  // CompanyContext por searchTransactionsServer, mas a LISTA continua respeitando o
+  // filtro de mês selecionado (filteredList aplica monthFilter). A busca NUNCA altera
+  // o mês selecionado: "Todos os Meses" só é ativado por escolha manual do usuário.
   useEffect(() => {
     const trimmed = searchTerm.trim()
     if (!trimmed || trimmed.length < 2) return
@@ -229,15 +229,18 @@ export default function TransactionsPage() {
     const timer = setTimeout(async () => {
       setIsSearchingServer(true)
       try {
+        // Busca remota apenas para trazer lançamentos do mês selecionado que ainda
+        // não estejam em cache/local. Resultados de outros meses são mesclados no
+        // contexto, porém filtrados fora da lista pelo monthFilter.
         const results = await searchTransactionsServer(trimmed)
         if (!cancelled && results.length > 0 && monthFilter !== 'all') {
-          // Se encontrou transações fora do mês selecionado, expande automaticamente para 'all'
-          const hasOutOfMonth = results.some((r) => {
+          const inSelectedMonth = results.some((r) => {
             const eff = getTxEffectiveDate(r)
-            return !eff || !eff.startsWith(monthFilter)
+            return eff && eff.startsWith(monthFilter)
           })
-          if (hasOutOfMonth) {
-            setMonthFilter('all')
+          if (inSelectedMonth) {
+            // Garante que o cache do mês selecionado contenha as ocorrências encontradas
+            await loadTransactionsForMonth(monthFilter)
           }
         }
       } catch (err) {
@@ -253,7 +256,7 @@ export default function TransactionsPage() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [searchTerm, monthFilter, searchTransactionsServer])
+  }, [searchTerm, monthFilter, searchTransactionsServer, loadTransactionsForMonth])
 
   // Available unique month/year options (garante pelo menos os últimos 12 meses + próximos 12 meses + meses com transações)
   // Baseado na data efetiva de pagamento (payment_date com fallback para date)
@@ -837,6 +840,11 @@ export default function TransactionsPage() {
               }}
               className="pl-9 rounded-xl h-10 text-sm"
             />
+            {searchTerm.trim() && monthFilter !== 'all' && (
+              <span className="absolute -bottom-4 left-0 text-[10px] text-indigo-600 font-medium whitespace-nowrap">
+                Buscando em {monthFilter.split('-').reverse().join('/')}
+              </span>
+            )}
           </div>
 
           {/* Type Filter */}
