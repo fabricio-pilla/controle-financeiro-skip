@@ -336,6 +336,12 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
       existingSet[checkKeyDate] = true
       existingSet[checkKeyPayment] = true
 
+      // Regra de blindagem retroativa:
+      // A geração de recorrências NUNCA cria ocorrência pendente em mês anterior ao mês corrente do sistema.
+      // Se por qualquer razão targetYM for anterior a currentYM, nasce PAGA (recuperação histórica).
+      // Meses a partir do mês corrente (>= currentYM) nascem pendentes (paid = false).
+      const isRetroactive = targetYM < currentYM
+
       // Criar registro da ocorrência no PocketBase
       const newRecord = new Record(transactionsCol)
       newRecord.set('control_id', controlId)
@@ -348,7 +354,7 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
       newRecord.set('account_id', accId || '')
       newRecord.set('date', targetDateStr)
       newRecord.set('payment_date', targetPaymentDateStr)
-      newRecord.set('paid', false)
+      newRecord.set('paid', isRetroactive)
       newRecord.set('is_recurring', true)
       newRecord.set('recurring', true)
       newRecord.set('recurrence_type', seed.getString('recurrence_type') || 'mensal')

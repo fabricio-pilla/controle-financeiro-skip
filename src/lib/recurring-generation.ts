@@ -466,6 +466,10 @@ export function planOccurrencesForSingleRecurring({
   if (sourcePayYM) existingMonthSet.add(sourcePayYM)
   existingMonthSet.add(getYearMonth(baseYear, baseMonth))
 
+  // Ano/Mês atual do sistema para proteção contra pendências retroativas
+  const today = new Date()
+  const currentSystemYM = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+
   // Projetar dia de pagamento original da transação cadastrada
   // Se a fonte possui payment_date válida, respeitar o dia dela (ou recair na própria targetDate)
   let payOrigDay = origDay
@@ -498,6 +502,9 @@ export function planOccurrencesForSingleRecurring({
     existingMonthSet.add(targetYM)
     existingMonthSet.add(targetPaymentYM)
 
+    // Se porventura o mês-alvo for anterior ao mês atual do sistema, nasce PAGA
+    const isRetroactive = targetYM < currentSystemYM
+
     planned.push({
       control_id: currentCompanyId,
       user_id: currentUserId || sourceTransaction.user_id || '',
@@ -510,7 +517,7 @@ export function planOccurrencesForSingleRecurring({
       credit_card_id: (sourceTransaction as any).credit_card_id || undefined,
       date: targetDateStr,
       payment_date: targetPaymentDateStr,
-      paid: false,
+      paid: isRetroactive,
       is_recurring: true,
       recurring: true,
       recurrence_type:
@@ -1081,6 +1088,11 @@ export function planNextRecurringTransactionsDetailed({
       existingSet.add(checkKeyDate)
       existingSet.add(checkKeyPayment)
 
+      // Regra de blindagem retroativa:
+      // Se por qualquer razão targetYM for anterior ao mês atual, nasce PAGA (recuperação histórica).
+      // Meses presentes ou futuros (>= currentYM) nascem pendentes (paid = false).
+      const isRetroactive = targetYM < currentYM
+
       planned.push({
         control_id: currentCompanyId,
         user_id: currentUserId || seed.user_id || '',
@@ -1093,7 +1105,7 @@ export function planNextRecurringTransactionsDetailed({
         credit_card_id: (seed as any).credit_card_id || undefined,
         date: targetDateStr,
         payment_date: targetPaymentDateStr,
-        paid: false,
+        paid: isRetroactive,
         is_recurring: true,
         recurring: true,
         recurrence_type: seed.recurrence_type || (seed as any).recurrence_period || 'mensal',
@@ -1249,6 +1261,11 @@ export function planNextRecurringTransactionsFromAllActiveSeeds({
       existingSet.add(checkKeyDate)
       existingSet.add(checkKeyPayment)
 
+      // Regra de blindagem retroativa:
+      // Se targetYM for anterior ao mês atual, nasce PAGA (recuperação histórica).
+      // Meses presentes ou futuros (>= currentYM) nascem pendentes (paid = false).
+      const isRetroactive = targetYM < currentYM
+
       planned.push({
         control_id: currentCompanyId,
         user_id: currentUserId || seed.user_id || '',
@@ -1261,7 +1278,7 @@ export function planNextRecurringTransactionsFromAllActiveSeeds({
         credit_card_id: (seed as any).credit_card_id || undefined,
         date: targetDateStr,
         payment_date: targetPaymentDateStr,
-        paid: false,
+        paid: isRetroactive,
         is_recurring: true,
         recurring: true,
         recurrence_type: seed.recurrence_type || (seed as any).recurrence_period || 'mensal',
