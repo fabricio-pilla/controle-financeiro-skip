@@ -4,12 +4,21 @@
 //
 // Recebe: { controlId: string, transactionId?: string, currentYear?: number, currentMonth?: number }
 // - Se transactionId for informado: gera os 12 meses futuros a partir dessa semente recorrente específica.
-// - Se transactionId não for informado: busca as sementes recorrentes do mês atual (ou todas as ativas) no controle e gera.
-// Deduplicação estrita:
-// - Chave: tipo + conta + descrição base + YYYY-MM (checando tanto date quanto payment_date).
-// - Não é parcela (installment_number = 0, installment_total = 0).
-// - Notas: "Gerado automaticamente: recorrência mensal".
-// - Executa de forma atômica no PocketBase com consulta fresca, evitando corridas entre abas/membros.
+// - Se transactionId não for informado: busca as sementes recorrentes do mês atual (ou ativas) no controle e gera.
+//
+// Blindagem contra duplicatas e séries apagadas:
+// 1. NUNCA criar pendência (paid = false) com data anterior ao mês corrente (mês passado nasce obrigatoriamente pago).
+// 2. NUNCA criar ocorrência em mês que já tenha ocorrência da mesma série (paga ou não, importada ou gerada).
+// 3. Critério de mesma série para deduplicação:
+//    tipo + conta + valor aproximado + dia do mês + mês/ano, ignorando se a descrição é vazia ou "Sem descrição"
+//    (para typo e vazio não escaparem da deduplicação).
+// 4. Bloqueio explícito de séries paralelas apagadas:
+//    - "Sem descrição"
+//    - "Vale Aliementação" (typo)
+//    - "Pensã Manu" (typo)
+//    Nunca serão aceitas como sementes recorrentes e nunca renascerão.
+// 5. Preservação proposital:
+//    - Receita "Vale Alimentação" (R$ 1.444,91) e Despesa "Supermercado" (R$ 1.444,91) são independentes e mantidas.
 
 routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
   const authRecord = e.auth
@@ -89,6 +98,23 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
     return d.trim()
   }
 
+  const normalizeText = (text) => {
+    return String(text || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+  }
+
+  // Blacklist de descrições proibidas como sementes recorrentes
+  const isForbiddenSeedDescription = (desc) => {
+    const norm = normalizeText(desc)
+    if (!norm || norm === 'sem descricao') return true
+    if (norm === 'vale aliementacao') return true // typo
+    if (norm === 'pensa manu') return true // typo
+    return false
+  }
+
   const parseDateParts = (dateStr) => {
     if (!dateStr) return { year: currentYear, month: currentMonth, day: 1 }
     const clean = String(dateStr).split(' ')[0].split('T')[0]
@@ -160,7 +186,7 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
   }
 
   // 5. Obter transações sementes
-  let seeds = []
+  let rawSeeds = []
   if (transactionId) {
     try {
       const seedTx = $app.findRecordById('transactions', transactionId)
@@ -171,7 +197,7 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
           seedTx.getString('recurrence_type') !== '' ||
           seedTx.getString('recurrence_period') !== ''
         if (isRec) {
-          seeds.push(seedTx)
+          rawSeeds.push(seedTx)
         } else {
           return e.json(400, { message: 'O lançamento informado não é recorrente.' })
         }
@@ -209,8 +235,19 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
       const total = t.getInt('installment_total')
       if (num === 0 && total > 1) continue
 
-      seeds.push(t)
+      rawSeeds.push(t)
     }
+  }
+
+  // Filtrar sementes proibidas (Sem descrição, typos e apagadas)
+  const seeds = []
+  for (let i = 0; i < rawSeeds.length; i++) {
+    const s = rawSeeds[i]
+    const rawDesc = s.getString('description')
+    if (isForbiddenSeedDescription(rawDesc)) {
+      continue
+    }
+    seeds.push(s)
   }
 
   if (seeds.length === 0) {
@@ -221,7 +258,7 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
       createdIncomeCount: 0,
       createdExpenseCount: 0,
       seriesCount: 0,
-      message: 'Nenhum lançamento recorrente no mês atual para gerar.',
+      message: 'Nenhum lançamento recorrente válido para gerar.',
     })
   }
 
@@ -229,7 +266,7 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
   const canonicalSeeds = {}
   for (let i = 0; i < seeds.length; i++) {
     const s = seeds[i]
-    const cleanD = cleanDescription(s.getString('description')).toLowerCase()
+    const cleanD = normalizeText(cleanDescription(s.getString('description')))
     const accId = s.getString('account_id')
     const type = s.getString('type')
     const seriesKey = `${type}_${accId}_${cleanD}`
@@ -245,7 +282,7 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
   }
 
   // 7. Carregar conjunto de checagem FRESCA de todas as transações do controle
-  // para garantir idempotência absoluta contra concorrência
+  // para garantir idempotência absoluta contra concorrência e contra duplicatas por valor/dia
   const allTxs = $app.findRecordsByFilter('transactions', 'control_id = {:cid}', 'date', 25000, 0, {
     cid: controlId,
   })
@@ -259,17 +296,30 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
 
   for (let i = 0; i < allTxs.length; i++) {
     const t = allTxs[i]
-    const cleanD = cleanDescription(t.getString('description')).toLowerCase()
+    const cleanD = normalizeText(cleanDescription(t.getString('description')))
     const accId = t.getString('account_id')
     const type = t.getString('type')
+    const amt = Math.round((t.getFloat('amount') || 0) * 100) / 100
 
+    const partsDate = parseDateParts(t.getString('date'))
     const ymDate = extractYM(t.getString('date'))
+    const dayDate = partsDate.day
+
+    const partsPay = parseDateParts(t.getString('payment_date'))
+    const ymPay = extractYM(t.getString('payment_date'))
+    const dayPay = partsPay.day
+
+    // 1. Chave nominal exata por data e payment_date
     if (ymDate) {
       existingSet[`${type}_${accId}_${cleanD}_${ymDate}`] = true
+      // Chave estrutural ignorando descrição quando vazia ou sem descrição
+      existingSet[`STRUCT_${type}_${accId}_${amt}_${ymDate}`] = true
+      existingSet[`DAY_${type}_${accId}_${amt}_${dayDate}_${ymDate}`] = true
     }
-    const ymPay = extractYM(t.getString('payment_date'))
     if (ymPay) {
       existingSet[`${type}_${accId}_${cleanD}_${ymPay}`] = true
+      existingSet[`STRUCT_${type}_${accId}_${amt}_${ymPay}`] = true
+      existingSet[`DAY_${type}_${accId}_${amt}_${dayPay}_${ymPay}`] = true
     }
   }
 
@@ -284,9 +334,12 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
 
   for (let i = 0; i < seriesKeys.length; i++) {
     const seed = canonicalSeeds[seriesKeys[i]]
-    const cleanD = cleanDescription(seed.getString('description')).toLowerCase()
+    const rawSeedDesc = cleanDescription(seed.getString('description'))
+    const normDesc = normalizeText(rawSeedDesc)
     const accId = seed.getString('account_id')
     const type = seed.getString('type')
+    const amount = Math.round((seed.getFloat('amount') || 0) * 100) / 100
+
     const origParts = parseDateParts(seed.getString('date'))
     const seedCleanDate = String(seed.getString('date') || '').split(/[T\s]/)[0]
     const seedYM = seedCleanDate
@@ -324,10 +377,21 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
       }
       const targetPaymentYM = targetPaymentDateStr.substring(0, 7)
 
-      const checkKeyDate = `${type}_${accId}_${cleanD}_${targetYM}`
-      const checkKeyPayment = `${type}_${accId}_${cleanD}_${targetPaymentYM}`
+      // Checagem de deduplicação estrita:
+      // A) Chave nominal
+      const checkKeyDate = `${type}_${accId}_${normDesc}_${targetYM}`
+      const checkKeyPayment = `${type}_${accId}_${normDesc}_${targetPaymentYM}`
 
-      if (existingSet[checkKeyDate] || existingSet[checkKeyPayment]) {
+      // B) Chave estrutural (tipo + conta + valor + mês/ano)
+      const checkStructDate = `STRUCT_${type}_${accId}_${amount}_${targetYM}`
+      const checkStructPay = `STRUCT_${type}_${accId}_${amount}_${targetPaymentYM}`
+
+      if (
+        existingSet[checkKeyDate] ||
+        existingSet[checkKeyPayment] ||
+        existingSet[checkStructDate] ||
+        existingSet[checkStructPay]
+      ) {
         alreadyExistingCount++
         continue
       }
@@ -335,10 +399,12 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
       // Marca no set em memória para não duplicar se rodar múltiplas iterações
       existingSet[checkKeyDate] = true
       existingSet[checkKeyPayment] = true
+      existingSet[checkStructDate] = true
+      existingSet[checkStructPay] = true
 
       // Regra de blindagem retroativa:
       // A geração de recorrências NUNCA cria ocorrência pendente em mês anterior ao mês corrente do sistema.
-      // Se por qualquer razão targetYM for anterior a currentYM, nasce PAGA (recuperação histórica).
+      // Se targetYM for anterior a currentYM, nasce PAGA.
       // Meses a partir do mês corrente (>= currentYM) nascem pendentes (paid = false).
       const isRetroactive = targetYM < currentYM
 
@@ -348,7 +414,7 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
       newRecord.set('user_id', authRecord.id || seed.getString('user_id'))
       newRecord.set('type', type)
       newRecord.set('amount', seed.getFloat('amount'))
-      newRecord.set('description', cleanDescription(seed.getString('description')))
+      newRecord.set('description', rawSeedDesc)
       newRecord.set('category_id', seed.getString('category_id') || '')
       newRecord.set('subcategory_id', seed.getString('subcategory_id') || '')
       newRecord.set('account_id', accId || '')

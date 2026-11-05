@@ -427,7 +427,24 @@ export function planOccurrencesForSingleRecurring({
     return []
   }
 
-  const cleanD = cleanDescription(sourceTransaction.description).toLowerCase()
+  const cleanRaw = cleanDescription(sourceTransaction.description)
+  const normSourceDesc = cleanRaw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+
+  // Bloqueio de séries proibidas como sementes recorrentes
+  if (
+    !normSourceDesc ||
+    normSourceDesc === 'sem descricao' ||
+    normSourceDesc === 'vale aliementacao' ||
+    normSourceDesc === 'pensa manu'
+  ) {
+    return []
+  }
+
+  const cleanD = cleanRaw.toLowerCase()
   const origParts = parseDateParts(sourceTransaction.date)
   const baseYear = origParts.year
   const baseMonth = origParts.month
