@@ -112,6 +112,19 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
     if (!norm || norm === 'sem descricao') return true
     if (norm === 'vale aliementacao') return true // typo
     if (norm === 'pensa manu') return true // typo
+    // Séries paralelas apagadas pelas migrations 0069+ — nunca podem voltar a ser sementes.
+    if (norm === 'copel') return true // paralela a "Conta de Luz"
+    if (norm === 'clube ifood') return true // paralela a "Clube Ifood Fabricio"
+    if (norm === 'gympass') return true // paralela a Gympass Raffaela/Matheus/Fabricio
+    return false
+  }
+  // "Apple" genérica só é proibida como semente na subcategoria da série "Apple Raffaela".
+  const isForbiddenSeedRecord = (seed) => {
+    if (isForbiddenSeedDescription(seed.getString('description'))) return true
+    const normDesc = normalizeText(seed.getString('description'))
+    if (normDesc === 'apple' && seed.getString('subcategory_id') === '9yzonz6s451tv8p') {
+      return true // paralela a "Apple Raffaela" (mesma subcat, R$ 19,90)
+    }
     return false
   }
 
@@ -239,12 +252,11 @@ routerAdd('POST', '/backend/v1/custom/generate-recurring', (e) => {
     }
   }
 
-  // Filtrar sementes proibidas (Sem descrição, typos e apagadas)
+  // Filtrar sementes proibidas (Sem descrição, typos e séries paralelas apagadas)
   const seeds = []
   for (let i = 0; i < rawSeeds.length; i++) {
     const s = rawSeeds[i]
-    const rawDesc = s.getString('description')
-    if (isForbiddenSeedDescription(rawDesc)) {
+    if (isForbiddenSeedRecord(s)) {
       continue
     }
     seeds.push(s)
