@@ -268,6 +268,24 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Reconstrói a lista de transações como a UNIÃO de todos os meses presentes no
+  // cache de meses. Usado pela sincronização em segundo plano para nunca substituir
+  // o que o usuário está vendo (mesma regra do loadAllTransactions).
+  const rebuildTransactionsFromMonthCache = useCallback(() => {
+    const combined: Transaction[] = []
+    const seen = new Set<string>()
+    monthCacheRef.current.forEach((monthTxs) => {
+      monthTxs.forEach((t) => {
+        if (seen.has(t.id)) return
+        seen.add(t.id)
+        combined.push(t)
+      })
+    })
+    combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    setTransactions(combined)
+    return combined
+  }, [])
+
   // Carrega transações de um mês específico ("YYYY-MM") usando cache
   const loadTransactionsForMonth = useCallback(
     async (monthStr: string, options?: { force?: boolean }): Promise<Transaction[]> => {
@@ -545,19 +563,27 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         // Fallback silencioso
       }
 
+      // Captura ANTES de invalidar: meses já conhecidos localmente (carregados por
+      // navegação/busca/etc.) precisam continuar no cache para a lista reconstruída
+      // manter o que o usuário está vendo.
+      const cachedMonths = Array.from(monthCacheRef.current.keys())
       invalidateTransactionsCache()
       const now = new Date()
       const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+      const monthsToFetch = Array.from(new Set([currentYm, ...cachedMonths]))
 
-      const [role, mems, accs, cats, subcats, txs] = await Promise.all([
+      const [role, mems, accs, cats, subcats, ...monthResults] = await Promise.all([
         skipCloud.getUserRoleInCompany(finalControlId, userId).catch(() => null),
         skipCloud.getCompanyMembers(finalControlId).catch(() => [] as CompanyMember[]),
         skipCloud.getAccounts(finalControlId).catch(() => [] as Account[]),
         skipCloud.getCategories(finalControlId).catch(() => [] as Category[]),
         skipCloud.getSubcategories(finalControlId).catch(() => [] as Subcategory[]),
-        skipCloud
-          .getTransactions(finalControlId, { month: currentYm })
-          .catch(() => [] as Transaction[]),
+        ...monthsToFetch.map((ym) =>
+          skipCloud
+            .getTransactions(finalControlId, { month: ym })
+            .then((monthTxs) => [ym, monthTxs] as const)
+            .catch(() => [ym, [] as Transaction[]] as const),
+        ),
       ])
 
       setCurrentCompany(resolvedComp)
@@ -567,14 +593,24 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setAccounts(accs || [])
       setCategories(cats || [])
       setSubcategories(subcats || [])
-      setTransactions(txs || [])
-      monthCacheRef.current.set(currentYm, txs || [])
+      monthResults.forEach(([ym, monthTxs]) => {
+        monthCacheRef.current.set(ym, monthTxs)
+      })
+      // União de TODOS os meses em cache (não só o mês corrente), preservando o que o
+      // usuário está vendo — inclusive quando está em outro mês ou "Todos os Meses".
+      rebuildTransactionsFromMonthCache()
     } catch {
       // Falha silenciosa sem expor 404/erros no console
     } finally {
       setIsCompanyLoading(false)
     }
-  }, [activeCompanyId, currentCompany?.id, userId, invalidateTransactionsCache])
+  }, [
+    activeCompanyId,
+    currentCompany?.id,
+    userId,
+    invalidateTransactionsCache,
+    rebuildTransactionsFromMonthCache,
+  ])
 
   const selectCompany = useCallback(
     async (companyId?: string): Promise<boolean> => {
@@ -829,6 +865,21 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     ) => {
       if (!currentCompany) throw new Error('Nenhum controle selecionado.')
       const tx = await skipCloud.createTransaction(currentCompany.id, data)
+      // Garante que o mês da transação criada (data efetiva) esteja no cache antes da
+      // sincronização em segundo plano — assim a união de meses preserva o que o
+      // usuário está vendo, inclusive meses fora do corrente.
+      const effYmd = String(tx.payment_date || tx.date || '').substring(0, 7)
+      if (effYmd && /^\d{4}-\d{2}$/.test(effYmd) && !monthCacheRef.current.has(effYmd)) {
+        try {
+          const monthTxs = await skipCloud.getTransactions(currentCompany.id, {
+            month: effYmd,
+            caches: metadataCacheRef.current,
+          })
+          monthCacheRef.current.set(effYmd, monthTxs)
+        } catch {
+          // Fallback silencioso: sem o mês, a união ainda mantém os demais
+        }
+      }
       // Invalida cache de meses pois nova transação foi persistida
       invalidateTransactionsCache()
       // Instant insertion in local state so UI updates immediately without waiting for reload
@@ -880,6 +931,28 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setTransactions((prev) => prev.map((t) => (t.id === transactionId ? { ...t, ...data } : t)))
       const tx = await skipCloud.updateTransaction(transactionId, data)
       setTransactions((prev) => prev.map((t) => (t.id === transactionId ? tx : t)))
+      // Garante que o mês da data efetiva (antiga e nova) esteja no cache antes da
+      // sincronização — a união de meses preserva o que o usuário está vendo.
+      if (currentCompany) {
+        const monthsToEnsure = new Set<string>()
+        const prevTx = transactions.find((t) => t.id === transactionId)
+        const prevEff = String(prevTx?.payment_date || prevTx?.date || '').substring(0, 7)
+        const newEff = String(tx.payment_date || tx.date || '').substring(0, 7)
+        if (prevEff && /^\d{4}-\d{2}$/.test(prevEff)) monthsToEnsure.add(prevEff)
+        if (newEff && /^\d{4}-\d{2}$/.test(newEff)) monthsToEnsure.add(newEff)
+        for (const ym of monthsToEnsure) {
+          if (monthCacheRef.current.has(ym)) continue
+          try {
+            const monthTxs = await skipCloud.getTransactions(currentCompany.id, {
+              month: ym,
+              caches: metadataCacheRef.current,
+            })
+            monthCacheRef.current.set(ym, monthTxs)
+          } catch {
+            // Fallback silencioso
+          }
+        }
+      }
       if (!options?.skipReload) {
         // Sync accounts / totals in background without blocking caller
         reloadCompanyData().catch(() => {
@@ -888,7 +961,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
       return tx
     },
-    [invalidateTransactionsCache, reloadCompanyData],
+    [currentCompany, transactions, invalidateTransactionsCache, reloadCompanyData],
   )
 
   const deleteTransaction = useCallback(
@@ -897,13 +970,30 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       // Optimistic local deletion
       setTransactions((prev) => prev.filter((t) => t.id !== transactionId))
       await skipCloud.deleteTransaction(transactionId)
+      // Garante que o mês da transação excluída (data efetiva) permaneça no cache
+      // antes da sincronização — a união de meses preserva o que está na tela.
+      if (currentCompany) {
+        const deletedTx = transactions.find((t) => t.id === transactionId)
+        const delEff = String(deletedTx?.payment_date || deletedTx?.date || '').substring(0, 7)
+        if (delEff && /^\d{4}-\d{2}$/.test(delEff) && !monthCacheRef.current.has(delEff)) {
+          try {
+            const monthTxs = await skipCloud.getTransactions(currentCompany.id, {
+              month: delEff,
+              caches: metadataCacheRef.current,
+            })
+            monthCacheRef.current.set(delEff, monthTxs)
+          } catch {
+            // Fallback silencioso
+          }
+        }
+      }
       if (!options?.skipReload) {
         reloadCompanyData().catch(() => {
           // Fallback silencioso
         })
       }
     },
-    [invalidateTransactionsCache, reloadCompanyData],
+    [currentCompany, transactions, invalidateTransactionsCache, reloadCompanyData],
   )
 
   const setTransactionsPaidStatus = useCallback(
@@ -928,7 +1018,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
       return updated
     },
-    [invalidateTransactionsCache, reloadCompanyData],
+    [currentCompany, transactions, invalidateTransactionsCache, reloadCompanyData],
   )
 
   // Team operations

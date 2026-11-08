@@ -44,6 +44,8 @@ import {
 } from '@/lib/transaction-propagation'
 import { isCategoryAllowedForType } from '@/lib/nlp-parser'
 import { trackAiCorrectionSilently, cleanNotesForDisplay } from '@/lib/ai-learning-tracker'
+import { findDuplicateTransactions, DuplicateCandidate } from '@/lib/duplicate-check'
+import { DuplicateWarningModal } from './DuplicateWarningModal'
 
 interface TransactionModalProps {
   open: boolean
@@ -151,6 +153,49 @@ export function TransactionModal({
   const [propagationModalOpen, setPropagationModalOpen] = useState(false)
   const [pendingFormData, setPendingFormData] = useState<UpdateTransactionPayload | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // Alerta de lançamento duplicado (mesmo valor no mesmo dia)
+  const [duplicateOpen, setDuplicateOpen] = useState(false)
+  const [duplicateCandidates, setDuplicateCandidates] = useState<DuplicateCandidate[]>([])
+  const [pendingDuplicateAction, setPendingDuplicateAction] = useState<(() => void) | null>(null)
+  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false)
+
+  /**
+   * Verifica no servidor se já existe lançamento com valor idêntico no mesmo dia.
+   * Se houver, abre o alerta de duplicado e guarda a ação de gravação para o
+   * "Salvar assim mesmo". Retorna true quando o salvamento pode seguir direto.
+   */
+  const checkDuplicateBeforeSave = async (params: {
+    effectivePaymentDate: string
+    parsedAmount: number
+    type: TransactionType
+    accountId: string
+    /** Ação de gravação executada ao confirmar "Salvar assim mesmo" */
+    onConfirmSave: () => void
+  }): Promise<boolean> => {
+    if (!currentCompany) return true
+    try {
+      setIsCheckingDuplicate(true)
+      const candidates = await findDuplicateTransactions({
+        companyId: currentCompany.id,
+        amount: params.parsedAmount,
+        effectiveDate: params.effectivePaymentDate,
+        type: params.type,
+        accountId: params.accountId,
+        excludeTransactionId: isEditing ? transaction?.id : undefined,
+      })
+      if (candidates.length === 0) return true
+      setDuplicateCandidates(candidates)
+      setPendingDuplicateAction(() => params.onConfirmSave)
+      setDuplicateOpen(true)
+      return false
+    } catch (e) {
+      // Falha na verificação não deve bloquear o salvamento
+      console.warn('[TransactionModal] Falha ao verificar duplicados:', e)
+      return true
+    } finally {
+      setIsCheckingDuplicate(false)
+    }
+  }
 
   // Sync when transaction changes
   React.useEffect(() => {
@@ -362,6 +407,19 @@ export function TransactionModal({
       installment_total: effectiveInstallmentTotal,
     }
 
+    const proceedAfterDuplicateCheck = async (saveAction: () => Promise<void>) => {
+      const canProceed = await checkDuplicateBeforeSave({
+        effectivePaymentDate,
+        parsedAmount,
+        type,
+        accountId,
+        onConfirmSave: () => {
+          void saveAction()
+        },
+      })
+      if (canProceed) await saveAction()
+    }
+
     if (isEditing && transaction) {
       const isTxRecurring = Boolean(
         isRecurringTransaction(transaction) ||
@@ -387,6 +445,15 @@ export function TransactionModal({
           resolvedInstallmentsTotal > 1,
         ) && !isTxRecurring
 
+      const updateSingle = async (choice?: PropagationChoice) => {
+        setIsSubmitting(true)
+        try {
+          await executeUpdate(payload, choice)
+        } finally {
+          setIsSubmitting(false)
+        }
+      }
+
       // Se for recorrente ou parcelado, perguntar ao usuário como propagar antes de aplicar!
       if (isTxRecurring || isTxInstallment) {
         setPendingFormData(payload)
@@ -395,103 +462,112 @@ export function TransactionModal({
       }
 
       // Se for uma transação simples única
-      await executeUpdate(payload, 'single')
+      await proceedAfterDuplicateCheck(() => updateSingle('single'))
       return
     }
 
     // Criar nova transação
-    setIsSubmitting(true)
-    try {
-      const createdTx = await createTransaction({
-        description,
-        amount: parsedAmount,
-        type,
-        account_id: accountId,
-        category_id: categoryId,
-        subcategory_id: subcategoryId || undefined,
-        date,
-        payment_date: effectivePaymentDate,
-        paid: effectivePaid,
-        is_recurring: isRecurring,
-        recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
-        notes: cleanNotesForDisplay(notes),
-        installments_total: effectiveInstallmentTotal,
-      })
-      // Para recorrentes, triggerAutoRecurringGeneration já emite toast detalhado:
-      // se 0 novas geradas -> "Lançamento recorrente criado. As recorrências futuras já existiam e não foram duplicadas."
-      // se N novas geradas -> "Lançamento recorrente criado. N recorrência(s) futura(s) gerada(s)."
-      if (!isRecurring) {
-        toast.success(
-          installmentsTotal > 1
-            ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
-            : 'Lançamento criado com sucesso!',
-        )
-      }
-      onOpenChange(false)
-
-      // Geração automática de ocorrências futuras se for recorrente
-      if (isRecurring && createdTx && currentCompany) {
-        import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
-          const pb = (await import('@/lib/pocketbase/client')).default
-          const currentUserId =
-            (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
-          triggerAutoRecurringGeneration({
-            sourceTransaction: createdTx,
-            existingTransactions: transactions,
-            currentCompanyId: currentCompany.id,
-            currentUserId,
-            onSuccessCreated: (createdList) => {
-              applyTransactionsBatchUpdate({ created: createdList })
-            },
-          }).catch((err) => {
-            console.warn('[TransactionModal] Erro na geração automática:', err)
-          })
+    const performCreate = async () => {
+      setIsSubmitting(true)
+      try {
+        const createdTx = await createTransaction({
+          description,
+          amount: parsedAmount,
+          type,
+          account_id: accountId,
+          category_id: categoryId,
+          subcategory_id: subcategoryId || undefined,
+          date,
+          payment_date: effectivePaymentDate,
+          paid: effectivePaid,
+          is_recurring: isRecurring,
+          recurrence_type: isRecurring ? recurrenceType || 'mensal' : undefined,
+          notes: cleanNotesForDisplay(notes),
+          installments_total: effectiveInstallmentTotal,
         })
-      }
+        // Para recorrentes, triggerAutoRecurringGeneration já emite toast detalhado:
+        // se 0 novas geradas -> "Lançamento recorrente criado. As recorrências futuras já existiam e não foram duplicadas."
+        // se N novas geradas -> "Lançamento recorrente criado. N recorrência(s) futura(s) gerada(s)."
+        if (!isRecurring) {
+          toast.success(
+            installmentsTotal > 1
+              ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
+              : 'Lançamento criado com sucesso!',
+          )
+        }
+        onOpenChange(false)
 
-      // Geração automática de parcelas seguintes se for parcelado (installment_total > 1)
-      if (installmentsTotal > 1 && createdTx && currentCompany) {
-        import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
-          const pb = (await import('@/lib/pocketbase/client')).default
-          const currentUserId =
-            (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
-          triggerAutoInstallmentGeneration({
-            sourceTransaction: createdTx,
-            existingTransactions: transactions,
-            accounts,
-            currentCompanyId: currentCompany.id,
-            currentUserId,
-            onSuccessCreated: (createdList) => {
-              applyTransactionsBatchUpdate({ created: createdList })
-              toast.success(
-                `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${createdTx.description}".`,
-              )
-            },
-          }).catch((err) => {
-            console.warn('[TransactionModal] Erro na geração automática de parcelas:', err)
+        // Geração automática de ocorrências futuras se for recorrente
+        if (isRecurring && createdTx && currentCompany) {
+          import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
+            const pb = (await import('@/lib/pocketbase/client')).default
+            const currentUserId =
+              (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
+            triggerAutoRecurringGeneration({
+              sourceTransaction: createdTx,
+              existingTransactions: transactions,
+              currentCompanyId: currentCompany.id,
+              currentUserId,
+              onSuccessCreated: (createdList) => {
+                applyTransactionsBatchUpdate({ created: createdList })
+              },
+            }).catch((err) => {
+              console.warn('[TransactionModal] Erro na geração automática:', err)
+            })
           })
-        })
+        }
+
+        // Geração automática de parcelas seguintes se for parcelado (installment_total > 1)
+        if (installmentsTotal > 1 && createdTx && currentCompany) {
+          import('@/lib/recurring-generation').then(
+            async ({ triggerAutoInstallmentGeneration }) => {
+              const pb = (await import('@/lib/pocketbase/client')).default
+              const currentUserId =
+                (createdTx as any).user_id ||
+                pb.authStore.model?.id ||
+                currentCompany.owner_id ||
+                ''
+              triggerAutoInstallmentGeneration({
+                sourceTransaction: createdTx,
+                existingTransactions: transactions,
+                accounts,
+                currentCompanyId: currentCompany.id,
+                currentUserId,
+                onSuccessCreated: (createdList) => {
+                  applyTransactionsBatchUpdate({ created: createdList })
+                  toast.success(
+                    `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${createdTx.description}".`,
+                  )
+                },
+              }).catch((err) => {
+                console.warn('[TransactionModal] Erro na geração automática de parcelas:', err)
+              })
+            },
+          )
+        }
+      } catch (err: any) {
+        console.warn('[TransactionModal] Erro ao salvar lançamento:', err?.message || err)
+        const rawMsg = String(err?.message || err?.originalError?.message || '').toLowerCase()
+        const isNet =
+          rawMsg.includes('failed to fetch') ||
+          rawMsg.includes('network') ||
+          rawMsg.includes('fetch failed') ||
+          rawMsg.includes('conexão') ||
+          err?.status === 0 ||
+          err instanceof TypeError
+        if (isNet) {
+          toast.error(
+            'Não foi possível salvar o lançamento — verifique sua conexão e tente novamente.',
+          )
+        } else {
+          toast.error(err?.message || 'Não foi possível salvar o lançamento — tente novamente.')
+        }
+      } finally {
+        setIsSubmitting(false)
       }
-    } catch (err: any) {
-      console.warn('[TransactionModal] Erro ao salvar lançamento:', err?.message || err)
-      const rawMsg = String(err?.message || err?.originalError?.message || '').toLowerCase()
-      const isNet =
-        rawMsg.includes('failed to fetch') ||
-        rawMsg.includes('network') ||
-        rawMsg.includes('fetch failed') ||
-        rawMsg.includes('conexão') ||
-        err?.status === 0 ||
-        err instanceof TypeError
-      if (isNet) {
-        toast.error(
-          'Não foi possível salvar o lançamento — verifique sua conexão e tente novamente.',
-        )
-      } else {
-        toast.error(err?.message || 'Não foi possível salvar o lançamento — tente novamente.')
-      }
-    } finally {
-      setIsSubmitting(false)
     }
+    // Verificação de duplicado antes de gravar
+    await proceedAfterDuplicateCheck(performCreate)
   }
 
   return (
@@ -965,14 +1041,14 @@ export function TransactionModal({
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isCheckingDuplicate}
               className={`rounded-xl h-11 text-white font-medium ${
                 type === 'despesa'
                   ? 'bg-rose-600 hover:bg-rose-700'
                   : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
-              {isSubmitting ? (
+              {isSubmitting || isCheckingDuplicate ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Salvando...
@@ -1017,6 +1093,23 @@ export function TransactionModal({
         totalInstallments={resolvedInstallmentsTotal}
         onConfirm={handlePropagationConfirm}
         isSubmitting={isSubmitting}
+      />
+
+      {/* Alerta de lançamento duplicado (mesmo valor no mesmo dia) */}
+      <DuplicateWarningModal
+        open={duplicateOpen}
+        onOpenChange={(o) => {
+          setDuplicateOpen(o)
+          if (!o) setPendingDuplicateAction(null)
+        }}
+        candidates={duplicateCandidates}
+        isSubmitting={isSubmitting}
+        onConfirmSaveAnyway={() => {
+          setDuplicateOpen(false)
+          const action = pendingDuplicateAction
+          setPendingDuplicateAction(null)
+          if (action) action()
+        }}
       />
     </Dialog>
   )
