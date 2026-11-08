@@ -44,6 +44,8 @@ export async function findDuplicateTransactions(params: {
     .filter((t) => {
       if (excludeTransactionId && t.id === excludeTransactionId) return false
       if (t.type !== type) return false
+      // Mesma conta (quando fornecida)
+      if (accountId && t.account_id && t.account_id !== accountId) return false
       // A consulta por startDate/endDate já filtra pela data efetiva; reforçamos aqui
       const eff = t.payment_date || t.date
       if (!eff || eff.substring(0, 10) !== effectiveDate.substring(0, 10)) return false

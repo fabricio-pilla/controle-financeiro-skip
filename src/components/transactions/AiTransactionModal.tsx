@@ -34,6 +34,8 @@ import { toast } from 'sonner'
 import { formatCurrency, isFutureDate } from '@/lib/formatters'
 import { calculatePaymentDate, getInvoiceDifferenceInfo } from '@/lib/invoice-helper'
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
+import { findDuplicateTransactions, DuplicateCandidate } from '@/lib/duplicate-check'
+import { DuplicateWarningModal } from './DuplicateWarningModal'
 import {
   Loader2,
   ArrowUpRight,
@@ -122,6 +124,11 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('mensal')
   const [installmentsTotal, setInstallmentsTotal] = useState(1)
   const [learnings, setLearnings] = useState<AiLearning[]>([])
+  // Alerta de lançamento duplicado (mesmo valor no mesmo dia)
+  const [duplicateOpen, setDuplicateOpen] = useState(false)
+  const [duplicateCandidates, setDuplicateCandidates] = useState<DuplicateCandidate[]>([])
+  const [pendingDuplicateAction, setPendingDuplicateAction] = useState<(() => void) | null>(null)
+  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false)
 
   // Assistente de voz (Web Speech API)
   const {
@@ -327,6 +334,42 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
     }, 350)
   }
 
+  /**
+   * Verifica no servidor se já existe lançamento com valor idêntico no mesmo dia.
+   * Se houver, abre o alerta de duplicado e guarda a ação de gravação para o
+   * "Salvar assim mesmo". Retorna true quando o salvamento pode seguir direto.
+   */
+  const checkDuplicateBeforeSave = async (params: {
+    effectivePaymentDate: string
+    parsedAmount: number
+    type: TransactionType
+    accountId: string
+    onConfirmSave: () => void
+  }): Promise<boolean> => {
+    if (!currentCompany) return true
+    try {
+      setIsCheckingDuplicate(true)
+      const candidates = await findDuplicateTransactions({
+        companyId: currentCompany.id,
+        amount: params.parsedAmount,
+        effectiveDate: params.effectivePaymentDate,
+        type: params.type,
+        accountId: params.accountId,
+      })
+      if (candidates.length === 0) return true
+      setDuplicateCandidates(candidates)
+      setPendingDuplicateAction(() => params.onConfirmSave)
+      setDuplicateOpen(true)
+      return false
+    } catch (e) {
+      // Falha na verificação não deve bloquear o salvamento
+      console.warn('[AiTransactionModal] Falha ao verificar duplicados:', e)
+      return true
+    } finally {
+      setIsCheckingDuplicate(false)
+    }
+  }
+
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!description.trim()) {
@@ -351,161 +394,181 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
     const effectiveIsFuture = isFutureDate(effectivePaymentDate)
     const effectivePaid = effectiveIsFuture ? false : paid
 
-    setIsSubmitting(true)
-    try {
-      const effectiveInstallmentTotal = isRecurring ? 0 : Math.max(1, installmentsTotal || 1)
-      const createdTx = await createTransaction({
-        description: description.trim(),
-        amount: parsedAmount,
-        type,
-        account_id: accountId,
-        category_id: categoryId,
-        subcategory_id: subcategoryId || undefined,
-        date,
-        payment_date: effectivePaymentDate,
-        paid: effectivePaid,
-        is_recurring: isRecurring,
-        recurrence_type: isRecurring ? recurrenceType : undefined,
-        notes: '',
-        installments_total: effectiveInstallmentTotal,
-        installment_total: effectiveInstallmentTotal,
-      })
+    const performSave = async () => {
+      setIsSubmitting(true)
+      try {
+        const effectiveInstallmentTotal = isRecurring ? 0 : Math.max(1, installmentsTotal || 1)
+        const createdTx = await createTransaction({
+          description: description.trim(),
+          amount: parsedAmount,
+          type,
+          account_id: accountId,
+          category_id: categoryId,
+          subcategory_id: subcategoryId || undefined,
+          date,
+          payment_date: effectivePaymentDate,
+          paid: effectivePaid,
+          is_recurring: isRecurring,
+          recurrence_type: isRecurring ? recurrenceType : undefined,
+          notes: '',
+          installments_total: effectiveInstallmentTotal,
+          installment_total: effectiveInstallmentTotal,
+        })
 
-      // Inserir a transação criada no estado local imediatamente e fechar modal sem atraso
-      if (createdTx) {
-        applyTransactionsBatchUpdate({ created: [createdTx] })
-      }
-
-      // Se o usuário ajustou a classificação ou descrição antes de confirmar, registra o aprendizado de forma invisível
-      if (currentCompany && parsed) {
-        const textOrig = text.trim()
-        const userCat = categoryId
-        const userSub = subcategoryId || undefined
-        const userType = type
-        const userDesc = description.trim()
-
-        const aiCat = parsed.category_id || undefined
-        const aiSub = parsed.subcategory_id || undefined
-        const aiType = parsed.type
-        const aiDesc = (parsed.description || '').trim()
-
-        const hasCorrection =
-          (aiCat && userCat && aiCat !== userCat) ||
-          (aiSub && userSub && aiSub !== userSub) ||
-          (aiType && userType && aiType !== userType) ||
-          aiDesc !== userDesc
-
-        if (hasCorrection) {
-          const learningPayload = {
-            original_text: textOrig,
-            ai_category_id: aiCat,
-            ai_subcategory_id: aiSub,
-            ai_type: aiType,
-            ai_description: aiDesc,
-            corrected_category_id: userCat,
-            corrected_subcategory_id: userSub,
-            corrected_type: userType,
-            corrected_description: userDesc,
-          }
-
-          // Atualiza o cache local imediatamente para que a próxima classificação na mesma sessão use o aprendizado
-          const optimisticLearning: AiLearning = {
-            id: `temp-${Date.now()}`,
-            control_id: currentCompany.id,
-            user_id: '',
-            ...learningPayload,
-            created_at: new Date().toISOString(),
-          }
-          setLearnings((prev) => [optimisticLearning, ...prev])
-
-          skipCloud
-            .saveAiLearning(currentCompany.id, learningPayload)
-            .then((persistedLearning) => {
-              if (persistedLearning?.id) {
-                setLearnings((prev) =>
-                  prev.map((l) => (l.id === optimisticLearning.id ? persistedLearning : l)),
-                )
-              }
-            })
-            .catch(() => {})
+        // Inserir a transação criada no estado local imediatamente e fechar modal sem atraso
+        if (createdTx) {
+          applyTransactionsBatchUpdate({ created: [createdTx] })
         }
-      }
 
-      // Para recorrentes, triggerAutoRecurringGeneration já emite toast detalhado:
-      // se 0 novas geradas -> "Lançamento recorrente criado. As recorrências futuras já existiam e não foram duplicadas."
-      // se N novas geradas -> "Lançamento recorrente criado. N recorrência(s) futura(s) gerada(s)."
-      if (!isRecurring) {
-        toast.success(
-          installmentsTotal > 1
-            ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
-            : 'Lançamento criado com sucesso!',
-        )
-      }
+        // Se o usuário ajustou a classificação ou descrição antes de confirmar, registra o aprendizado de forma invisível
+        if (currentCompany && parsed) {
+          const textOrig = text.trim()
+          const userCat = categoryId
+          const userSub = subcategoryId || undefined
+          const userType = type
+          const userDesc = description.trim()
 
-      // Geração automática de ocorrências futuras se for recorrente
-      if (isRecurring && createdTx && currentCompany) {
-        import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
-          const pb = (await import('@/lib/pocketbase/client')).default
-          const currentUserId =
-            (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
-          triggerAutoRecurringGeneration({
-            sourceTransaction: createdTx,
-            existingTransactions: transactions,
-            currentCompanyId: currentCompany.id,
-            currentUserId,
-            onSuccessCreated: (createdList) => {
-              applyTransactionsBatchUpdate({ created: createdList })
-            },
-          }).catch((err) => {
-            console.warn('[AiTransactionModal] Erro na geração automática:', err)
+          const aiCat = parsed.category_id || undefined
+          const aiSub = parsed.subcategory_id || undefined
+          const aiType = parsed.type
+          const aiDesc = (parsed.description || '').trim()
+
+          const hasCorrection =
+            (aiCat && userCat && aiCat !== userCat) ||
+            (aiSub && userSub && aiSub !== userSub) ||
+            (aiType && userType && aiType !== userType) ||
+            aiDesc !== userDesc
+
+          if (hasCorrection) {
+            const learningPayload = {
+              original_text: textOrig,
+              ai_category_id: aiCat,
+              ai_subcategory_id: aiSub,
+              ai_type: aiType,
+              ai_description: aiDesc,
+              corrected_category_id: userCat,
+              corrected_subcategory_id: userSub,
+              corrected_type: userType,
+              corrected_description: userDesc,
+            }
+
+            // Atualiza o cache local imediatamente para que a próxima classificação na mesma sessão use o aprendizado
+            const optimisticLearning: AiLearning = {
+              id: `temp-${Date.now()}`,
+              control_id: currentCompany.id,
+              user_id: '',
+              ...learningPayload,
+              created_at: new Date().toISOString(),
+            }
+            setLearnings((prev) => [optimisticLearning, ...prev])
+
+            skipCloud
+              .saveAiLearning(currentCompany.id, learningPayload)
+              .then((persistedLearning) => {
+                if (persistedLearning?.id) {
+                  setLearnings((prev) =>
+                    prev.map((l) => (l.id === optimisticLearning.id ? persistedLearning : l)),
+                  )
+                }
+              })
+              .catch(() => {})
+          }
+        }
+
+        // Para recorrentes, triggerAutoRecurringGeneration já emite toast detalhado:
+        // se 0 novas geradas -> "Lançamento recorrente criado. As recorrências futuras já existiam e não foram duplicadas."
+        // se N novas geradas -> "Lançamento recorrente criado. N recorrência(s) futura(s) gerada(s)."
+        if (!isRecurring) {
+          toast.success(
+            installmentsTotal > 1
+              ? `Lançamento parcelado em ${installmentsTotal}x criado com sucesso!`
+              : 'Lançamento criado com sucesso!',
+          )
+        }
+
+        // Geração automática de ocorrências futuras se for recorrente
+        if (isRecurring && createdTx && currentCompany) {
+          import('@/lib/recurring-generation').then(async ({ triggerAutoRecurringGeneration }) => {
+            const pb = (await import('@/lib/pocketbase/client')).default
+            const currentUserId =
+              (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
+            triggerAutoRecurringGeneration({
+              sourceTransaction: createdTx,
+              existingTransactions: transactions,
+              currentCompanyId: currentCompany.id,
+              currentUserId,
+              onSuccessCreated: (createdList) => {
+                applyTransactionsBatchUpdate({ created: createdList })
+              },
+            }).catch((err) => {
+              console.warn('[AiTransactionModal] Erro na geração automática:', err)
+            })
           })
-        })
-      }
+        }
 
-      // Geração automática de parcelas seguintes se for parcelado (installments_total > 1)
-      if (installmentsTotal > 1 && createdTx && currentCompany) {
-        import('@/lib/recurring-generation').then(async ({ triggerAutoInstallmentGeneration }) => {
-          const pb = (await import('@/lib/pocketbase/client')).default
-          const currentUserId =
-            (createdTx as any).user_id || pb.authStore.model?.id || currentCompany.owner_id || ''
-          triggerAutoInstallmentGeneration({
-            sourceTransaction: createdTx,
-            existingTransactions: transactions,
-            accounts,
-            currentCompanyId: currentCompany.id,
-            currentUserId,
-            onSuccessCreated: (createdList) => {
-              applyTransactionsBatchUpdate({ created: createdList })
-              toast.success(
-                `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${createdTx.description}".`,
-              )
+        // Geração automática de parcelas seguintes se for parcelado (installments_total > 1)
+        if (installmentsTotal > 1 && createdTx && currentCompany) {
+          import('@/lib/recurring-generation').then(
+            async ({ triggerAutoInstallmentGeneration }) => {
+              const pb = (await import('@/lib/pocketbase/client')).default
+              const currentUserId =
+                (createdTx as any).user_id ||
+                pb.authStore.model?.id ||
+                currentCompany.owner_id ||
+                ''
+              triggerAutoInstallmentGeneration({
+                sourceTransaction: createdTx,
+                existingTransactions: transactions,
+                accounts,
+                currentCompanyId: currentCompany.id,
+                currentUserId,
+                onSuccessCreated: (createdList) => {
+                  applyTransactionsBatchUpdate({ created: createdList })
+                  toast.success(
+                    `Foram geradas automaticamente ${createdList.length} parcela(s) seguintes para "${createdTx.description}".`,
+                  )
+                },
+              }).catch((err) => {
+                console.warn('[AiTransactionModal] Erro na geração automática de parcelas:', err)
+              })
             },
-          }).catch((err) => {
-            console.warn('[AiTransactionModal] Erro na geração automática de parcelas:', err)
-          })
-        })
-      }
+          )
+        }
 
-      onOpenChange(false)
-    } catch (err: any) {
-      console.warn('[AiTransactionModal] Erro ao salvar lançamento:', err?.message || err)
-      const rawMsg = String(err?.message || err?.originalError?.message || '').toLowerCase()
-      const isNet =
-        rawMsg.includes('failed to fetch') ||
-        rawMsg.includes('network') ||
-        rawMsg.includes('fetch failed') ||
-        rawMsg.includes('conexão') ||
-        err?.status === 0 ||
-        err instanceof TypeError
-      if (isNet) {
-        toast.error(
-          'Não foi possível salvar o lançamento — verifique sua conexão e tente novamente.',
-        )
-      } else {
-        toast.error(err?.message || 'Não foi possível salvar o lançamento — tente novamente.')
+        onOpenChange(false)
+      } catch (err: any) {
+        console.warn('[AiTransactionModal] Erro ao salvar lançamento:', err?.message || err)
+        const rawMsg = String(err?.message || err?.originalError?.message || '').toLowerCase()
+        const isNet =
+          rawMsg.includes('failed to fetch') ||
+          rawMsg.includes('network') ||
+          rawMsg.includes('fetch failed') ||
+          rawMsg.includes('conexão') ||
+          err?.status === 0 ||
+          err instanceof TypeError
+        if (isNet) {
+          toast.error(
+            'Não foi possível salvar o lançamento — verifique sua conexão e tente novamente.',
+          )
+        } else {
+          toast.error(err?.message || 'Não foi possível salvar o lançamento — tente novamente.')
+        }
+      } finally {
+        setIsSubmitting(false)
       }
-    } finally {
-      setIsSubmitting(false)
+    }
+
+    const canProceed = await checkDuplicateBeforeSave({
+      effectivePaymentDate,
+      parsedAmount,
+      type,
+      accountId,
+      onConfirmSave: () => {
+        void performSave()
+      },
+    })
+    if (canProceed) {
+      await performSave()
     }
   }
 
@@ -1055,14 +1118,14 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || !hasInterpreted}
+              disabled={isSubmitting || isCheckingDuplicate || !hasInterpreted}
               className={`rounded-xl h-11 text-white font-medium ${
                 type === 'despesa'
                   ? 'bg-rose-600 hover:bg-rose-700'
                   : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
-              {isSubmitting ? (
+              {isSubmitting || isCheckingDuplicate ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Salvando...
@@ -1073,6 +1136,23 @@ export const AiTransactionModal = React.memo(function AiTransactionModal({
             </Button>
           </DialogFooter>
         </form>
+
+        {/* Alerta de lançamento duplicado (mesmo valor no mesmo dia) */}
+        <DuplicateWarningModal
+          open={duplicateOpen}
+          candidates={duplicateCandidates}
+          isSubmitting={isSubmitting}
+          onConfirm={() => {
+            setDuplicateOpen(false)
+            const action = pendingDuplicateAction
+            setPendingDuplicateAction(null)
+            if (action) action()
+          }}
+          onCancel={() => {
+            setDuplicateOpen(false)
+            setPendingDuplicateAction(null)
+          }}
+        />
       </DialogContent>
     </Dialog>
   )

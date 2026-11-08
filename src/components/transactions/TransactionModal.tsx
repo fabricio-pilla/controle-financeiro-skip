@@ -1098,17 +1098,17 @@ export function TransactionModal({
       {/* Alerta de lançamento duplicado (mesmo valor no mesmo dia) */}
       <DuplicateWarningModal
         open={duplicateOpen}
-        onOpenChange={(o) => {
-          setDuplicateOpen(o)
-          if (!o) setPendingDuplicateAction(null)
-        }}
         candidates={duplicateCandidates}
         isSubmitting={isSubmitting}
-        onConfirmSaveAnyway={() => {
+        onConfirm={() => {
           setDuplicateOpen(false)
           const action = pendingDuplicateAction
           setPendingDuplicateAction(null)
           if (action) action()
+        }}
+        onCancel={() => {
+          setDuplicateOpen(false)
+          setPendingDuplicateAction(null)
         }}
       />
     </Dialog>

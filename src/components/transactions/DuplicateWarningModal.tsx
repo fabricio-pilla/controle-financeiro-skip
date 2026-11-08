@@ -11,17 +11,18 @@ import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDateBR } from '@/lib/formatters'
 import type { DuplicateCandidate } from '@/lib/duplicate-check'
 
-interface DuplicateWarningModalProps {
+export interface DuplicateWarningModalProps {
   open: boolean
   candidates: DuplicateCandidate[]
   isSubmitting?: boolean
   onConfirm: () => void
   onCancel: () => void
+  onOpenChange?: (open: boolean) => void
 }
 
 /**
  * Alerta de lançamento duplicado: lista os lançamentos já existentes que casam
- * (descrição, valor, data, conta) e oferece "Salvar assim mesmo" ou "Voltar".
+ * (descrição, valor, data, conta) e oferece "Salvar assim mesmo" ou "Voltar e revisar".
  */
 export function DuplicateWarningModal({
   open,
@@ -29,9 +30,17 @@ export function DuplicateWarningModal({
   isSubmitting = false,
   onConfirm,
   onCancel,
+  onOpenChange,
 }: DuplicateWarningModalProps) {
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      onCancel()
+    }
+    onOpenChange?.(next)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[460px] rounded-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
