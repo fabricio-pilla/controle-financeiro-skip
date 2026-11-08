@@ -12,7 +12,7 @@ import { Transaction } from '@/types/database'
 // Mock pocketbase
 vi.mock('@/lib/pocketbase/client', () => ({
   default: {
-    collection: vi.fn(() => ({
+    collection: vi.fn((colName: string) => ({
       update: vi
         .fn()
         .mockImplementation((id: string, data: any) => Promise.resolve({ id, ...data })),
@@ -22,6 +22,16 @@ vi.mock('@/lib/pocketbase/client', () => ({
           Promise.resolve({ id: `new_${Math.random().toString(36).substring(2, 7)}`, ...data }),
         ),
       delete: vi.fn().mockResolvedValue(true),
+      getOne: vi.fn().mockImplementation((id: string) => Promise.resolve({ id })),
+      getList: vi.fn().mockImplementation((page: number, perPage: number, options?: any) => {
+        return Promise.resolve({
+          items: [],
+          page: 1,
+          perPage,
+          totalItems: 0,
+          totalPages: 1,
+        })
+      }),
     })),
   },
 }))
@@ -642,6 +652,80 @@ describe('transaction-propagation', () => {
       })
 
       expect(deletedIds).toEqual(['inst_cel_2'])
+    })
+
+    it('busca a série completa no servidor e exclui todos os futuros preservando anteriores quando allTransactions só tem o mês corrente', async () => {
+      // Cenário exato do bug reportado:
+      // O usuário está na tela de lançamentos (que só tem em cache o mês corrente, ex: 2026-04).
+      // No servidor (PocketBase), existem 12 meses da série de 2026-01 a 2026-12.
+      const serverSeries: Transaction[] = []
+      for (let m = 1; m <= 12; m++) {
+        const mm = String(m).padStart(2, '0')
+        serverSeries.push({
+          id: `tx_srv_rec_${mm}`,
+          control_id: 'ctrl_empresa_1',
+          user_id: 'usr_1',
+          type: 'despesa',
+          amount: 150,
+          description: 'Internet Fibra',
+          category_id: 'cat_escritorio',
+          account_id: 'acc_itau_pj',
+          date: `2026-${mm}-10 00:00:00.000Z`,
+          payment_date: `2026-${mm}-10 00:00:00.000Z`,
+          paid: m < 4,
+          is_recurring: true,
+          recurring: true,
+          recurrence_type: 'mensal',
+          installment_number: 1,
+          installment_total: 0,
+          created_at: '2026-01-01T00:00:00.000Z',
+        })
+      }
+
+      const clientPb = (await import('@/lib/pocketbase/client')).default
+      // Configurar o mock do PocketBase para retornar a série do servidor na consulta
+      const originalGetList = (clientPb.collection('transactions') as any).getList
+      ;(clientPb.collection('transactions') as any).getList = vi.fn().mockImplementation(() => {
+        return Promise.resolve({
+          items: serverSeries,
+          page: 1,
+          perPage: 200,
+          totalItems: serverSeries.length,
+          totalPages: 1,
+        })
+      })
+
+      // allTransactions na página do cliente só tem o mês 04!
+      const currentMonthTx = serverSeries[3] // 2026-04-10
+      const localOnlyCache = [currentMonthTx]
+
+      const { deletedIds } = await deleteTransactionWithPropagation({
+        transaction: currentMonthTx,
+        allTransactions: localOnlyCache,
+        choice: 'future',
+      })
+
+      // Deve ter excluído os meses 04 a 12 (9 ocorrências)
+      expect(deletedIds.length).toBe(9)
+      expect(deletedIds).toEqual([
+        'tx_srv_rec_04',
+        'tx_srv_rec_05',
+        'tx_srv_rec_06',
+        'tx_srv_rec_07',
+        'tx_srv_rec_08',
+        'tx_srv_rec_09',
+        'tx_srv_rec_10',
+        'tx_srv_rec_11',
+        'tx_srv_rec_12',
+      ])
+
+      // As ocorrências do passado (01, 02, 03) NÃO devem ter sido incluídas no delete
+      expect(deletedIds).not.toContain('tx_srv_rec_01')
+      expect(deletedIds).not.toContain('tx_srv_rec_02')
+      expect(deletedIds).not.toContain('tx_srv_rec_03')
+
+      // Restaura o mock
+      ;(clientPb.collection('transactions') as any).getList = originalGetList
     })
   })
 

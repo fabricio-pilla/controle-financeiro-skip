@@ -451,6 +451,153 @@ export function resolvePropagationTargets({
  * Handle deleting a transaction with propagation support for installments and recurring items.
  * Retorna os IDs das transações excluídas para permitir atualização otimista precisa na UI.
  */
+/**
+ * Busca todas as ocorrências de uma série recorrente diretamente do servidor PocketBase.
+ * Pagina de 200 em 200 até cobrir a série completa mesmo em bancos grandes.
+ * Fallback seguro: se a busca falhar, retorna a lista local passada em fallbackTransactions.
+ */
+export async function fetchFullRecurringSeriesFromServer({
+  transaction,
+  fallbackTransactions = [],
+}: {
+  transaction: Transaction
+  fallbackTransactions?: Transaction[]
+}): Promise<Transaction[]> {
+  try {
+    const isRec = isRecurringTransaction(transaction)
+    if (!isRec) {
+      return findRecurringSeries(transaction, fallbackTransactions)
+    }
+
+    const controlId = transaction.control_id
+    if (!controlId) {
+      return findRecurringSeries(transaction, fallbackTransactions)
+    }
+
+    const type = transaction.type
+    const accountId = transaction.account_id || ''
+    const rawParentId = transaction.parent_transaction_id || ''
+    const effectiveParentId =
+      rawParentId && rawParentId !== transaction.id ? rawParentId : transaction.id
+
+    // 1. Busca por vínculo explícito de parent_transaction_id caso exista
+    const recordsMap = new Map<string, Transaction>()
+
+    // Incluir o registro atual inicialmente
+    if (transaction.id) {
+      recordsMap.set(transaction.id, transaction)
+    }
+
+    // Filtros de busca no servidor:
+    // Buscar itens recorrentes do mesmo controle e tipo (e mesma conta, se preenchida)
+    const filters: string[] = [
+      `control_id = "${controlId}"`,
+      `type = "${type}"`,
+      `(is_recurring = true || recurring = true || recurrence_type != "" || recurrence_period != "")`,
+    ]
+    if (accountId) {
+      filters.push(`account_id = "${accountId}"`)
+    }
+
+    const combinedFilter = filters.join(' && ')
+
+    // Busca paginada
+    let page = 1
+    const perPage = 200
+    let totalPages = 1
+
+    while (page <= totalPages && page <= 50) {
+      const resultList = await (pb.collection('transactions') as any).getList(page, perPage, {
+        filter: combinedFilter,
+        sort: 'date',
+      })
+      const items = (resultList.items || []) as any[]
+      totalPages = resultList.totalPages || 1
+
+      for (const item of items) {
+        recordsMap.set(item.id, {
+          id: item.id,
+          control_id: item.control_id,
+          user_id: item.user_id,
+          type: item.type,
+          amount: item.amount,
+          description: item.description,
+          category_id: item.category_id,
+          subcategory_id: item.subcategory_id,
+          account_id: item.account_id,
+          credit_card_id: item.credit_card_id,
+          date: item.date,
+          payment_date: item.payment_date,
+          paid: item.paid,
+          recurring: item.recurring,
+          recurrence_period: item.recurrence_period,
+          installment_number: item.installment_number,
+          installment_total: item.installment_total,
+          parent_transaction_id: item.parent_transaction_id,
+          notes: item.notes,
+          is_recurring: item.is_recurring,
+          recurrence_type: item.recurrence_type,
+          created_at: item.created_at || item.created || '',
+          created: item.created,
+          updated: item.updated,
+        } as unknown as Transaction)
+      }
+
+      page++
+    }
+
+    // Se tiver vínculo por parent_transaction_id e ele for em outra conta ou diferente, busca especificamente
+    if (effectiveParentId) {
+      try {
+        const parentRecord = await (pb.collection('transactions') as any).getOne(effectiveParentId)
+        if (parentRecord && parentRecord.control_id === controlId) {
+          recordsMap.set(parentRecord.id, {
+            ...parentRecord,
+            created_at: parentRecord.created_at || parentRecord.created || '',
+          } as unknown as Transaction)
+        }
+      } catch (_) {
+        // Pode ter sido apagado ou não existir mais
+      }
+
+      try {
+        const linkedResult = await (pb.collection('transactions') as any).getList(1, 200, {
+          filter: `control_id = "${controlId}" && parent_transaction_id = "${effectiveParentId}"`,
+          sort: 'date',
+        })
+        for (const item of (linkedResult.items || []) as any[]) {
+          recordsMap.set(item.id, {
+            ...item,
+            created_at: item.created_at || item.created || '',
+          } as unknown as Transaction)
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+    }
+
+    // Mesclar também com fallbackTransactions para garantir que qualquer item em cache local não se perca
+    for (const fb of fallbackTransactions) {
+      if (fb.id && !recordsMap.has(fb.id)) {
+        recordsMap.set(fb.id, fb)
+      }
+    }
+
+    const allServerTransactions = Array.from(recordsMap.values())
+    return findRecurringSeries(transaction, allServerTransactions)
+  } catch (err) {
+    console.warn(
+      '[fetchFullRecurringSeriesFromServer] Falha ao buscar série no servidor, usando lista local:',
+      err,
+    )
+    return findRecurringSeries(transaction, fallbackTransactions)
+  }
+}
+
+/**
+ * Handle deleting a transaction with propagation support for installments and recurring items.
+ * Retorna os IDs das transações excluídas para permitir atualização otimista precisa na UI.
+ */
 export async function deleteTransactionWithPropagation({
   transaction,
   allTransactions,
@@ -460,11 +607,31 @@ export async function deleteTransactionWithPropagation({
   allTransactions: Transaction[]
   choice?: PropagationChoice
 }): Promise<{ deletedIds: string[] }> {
-  const targetsToDelete = resolvePropagationTargets({
-    transaction,
-    allTransactions,
-    choice,
-  })
+  let targetsToDelete: Transaction[] = []
+  const isRec = isRecurringTransaction(transaction)
+
+  if (isRec && (choice === 'future' || choice === 'all')) {
+    // 1. Busca a série completa direto do servidor PocketBase
+    const fullSeries = await fetchFullRecurringSeriesFromServer({
+      transaction,
+      fallbackTransactions: allTransactions,
+    })
+
+    const currentDate = normalizeDateStr(transaction.date)
+    if (choice === 'all') {
+      targetsToDelete = fullSeries.length > 0 ? fullSeries : [transaction]
+    } else {
+      // choice === 'future': data >= data da transação atual
+      const futureTargets = fullSeries.filter((t) => normalizeDateStr(t.date) >= currentDate)
+      targetsToDelete = futureTargets.length > 0 ? futureTargets : [transaction]
+    }
+  } else {
+    targetsToDelete = resolvePropagationTargets({
+      transaction,
+      allTransactions,
+      choice,
+    })
+  }
 
   const targetIds = Array.from(new Set(targetsToDelete.map((t) => t.id).filter(Boolean)))
   if (targetIds.length === 0) {
@@ -478,21 +645,105 @@ export async function deleteTransactionWithPropagation({
   // Single transaction rápida
   if (targetIds.length === 1) {
     await executeWithRetry(() => skipCloud.deleteTransaction(targetIds[0]), 5, 1000, 'DELETE_TX')
-    return { deletedIds: targetIds }
+  } else {
+    // Exclusão em pool resiliente com limite de concorrência e retry contra 429
+    await runInPool(
+      targetsToDelete,
+      async (item) => {
+        await skipCloud.deleteTransaction(item.id, true)
+      },
+      { concurrency: 4, delayBetweenBatchesMs: 25, tag: 'DELETE_PROPAGATION_POOL' },
+    )
   }
 
-  // Exclusão em pool resiliente com limite de concorrência e retry contra 429
-  await runInPool(
-    targetsToDelete,
-    async (item) => {
-      await skipCloud.deleteTransaction(item.id, true)
-    },
-    { concurrency: 4, delayBetweenBatchesMs: 25, tag: 'DELETE_PROPAGATION_POOL' },
-  )
+  // Se for série recorrente com exclusão 'future' ou 'all', desarmar a recorrência dos registros restantes
+  // para que futuros geradores no backend/frontend não recriem as ocorrências apagadas.
+  if (isRec && (choice === 'future' || choice === 'all')) {
+    try {
+      if (choice === 'future') {
+        // Encontra o último lançamento que SOBROU no passado (o mais recente antes de currentDate)
+        // e desativa a flag de recorrência dele (is_recurring=false, recurring=false, recurrence_type=undefined)
+        // para que ele não sirva mais de semente para projetar os próximos 12 meses.
+        const currentDate = normalizeDateStr(transaction.date)
+        const pastSeries = allTransactions
+          .filter((t) => {
+            if (!t.id || targetIds.includes(t.id)) return false
+            const tDate = normalizeDateStr(t.date)
+            return tDate < currentDate
+          })
+          .sort((a, b) => normalizeDateStr(b.date).localeCompare(normalizeDateStr(a.date)))
+
+        // Se houver registros no passado, desarma a recorrência do mais recente da série
+        let candidateToDisarm = pastSeries.find((t) => {
+          const itemCleanDesc = cleanDescription(t.description || '')
+            .trim()
+            .toLowerCase()
+          const sourceCleanDesc = cleanDescription(transaction.description || '')
+            .trim()
+            .toLowerCase()
+          return (
+            t.type === transaction.type &&
+            (!transaction.account_id || !t.account_id || t.account_id === transaction.account_id) &&
+            itemCleanDesc === sourceCleanDesc
+          )
+        })
+
+        // Se não encontrou no allTransactions local (ex: mês atual não tinha o passado), busca no servidor
+        if (!candidateToDisarm && transaction.control_id) {
+          try {
+            const rawSourceDesc = cleanDescription(transaction.description || '')
+              .trim()
+              .toLowerCase()
+            const pastServerList = await (pb.collection('transactions') as any).getList(1, 20, {
+              filter: `control_id = "${transaction.control_id}" && type = "${transaction.type}" && (is_recurring = true || recurring = true) && date < "${currentDate}"`,
+              sort: '-date',
+            })
+            for (const item of (pastServerList.items || []) as any[]) {
+              if (targetIds.includes(item.id)) continue
+              const cleanD = cleanDescription(item.description || '')
+                .trim()
+                .toLowerCase()
+              if (cleanD === rawSourceDesc) {
+                candidateToDisarm = item
+                break
+              }
+            }
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+
+        if (candidateToDisarm && candidateToDisarm.id) {
+          await skipCloud
+            .updateTransaction(
+              candidateToDisarm.id,
+              {
+                is_recurring: false,
+                recurrence_type: undefined,
+              },
+              true,
+            )
+            .catch((e) => {
+              console.warn(
+                '[deleteTransactionWithPropagation] Não foi possível desarmar semente passada:',
+                e,
+              )
+            })
+        }
+      }
+    } catch (disarmErr) {
+      console.warn(
+        '[deleteTransactionWithPropagation] Erro ao desarmar semente recorrente:',
+        disarmErr,
+      )
+    }
+  }
 
   // Recalcula o saldo das contas afetadas UMA ÚNICA VEZ ao final
   if (affectedAccountIds.length > 0) {
-    await skipCloud.recomputeAccountsBalances(affectedAccountIds)
+    await skipCloud.recomputeAccountsBalances(affectedAccountIds).catch((e) => {
+      console.warn('[deleteTransactionWithPropagation] Erro ao recalcular saldos:', e)
+    })
   }
 
   return { deletedIds: targetIds }
@@ -878,8 +1129,14 @@ async function handleRecurringPropagation({
   formData: UpdateTransactionPayload
   choice: PropagationChoice
 }): Promise<{ updated: Transaction[]; created: Transaction[]; deletedIds: string[] }> {
-  // Find all transactions that belong to this recurring series
-  const series = findRecurringSeries(transaction, allTransactions)
+  // Find all transactions that belong to this recurring series (carrega do servidor para ter a série completa)
+  const series =
+    choice === 'all' || choice === 'future'
+      ? await fetchFullRecurringSeriesFromServer({
+          transaction,
+          fallbackTransactions: allTransactions,
+        })
+      : findRecurringSeries(transaction, allTransactions)
 
   let targetsToUpdate: Transaction[] = []
   if (choice === 'all') {
