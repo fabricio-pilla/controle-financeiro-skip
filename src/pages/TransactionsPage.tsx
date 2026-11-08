@@ -337,19 +337,12 @@ export default function TransactionsPage() {
       if (categoryFilter !== 'all' && tx.category_id !== categoryFilter) return false
 
       // Payment Type Filter (À vista, Parcelado, Recorrente)
-      // Parcelado: installments_total > 1 (ou installment info presente com total > 1 ou parent_transaction_id)
-      // Recorrente: is_recurring/recurring true ou recurrence_type preenchido
-      // À vista: o restante
+      // Parcelado: estritamente transações parceladas (isInstallmentTransaction), nunca recorrentes
+      // Recorrente: transações recorrentes (isRecurringTransaction)
+      // À vista: o restante (nem parcelado nem recorrente)
       if (paymentTypeFilter !== 'all') {
-        const isInstallment =
-          (tx.installments_total !== undefined && tx.installments_total > 1) ||
-          Boolean(tx.parent_transaction_id)
-
-        const isRecurring = Boolean(
-          tx.is_recurring ||
-          tx.recurring ||
-          (tx.recurrence_type && tx.recurrence_type.trim() !== ''),
-        )
+        const isInstallment = isInstallmentTransaction(tx)
+        const isRecurring = isRecurringTransaction(tx)
 
         if (paymentTypeFilter === 'parcelado') {
           if (!isInstallment) return false
@@ -1316,19 +1309,15 @@ export default function TransactionsPage() {
                           </span>
                         </span>
                       )}
-                      {Boolean(
-                        (tx.installments_total && tx.installments_total > 1) ||
-                        (tx.parent_transaction_id &&
-                          tx.installments_total &&
-                          tx.installments_total > 1),
-                      ) && (
+                      {isInstallmentTransaction(tx) && (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
-                          title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total}`}
+                          title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total || (tx as any).installment_total || 1}`}
                         >
                           <Package className="w-3 h-3 text-amber-600" />
                           <span>
-                            {tx.installment_number || 1}/{tx.installments_total}
+                            {tx.installment_number || 1}/
+                            {tx.installments_total || (tx as any).installment_total || 1}
                           </span>
                         </span>
                       )}
@@ -1512,19 +1501,15 @@ export default function TransactionsPage() {
                           </span>
                         </span>
                       )}
-                      {Boolean(
-                        (tx.installments_total && tx.installments_total > 1) ||
-                        (tx.parent_transaction_id &&
-                          tx.installments_total &&
-                          tx.installments_total > 1),
-                      ) && (
+                      {isInstallmentTransaction(tx) && (
                         <span
                           className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
-                          title="Parcela"
+                          title={`Parcela ${tx.installment_number || 1} de ${tx.installments_total || (tx as any).installment_total || 1}`}
                         >
                           <Package className="w-2.5 h-2.5 text-amber-600" />
                           <span>
-                            {tx.installment_number || 1}/{tx.installments_total}
+                            {tx.installment_number || 1}/
+                            {tx.installments_total || (tx as any).installment_total || 1}
                           </span>
                         </span>
                       )}

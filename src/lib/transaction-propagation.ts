@@ -113,7 +113,9 @@ export function isInstallmentTransaction(transaction: Transaction): boolean {
     return false
   }
 
-  return Boolean(effectiveParentId || (num > 0 && total > 1) || total > 1 || hasInstallmentPattern)
+  // Deve ter indicação estrita de parcelamento (total > 1, padrão X/Y na descrição ou parcela > 1)
+  // parent_transaction_id isolado não caracteriza parcelamento pois séries recorrentes também utilizam parent_transaction_id
+  return Boolean(total > 1 || (num > 0 && total > 1) || hasInstallmentPattern || num > 1)
 }
 
 /**
