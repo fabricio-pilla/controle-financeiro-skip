@@ -8,6 +8,7 @@ import {
   Upload,
   CreditCard,
   FolderTree,
+  BarChart3,
   Users2,
   Settings,
   LogOut,
@@ -105,6 +106,11 @@ export function AppLayout({ children }: AppLayoutProps) {
       label: 'Dashboard',
       icon: LayoutDashboard,
       path: '/dashboard',
+    },
+    {
+      label: 'Relatórios',
+      icon: BarChart3,
+      path: '/relatorios',
     },
     {
       label: 'Lançamentos',
@@ -432,15 +438,15 @@ export function AppLayout({ children }: AppLayoutProps) {
         </NavLink>
 
         <NavLink
-          to="/equipe"
+          to="/relatorios"
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
               isActive ? 'text-indigo-600' : 'text-slate-500'
             }`
           }
         >
-          <Users2 className="w-5 h-5" />
-          <span>Equipe</span>
+          <BarChart3 className="w-5 h-5" />
+          <span>Relatórios</span>
         </NavLink>
       </nav>
 

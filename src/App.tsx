@@ -14,6 +14,7 @@ import AccountsPage from './pages/AccountsPage'
 import CategoriesPage from './pages/CategoriesPage'
 import TeamPage from './pages/TeamPage'
 import SettingsPage from './pages/SettingsPage'
+import ReportsPage from './pages/ReportsPage'
 import NotFound from './pages/NotFound'
 
 import ProtectedCompanyRoute from './components/layout/ProtectedCompanyRoute'
@@ -39,6 +40,7 @@ const App = () => (
               {/* Protected Financial Control Routes (Rotas Diretas sem seleção de múltiplos controles) */}
               <Route element={<ProtectedCompanyRoute />}>
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/relatorios" element={<ReportsPage />} />
                 <Route path="/lancamentos" element={<TransactionsPage />} />
                 <Route path="/importar" element={<Importar />} />
                 <Route path="/contas" element={<AccountsPage />} />
