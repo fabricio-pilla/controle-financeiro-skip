@@ -131,6 +131,11 @@ export default function ReportsPage() {
     navigate(`/lancamentos?${params.toString()}`)
   }
 
+  // Sombra que separa visualmente a coluna fixa (Categoria/Subcategoria) das colunas roláveis.
+  // Usamos box-shadow (e não border) para não depender do comportamento de bordas
+  // em tabelas com border-collapse: collapse + position: sticky.
+  const STICKY_COL_SHADOW = 'shadow-[inset_-1px_0_0_0_#e2e8f0,4px_0_8px_-4px_rgba(15,23,42,0.08)]'
+
   const renderTrendCell = (trend: TrendInfo) => {
     if (trend.status === 'sem-dados' || trend.changePct === null) {
       return <span className="text-slate-300 font-medium">–</span>
@@ -164,13 +169,18 @@ export default function ReportsPage() {
   const renderRow = (row: MatrixRow, isSub = false) => {
     const isExpanded = expandedCats.has(row.key)
     const isRising = !isSub && row.trend.status === 'alta' && row.total > 0
+    // Fundo SÓLIDO da célula fixa, igual ao fundo da linha — nunca translúcido,
+    // senão os valores rolam visíveis "por dentro" da coluna travada.
+    const rowBgClass = isRising ? 'bg-[#fff1f2]' : isSub ? 'bg-[#f8fafc]' : 'bg-white'
     return (
       <>
         <tr
           key={row.key}
           className={`border-b border-slate-100 ${isRising ? 'bg-rose-50/60' : ''} ${isSub ? 'bg-slate-50/50' : 'hover:bg-slate-50/80'} transition-colors`}
         >
-          <td className={`py-2.5 pl-3 pr-2 ${isSub ? '' : 'font-semibold text-slate-800'}`}>
+          <td
+            className={`sticky left-0 z-10 ${rowBgClass} ${STICKY_COL_SHADOW} py-2.5 pl-3 pr-2 ${isSub ? '' : 'font-semibold text-slate-800'}`}
+          >
             <div className="flex items-center gap-1.5 min-w-[140px]">
               {!isSub && row.children && row.children.length > 0 ? (
                 <button
@@ -332,7 +342,7 @@ export default function ReportsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50/80">
-                    <th className="text-left py-3 pl-3 pr-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide sticky left-0 bg-slate-50/80 min-w-[160px]">
+                    <th className="sticky left-0 z-10 text-left py-3 pl-3 pr-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-200 min-w-[160px]">
                       Categoria / Subcategoria
                     </th>
                     {MONTH_LABELS.map((m) => (
@@ -360,7 +370,7 @@ export default function ReportsPage() {
                 <tbody>{matrix.rows.map((row) => renderRow(row))}</tbody>
                 <tfoot>
                   <tr className="bg-slate-100 border-t-2 border-slate-200">
-                    <td className="py-3 pl-3 pr-2 text-xs font-extrabold text-slate-800">
+                    <td className="sticky left-0 z-10 bg-slate-100 py-3 pl-3 pr-2 text-xs font-extrabold text-slate-800 border-t-2 border-slate-200">
                       TOTAL GERAL
                     </td>
                     {matrix.rows[0].months.map((_, mi) => {
